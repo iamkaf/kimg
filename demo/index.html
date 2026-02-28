@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>kimg — WASM Compositor Demo</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 14px;
+      display: flex;
+      justify-content: center;
+      padding: 48px 24px;
+    }
+    .container {
+      max-width: 640px;
+      width: 100%;
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 600;
+      color: #f0f6fc;
+      margin-bottom: 4px;
+    }
+    .subtitle {
+      color: #8b949e;
+      margin-bottom: 32px;
+    }
+    .canvas-wrap {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 24px;
+      display: flex;
+      justify-content: center;
+      margin-bottom: 24px;
+    }
+    canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    .info {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+    .info h2 {
+      font-size: 13px;
+      font-weight: 600;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 4px 16px;
+    }
+    .info-grid .label { color: #8b949e; }
+    .info-grid .value { color: #58a6ff; }
+    .layers {
+      list-style: none;
+    }
+    .layers li {
+      padding: 6px 0;
+      border-bottom: 1px solid #21262d;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .layers li:last-child { border-bottom: none; }
+    .layer-index {
+      color: #484f58;
+      font-size: 12px;
+      width: 18px;
+      text-align: right;
+    }
+    .layer-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      border: 1px solid #30363d;
+      flex-shrink: 0;
+    }
+    .layer-name { color: #f0f6fc; }
+    .layer-detail { color: #8b949e; font-size: 12px; }
+    #status {
+      color: #8b949e;
+      padding: 16px;
+      text-align: center;
+    }
+    .error { color: #f85149; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>kimg</h1>
+    <p class="subtitle">Rust+WASM compositor — proof of concept</p>
+
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="128" height="128" style="width: 384px; height: 384px;"></canvas>
+    </div>
+
+    <div id="status">Initializing WASM...</div>
+
+    <div id="timing-panel" class="info" style="display:none">
+      <h2>Performance</h2>
+      <div class="info-grid">
+        <span class="label">WASM init</span>
+        <span class="value" id="t-init">—</span>
+        <span class="label">Render</span>
+        <span class="value" id="t-render">—</span>
+        <span class="label">Canvas</span>
+        <span class="value" id="t-canvas">—</span>
+        <span class="label">Layers</span>
+        <span class="value" id="t-layers">—</span>
+      </div>
+    </div>
+
+    <div id="layers-panel" class="info" style="display:none">
+      <h2>Layer Stack (top to bottom)</h2>
+      <ul class="layers" id="layer-list"></ul>
+    </div>
+  </div>
+
+  <script type="module">
+    import init, { Document } from '../pkg/kimg_wasm.js';
+
+    // --- Pixel data generators ---
+
+    function solidRgba(w, h, r, g, b, a) {
+      const buf = new Uint8Array(w * h * 4);
+      for (let i = 0; i < buf.length; i += 4) {
+        buf[i] = r; buf[i+1] = g; buf[i+2] = b; buf[i+3] = a;
+      }
+      return buf;
+    }
+
+    function gradientRgba(w, h, r, g, b) {
+      const buf = new Uint8Array(w * h * 4);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const t = x / (w - 1);
+          buf[i] = r;
+          buf[i+1] = g;
+          buf[i+2] = b;
+          buf[i+3] = Math.round(t * 255);
+        }
+      }
+      return buf;
+    }
+
+    function checkerRgba(w, h, r, g, b, a, cellSize) {
+      const buf = new Uint8Array(w * h * 4);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const on = ((Math.floor(x / cellSize) + Math.floor(y / cellSize)) % 2) === 0;
+          if (on) {
+            buf[i] = r; buf[i+1] = g; buf[i+2] = b; buf[i+3] = a;
+          }
+          // else stays transparent
+        }
+      }
+      return buf;
+    }
+
+    // --- Main ---
+
+    const statusEl = document.getElementById('status');
+
+    try {
+      const t0 = performance.now();
+      await init();
+      const tInit = performance.now() - t0;
+
+      // Build the document
+      const SIZE = 128;
+      const doc = new Document(SIZE, SIZE);
+
+      const layers = [
+        { name: 'Background',  detail: '128x128 solid',    swatch: '#3b82f6',
+          data: solidRgba(128, 128, 59, 130, 246, 255),    w: 128, h: 128, x: 0, y: 0 },
+        { name: 'Red gradient', detail: '128x128 alpha',   swatch: 'linear-gradient(to right, transparent, #ef4444)',
+          data: gradientRgba(128, 128, 239, 68, 68),       w: 128, h: 128, x: 0, y: 0 },
+        { name: 'Checkerboard', detail: '64x64 @ (32,32)', swatch: '#22c55e',
+          data: checkerRgba(64, 64, 34, 197, 94, 200, 8),  w: 64, h: 64, x: 32, y: 32 },
+        { name: 'White square', detail: '16x16 @ (56,56)', swatch: '#ffffff',
+          data: solidRgba(16, 16, 255, 255, 255, 255),     w: 16, h: 16, x: 56, y: 56 },
+      ];
+
+      for (const l of layers) {
+        doc.add_image_layer(l.name, l.data, l.w, l.h, l.x, l.y);
+      }
+
+      // Render
+      const t1 = performance.now();
+      const rgba = doc.render();
+      const tRender = performance.now() - t1;
+
+      // Draw to canvas
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+      const imageData = new ImageData(new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength), SIZE, SIZE);
+      const t2 = performance.now();
+      ctx.putImageData(imageData, 0, 0);
+      const tCanvas = performance.now() - t2;
+
+      // Update UI
+      statusEl.style.display = 'none';
+
+      document.getElementById('timing-panel').style.display = '';
+      document.getElementById('t-init').textContent = `${tInit.toFixed(1)} ms`;
+      document.getElementById('t-render').textContent = `${tRender.toFixed(2)} ms`;
+      document.getElementById('t-canvas').textContent = `${SIZE}x${SIZE} (${(SIZE*SIZE*4/1024).toFixed(0)} KB RGBA)`;
+      document.getElementById('t-layers').textContent = `${doc.layer_count()}`;
+
+      document.getElementById('layers-panel').style.display = '';
+      const listEl = document.getElementById('layer-list');
+      for (let i = layers.length - 1; i >= 0; i--) {
+        const l = layers[i];
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <span class="layer-index">${i}</span>
+          <span class="layer-swatch" style="background: ${l.swatch}"></span>
+          <span class="layer-name">${l.name}</span>
+          <span class="layer-detail">${l.detail}</span>
+        `;
+        listEl.appendChild(li);
+      }
+
+      doc.free();
+
+    } catch (err) {
+      statusEl.classList.add('error');
+      statusEl.textContent = `Error: ${err.message}`;
+      console.error(err);
+    }
+  </script>
+</body>
+</html>

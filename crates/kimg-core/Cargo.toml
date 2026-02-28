@@ -1,0 +1,7 @@
+[package]
+name = "kimg-core"
+version = "0.1.0"
+edition = "2021"
+description = "Pure Rust pixel engine for layer-based image compositing"
+
+[dependencies]

@@ -1,0 +1,7 @@
+[build]
+# Default target for `cargo build` in this workspace.
+# Override with `--target` flag when building for native.
+# target = "wasm32-unknown-unknown"
+
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "opt-level=s"]
