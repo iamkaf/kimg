@@ -13,6 +13,8 @@ use kimg_core::layer::{
     ImageLayerData, Layer, LayerCommon, LayerKind, PaintLayerData, SolidColorLayerData,
 };
 use kimg_core::pixel::Rgba;
+use kimg_core::serialize;
+use kimg_core::sprite;
 use kimg_core::transform;
 
 /// WASM-exposed Document for image compositing.
@@ -608,6 +610,249 @@ impl Document {
             }
         }
     }
+    // ── Phase 4: Sprite & Game Dev Tools ──
+
+    /// Pack layers by ID into a sprite sheet atlas. Returns RGBA buffer of the atlas.
+    pub fn pack_sprites(
+        &self,
+        layer_ids: &[u32],
+        padding: u32,
+        max_size: u32,
+        power_of_two: bool,
+    ) -> Vec<u8> {
+        let buffers = self.collect_layer_buffers(layer_ids);
+        let refs: Vec<&ImageBuffer> = buffers.iter().collect();
+        let sheet = sprite::pack_sprites(&refs, padding, max_size, power_of_two);
+        sheet.buffer.data
+    }
+
+    /// Pack layers by ID into a sprite sheet. Returns JSON metadata.
+    pub fn pack_sprites_json(
+        &self,
+        layer_ids: &[u32],
+        padding: u32,
+        max_size: u32,
+        power_of_two: bool,
+    ) -> String {
+        let buffers = self.collect_layer_buffers(layer_ids);
+        let refs: Vec<&ImageBuffer> = buffers.iter().collect();
+        let sheet = sprite::pack_sprites(&refs, padding, max_size, power_of_two);
+
+        let sprites_json: Vec<String> = sheet
+            .sprites
+            .iter()
+            .map(|s| {
+                format!(
+                    r#"{{"index":{},"x":{},"y":{},"w":{},"h":{}}}"#,
+                    s.index, s.x, s.y, s.width, s.height
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"sprites":[{}],"width":{},"height":{}}}"#,
+            sprites_json.join(","),
+            sheet.width,
+            sheet.height
+        )
+    }
+
+    /// Render a contact sheet from layers. Returns RGBA buffer.
+    pub fn contact_sheet(
+        &self,
+        layer_ids: &[u32],
+        columns: u32,
+        cell_w: u32,
+        cell_h: u32,
+        padding: u32,
+    ) -> Vec<u8> {
+        let buffers = self.collect_layer_buffers(layer_ids);
+        let refs: Vec<&ImageBuffer> = buffers.iter().collect();
+        let result = sprite::contact_sheet(
+            &refs,
+            &sprite::ContactSheetOptions {
+                columns,
+                cell_width: cell_w,
+                cell_height: cell_h,
+                padding,
+                background: Rgba::TRANSPARENT,
+            },
+        );
+        result.data
+    }
+
+    /// Scale a layer in-place by an integer factor using nearest-neighbor.
+    pub fn pixel_scale_layer(&mut self, id: u32, factor: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer = sprite::pixel_scale(&img.buffer, factor);
+            }
+        }
+    }
+
+    /// Extract a palette from a layer. Returns flat [r,g,b,a, r,g,b,a, ...].
+    pub fn extract_palette(&self, id: u32, max_colors: u32) -> Vec<u8> {
+        match self.inner.find_layer(id) {
+            Some(layer) => {
+                let buf = match &layer.kind {
+                    LayerKind::Image(img) => &img.buffer,
+                    LayerKind::Paint(paint) => &paint.buffer,
+                    _ => return Vec::new(),
+                };
+                let palette = sprite::extract_palette(buf, max_colors);
+                palette_to_flat(&palette)
+            }
+            None => Vec::new(),
+        }
+    }
+
+    /// Quantize a layer in-place to the given palette colors.
+    /// `palette_colors` is flat [r,g,b,a, r,g,b,a, ...].
+    pub fn quantize_layer(&mut self, id: u32, palette_colors: &[u8]) {
+        let palette = flat_to_palette(palette_colors);
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer = sprite::quantize(&img.buffer, &palette);
+            }
+        }
+    }
+
+    // ── Phase 5: Format Import/Export ──
+
+    /// Decode a JPEG and add it as a top-level image layer. Returns the layer ID.
+    pub fn import_jpeg(&mut self, name: &str, jpeg_bytes: &[u8], x: i32, y: i32) -> u32 {
+        let buf = codec::decode_jpeg(jpeg_bytes).expect("failed to decode JPEG");
+        self.add_decoded_layer(name, buf, x, y)
+    }
+
+    /// Decode a WebP and add it as a top-level image layer. Returns the layer ID.
+    pub fn import_webp(&mut self, name: &str, webp_bytes: &[u8], x: i32, y: i32) -> u32 {
+        let buf = codec::decode_webp(webp_bytes).expect("failed to decode WebP");
+        self.add_decoded_layer(name, buf, x, y)
+    }
+
+    /// Decode a GIF and add each frame as a separate layer. Returns layer IDs.
+    pub fn import_gif_frames(&mut self, gif_bytes: &[u8]) -> Vec<u32> {
+        let frames = codec::decode_gif(gif_bytes).expect("failed to decode GIF");
+        let mut ids = Vec::with_capacity(frames.len());
+        for (i, frame) in frames.into_iter().enumerate() {
+            let name = format!("frame_{}", i);
+            let id = self.add_decoded_layer(&name, frame.buffer, 0, 0);
+            ids.push(id);
+        }
+        ids
+    }
+
+    /// Import PSD layers. Returns layer IDs.
+    pub fn import_psd(&mut self, psd_bytes: &[u8]) -> Vec<u32> {
+        let (_w, _h, layers) = codec::import_psd(psd_bytes).expect("failed to decode PSD");
+        let mut ids = Vec::with_capacity(layers.len());
+        for psd_layer in layers {
+            let id = self.inner.next_id();
+            let mut common = LayerCommon::new(id, &psd_layer.name);
+            common.x = psd_layer.x;
+            common.y = psd_layer.y;
+            common.opacity = psd_layer.opacity;
+            common.visible = psd_layer.visible;
+            self.inner.layers.push(Layer {
+                common,
+                kind: LayerKind::Image(ImageLayerData {
+                    buffer: psd_layer.buffer,
+                    anchor: Anchor::TopLeft,
+                    flip_x: false,
+                    flip_y: false,
+                    rotation: Rotation::None,
+                }),
+            });
+            ids.push(id);
+        }
+        ids
+    }
+
+    /// Auto-detect format and import as a layer. Returns the layer ID.
+    pub fn import_auto(&mut self, name: &str, bytes: &[u8], x: i32, y: i32) -> u32 {
+        let buf = codec::decode_auto(bytes).expect("failed to decode image");
+        self.add_decoded_layer(name, buf, x, y)
+    }
+
+    /// Render the document and encode as JPEG.
+    pub fn export_jpeg(&self, quality: u8) -> Vec<u8> {
+        let result = self.inner.render();
+        codec::encode_jpeg(&result, quality).expect("failed to encode JPEG")
+    }
+
+    /// Render the document and encode as lossless WebP.
+    pub fn export_webp(&self) -> Vec<u8> {
+        let result = self.inner.render();
+        codec::encode_webp(&result).expect("failed to encode WebP")
+    }
+
+    // ── Phase 5: Document Serialization ──
+
+    /// Serialize the document to a binary format.
+    pub fn serialize(&self) -> Vec<u8> {
+        serialize::serialize(&self.inner).expect("failed to serialize")
+    }
+
+    /// Deserialize a document from binary data.
+    pub fn deserialize(data: &[u8]) -> Document {
+        let inner = serialize::deserialize(data).expect("failed to deserialize");
+        Document { inner }
+    }
+
+    // ── Internal helpers ──
+
+    fn add_decoded_layer(&mut self, name: &str, buf: ImageBuffer, x: i32, y: i32) -> u32 {
+        let id = self.inner.next_id();
+        self.inner.layers.push(Layer {
+            common: LayerCommon {
+                x,
+                y,
+                ..LayerCommon::new(id, name)
+            },
+            kind: LayerKind::Image(ImageLayerData {
+                buffer: buf,
+                anchor: Anchor::TopLeft,
+                flip_x: false,
+                flip_y: false,
+                rotation: Rotation::None,
+            }),
+        });
+        id
+    }
+
+    fn collect_layer_buffers(&self, layer_ids: &[u32]) -> Vec<ImageBuffer> {
+        layer_ids
+            .iter()
+            .filter_map(|&id| {
+                self.inner.find_layer(id).and_then(|layer| match &layer.kind {
+                    LayerKind::Image(img) => Some(img.buffer.clone()),
+                    LayerKind::Paint(paint) => Some(paint.buffer.clone()),
+                    _ => None,
+                })
+            })
+            .collect()
+    }
+}
+
+fn palette_to_flat(palette: &sprite::Palette) -> Vec<u8> {
+    let mut out = Vec::with_capacity(palette.colors.len() * 4);
+    for c in &palette.colors {
+        out.push(c.r);
+        out.push(c.g);
+        out.push(c.b);
+        out.push(c.a);
+    }
+    out
+}
+
+fn flat_to_palette(data: &[u8]) -> sprite::Palette {
+    let count = data.len() / 4;
+    let mut colors = Vec::with_capacity(count);
+    for i in 0..count {
+        let idx = i * 4;
+        colors.push(Rgba::new(data[idx], data[idx + 1], data[idx + 2], data[idx + 3]));
+    }
+    sprite::Palette { colors }
 }
 
 // ── Free functions: color utilities ──
@@ -645,6 +890,49 @@ pub fn dominant_rgb_from_rgba(data: &[u8], w: u32, h: u32) -> Vec<u8> {
     match color::dominant_rgb_from_rgba(data, w, h, 4096) {
         Some(rgb) => vec![rgb.r, rgb.g, rgb.b],
         None => Vec::new(),
+    }
+}
+
+// ── Free functions: format detection ──
+
+/// Detect the image format of the given data. Returns a string: "png", "jpeg", "webp", "gif", "psd", or "unknown".
+#[wasm_bindgen]
+pub fn detect_format(data: &[u8]) -> String {
+    codec::detect_format(data).as_str().to_string()
+}
+
+/// Auto-detect format, decode to RGBA, return flat [w_u32_be(4 bytes), h_u32_be(4 bytes), rgba...].
+#[wasm_bindgen]
+pub fn decode_image(data: &[u8]) -> Vec<u8> {
+    let buf = codec::decode_auto(data).expect("failed to decode image");
+    let mut out = Vec::with_capacity(8 + buf.data.len());
+    out.extend_from_slice(&buf.width.to_be_bytes());
+    out.extend_from_slice(&buf.height.to_be_bytes());
+    out.extend_from_slice(&buf.data);
+    out
+}
+
+// ── Free functions: sprite utilities ──
+
+/// Extract a palette from raw RGBA data. Returns flat [r,g,b,a, ...].
+#[wasm_bindgen]
+pub fn extract_palette_from_rgba(data: &[u8], w: u32, h: u32, max_colors: u32) -> Vec<u8> {
+    if let Some(buf) = ImageBuffer::from_rgba(w, h, data.to_vec()) {
+        let palette = sprite::extract_palette(&buf, max_colors);
+        palette_to_flat(&palette)
+    } else {
+        Vec::new()
+    }
+}
+
+/// Quantize raw RGBA data to the given palette. Returns RGBA buffer.
+#[wasm_bindgen]
+pub fn quantize_rgba(data: &[u8], w: u32, h: u32, palette: &[u8]) -> Vec<u8> {
+    if let Some(buf) = ImageBuffer::from_rgba(w, h, data.to_vec()) {
+        let pal = flat_to_palette(palette);
+        sprite::quantize(&buf, &pal).data
+    } else {
+        Vec::new()
     }
 }
 
@@ -1013,5 +1301,139 @@ mod tests {
         // Red luminance ≈ 76/255 ≈ 0.298 → interpolated between blue and yellow
         let buf = doc.get_layer_rgba(id);
         assert!(buf[3] == 255); // alpha preserved
+    }
+
+    // ── Phase 4 tests ──
+
+    #[test]
+    fn pack_sprites_wasm() {
+        let mut doc = Document::new(32, 32);
+        let rgba1: Vec<u8> = [255, 0, 0, 255].iter().copied().cycle().take(8 * 8 * 4).collect();
+        let rgba2: Vec<u8> = [0, 255, 0, 255].iter().copied().cycle().take(8 * 8 * 4).collect();
+        let id1 = doc.add_image_layer("a", &rgba1, 8, 8, 0, 0);
+        let id2 = doc.add_image_layer("b", &rgba2, 8, 8, 0, 0);
+
+        let atlas = doc.pack_sprites(&[id1, id2], 0, 4096, false);
+        assert!(!atlas.is_empty());
+
+        let json = doc.pack_sprites_json(&[id1, id2], 0, 4096, false);
+        assert!(json.contains("\"sprites\""));
+        assert!(json.contains("\"width\""));
+    }
+
+    #[test]
+    fn contact_sheet_wasm() {
+        let mut doc = Document::new(32, 32);
+        let rgba: Vec<u8> = [255, 0, 0, 255].iter().copied().cycle().take(8 * 8 * 4).collect();
+        let id1 = doc.add_image_layer("a", &rgba, 8, 8, 0, 0);
+        let id2 = doc.add_image_layer("b", &rgba, 8, 8, 0, 0);
+
+        let result = doc.contact_sheet(&[id1, id2], 2, 8, 8, 0);
+        // 2 columns, 1 row, 8x8 cells, no padding = 16x8 = 512 bytes
+        assert_eq!(result.len(), 16 * 8 * 4);
+    }
+
+    #[test]
+    fn pixel_scale_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.pixel_scale_layer(id, 2);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf.len(), 8 * 8 * 4);
+    }
+
+    #[test]
+    fn extract_palette_wasm() {
+        let (doc, id) = make_red_4x4();
+        let palette = doc.extract_palette(id, 4);
+        // Should have at least 4 bytes (one RGBA color)
+        assert!(palette.len() >= 4);
+        assert_eq!(palette[0], 255); // red
+        assert_eq!(palette[1], 0);
+        assert_eq!(palette[2], 0);
+        assert_eq!(palette[3], 255);
+    }
+
+    #[test]
+    fn quantize_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        // Quantize to a palette of just green
+        let palette = vec![0, 255, 0, 255];
+        doc.quantize_layer(id, &palette);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf[0], 0);   // was red, now green
+        assert_eq!(buf[1], 255);
+        assert_eq!(buf[2], 0);
+    }
+
+    // ── Phase 5 tests ──
+
+    #[test]
+    fn import_jpeg_wasm() {
+        let mut doc = Document::new(4, 4);
+        let mut buf = kimg_core::buffer::ImageBuffer::new_transparent(4, 4);
+        buf.fill(Rgba::new(128, 128, 128, 255));
+        let jpeg_bytes = kimg_core::codec::encode_jpeg(&buf, 90).unwrap();
+        let id = doc.import_jpeg("test", &jpeg_bytes, 0, 0);
+        assert!(doc.inner.find_layer(id).is_some());
+    }
+
+    #[test]
+    fn import_webp_wasm() {
+        let mut doc = Document::new(4, 4);
+        let mut buf = kimg_core::buffer::ImageBuffer::new_transparent(4, 4);
+        buf.fill(Rgba::new(128, 128, 128, 255));
+        let webp_bytes = kimg_core::codec::encode_webp(&buf).unwrap();
+        let id = doc.import_webp("test", &webp_bytes, 0, 0);
+        assert!(doc.inner.find_layer(id).is_some());
+    }
+
+    #[test]
+    fn export_jpeg_wasm() {
+        let mut doc = Document::new(4, 4);
+        let rgba: Vec<u8> = [128, 128, 128, 255].iter().copied().cycle().take(4 * 4 * 4).collect();
+        doc.add_image_layer("test", &rgba, 4, 4, 0, 0);
+        let jpeg = doc.export_jpeg(80);
+        assert!(!jpeg.is_empty());
+        assert_eq!(jpeg[0], 0xFF); // JPEG magic
+        assert_eq!(jpeg[1], 0xD8);
+    }
+
+    #[test]
+    fn export_webp_wasm() {
+        let mut doc = Document::new(4, 4);
+        let rgba: Vec<u8> = [128, 128, 128, 255].iter().copied().cycle().take(4 * 4 * 4).collect();
+        doc.add_image_layer("test", &rgba, 4, 4, 0, 0);
+        let webp = doc.export_webp();
+        assert!(!webp.is_empty());
+        assert_eq!(&webp[0..4], b"RIFF");
+    }
+
+    #[test]
+    fn serialize_deserialize_wasm() {
+        let mut doc = Document::new(4, 4);
+        let rgba: Vec<u8> = [255, 0, 0, 255].iter().copied().cycle().take(4 * 4 * 4).collect();
+        doc.add_image_layer("red", &rgba, 4, 4, 0, 0);
+        doc.add_solid_color_layer("fill", 0, 255, 0, 255);
+
+        let data = doc.serialize();
+        let restored = Document::deserialize(&data);
+        assert_eq!(restored.width(), 4);
+        assert_eq!(restored.height(), 4);
+        assert_eq!(restored.layer_count(), 2);
+
+        let result = restored.render();
+        // Green solid layer on top of red image
+        assert_eq!(result[0], 0); // green
+        assert_eq!(result[1], 255);
+    }
+
+    #[test]
+    fn detect_format_wasm() {
+        assert_eq!(detect_format(&[0x89, 0x50, 0x4E, 0x47, 0, 0, 0, 0]), "png");
+        assert_eq!(detect_format(&[0xFF, 0xD8, 0xFF, 0xE0]), "jpeg");
+        assert_eq!(detect_format(b"RIFF\x00\x00\x00\x00WEBP"), "webp");
+        assert_eq!(detect_format(b"GIF89a"), "gif");
+        assert_eq!(detect_format(b"8BPS\x00\x01"), "psd");
+        assert_eq!(detect_format(&[0, 0, 0, 0]), "unknown");
     }
 }

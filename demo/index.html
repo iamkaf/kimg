@@ -160,7 +160,7 @@
       transition: background 0.15s;
     }
     .btn:hover { background: #30363d; }
-    .btn-row { display: flex; gap: 8px; margin-top: 10px; }
+    .btn-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
     #status {
       color: #8b949e;
       padding: 16px;
@@ -176,12 +176,30 @@
       font-size: 11px;
       margin-left: 8px;
     }
+    .drop-zone {
+      border: 2px dashed #30363d;
+      border-radius: 8px;
+      padding: 24px;
+      text-align: center;
+      color: #8b949e;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: #58a6ff;
+      background: #1f6feb11;
+    }
+    .import-note {
+      color: #8b949e;
+      font-size: 12px;
+      margin-top: 8px;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>kimg <span class="badge">Phase 1</span></h1>
-    <p class="subtitle">Rust+WASM compositor — layer setters, groups, filters, PNG, color utilities</p>
+    <h1>kimg <span class="badge">Phase 5</span></h1>
+    <p class="subtitle">Rust+WASM compositor — multi-format I/O, serialization, layers, filters, transforms</p>
 
     <div id="status">Initializing WASM...</div>
 
@@ -193,6 +211,41 @@
           <div class="canvas-wrap">
             <canvas id="canvas" width="128" height="128" style="width: 384px; height: 384px;"></canvas>
           </div>
+        </div>
+      </div>
+
+      <!-- Phase 5: File Import -->
+      <div class="panel" id="import-panel">
+        <h2>Import Image (PNG / JPEG / WebP / GIF / PSD)</h2>
+        <div class="drop-zone" id="drop-zone">
+          Drop an image here or click to browse
+          <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/gif,.psd" style="display:none">
+        </div>
+        <div class="import-note" id="import-note"></div>
+      </div>
+
+      <!-- Phase 5: Export -->
+      <div class="panel" id="export-panel">
+        <h2>Export</h2>
+        <div class="btn-row">
+          <button class="btn" id="btn-export-png">Export PNG</button>
+          <button class="btn" id="btn-export-jpeg">Export JPEG</button>
+          <button class="btn" id="btn-export-webp">Export WebP</button>
+        </div>
+        <div class="slider-row" style="margin-top:8px">
+          <label>JPEG quality</label>
+          <input type="range" id="jpeg-quality" min="1" max="100" value="85">
+          <span class="slider-val" id="jpeg-quality-val">85</span>
+        </div>
+      </div>
+
+      <!-- Phase 5: Serialization -->
+      <div class="panel" id="serial-panel">
+        <h2>Document Serialization</h2>
+        <div class="btn-row">
+          <button class="btn" id="btn-save">Save Document (.kimg)</button>
+          <button class="btn" id="btn-load">Load Document (.kimg)</button>
+          <input type="file" id="load-input" accept=".kimg" style="display:none">
         </div>
       </div>
 
@@ -221,7 +274,6 @@
           <span class="slider-val"></span>
         </div>
         <div class="btn-row">
-          <button class="btn" id="btn-export">Export PNG</button>
           <button class="btn" id="btn-reimport">PNG round-trip</button>
         </div>
       </div>
@@ -258,6 +310,7 @@
       relative_luminance,
       contrast_ratio,
       dominant_rgb_from_rgba,
+      detect_format,
     } from '../pkg/kimg_wasm.js';
 
     // --- Pixel data generators ---
@@ -309,24 +362,20 @@
       const tInit = performance.now() - t0;
 
       const SIZE = 128;
-      const doc = new Document(SIZE, SIZE);
+      let doc = new Document(SIZE, SIZE);
 
       // --- Build layer tree ---
 
-      // 1. Background (top-level)
       const bgId = doc.add_image_layer('Background', solidRgba(128, 128, 59, 130, 246, 255), 128, 128, 0, 0);
 
-      // 2. Group with image children + a scoped filter
       const groupId = doc.add_group_layer('Tinted group');
       const gradientId = doc.add_image_to_group(groupId, 'Red gradient', gradientRgba(128, 128, 239, 68, 68), 128, 128, 0, 0);
       const checkerId = doc.add_image_to_group(groupId, 'Checkerboard', checkerRgba(64, 64, 34, 197, 94, 200, 8), 64, 64, 32, 32);
       const filterId = doc.add_filter_to_group(groupId, 'Group filter');
 
-      // 3. White square with transforms (top-level)
       const squareId = doc.add_image_layer('White square', solidRgba(16, 16, 255, 255, 255, 255), 16, 16, 56, 56);
-      doc.set_anchor(squareId, 1); // Center anchor
+      doc.set_anchor(squareId, 1);
 
-      // Layer metadata for UI
       const layerInfo = [
         { name: 'White square',   detail: '16x16 center-anchored', swatch: '#ffffff', id: squareId },
         { name: 'Tinted group',   detail: 'group with scoped filter', swatch: '#8b949e', id: groupId,
@@ -418,28 +467,121 @@
         rerender();
       });
 
-      // --- PNG export / round-trip ---
+      // --- Phase 5: File Import ---
 
-      document.getElementById('btn-export').addEventListener('click', () => {
-        const pngBytes = doc.export_png();
-        const blob = new Blob([pngBytes], { type: 'image/png' });
+      const dropZone = document.getElementById('drop-zone');
+      const fileInput = document.getElementById('file-input');
+      const importNote = document.getElementById('import-note');
+
+      dropZone.addEventListener('click', () => fileInput.click());
+      dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        if (e.dataTransfer.files.length) handleImportFile(e.dataTransfer.files[0]);
+      });
+      fileInput.addEventListener('change', () => {
+        if (fileInput.files.length) handleImportFile(fileInput.files[0]);
+        fileInput.value = '';
+      });
+
+      function handleImportFile(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const bytes = new Uint8Array(reader.result);
+          const fmt = detect_format(bytes);
+          importNote.textContent = `Detected: ${fmt} (${file.name}, ${bytes.length} bytes)`;
+
+          try {
+            if (fmt === 'gif') {
+              const ids = doc.import_gif_frames(bytes);
+              importNote.textContent += ` — ${ids.length} frame(s) imported as layers`;
+            } else if (fmt === 'psd') {
+              const ids = doc.import_psd(bytes);
+              importNote.textContent += ` — ${ids.length} layer(s) imported`;
+            } else {
+              doc.import_auto(file.name, bytes, 0, 0);
+              importNote.textContent += ' — added as layer';
+            }
+            updateLayerCount();
+            rerender();
+          } catch (err) {
+            importNote.textContent = `Import error: ${err.message}`;
+          }
+        };
+        reader.readAsArrayBuffer(file);
+      }
+
+      // --- Phase 5: Export ---
+
+      document.getElementById('jpeg-quality').addEventListener('input', (e) => {
+        document.getElementById('jpeg-quality-val').textContent = e.target.value;
+      });
+
+      document.getElementById('btn-export-png').addEventListener('click', () => {
+        const bytes = doc.export_png();
+        downloadBlob(bytes, 'kimg-export.png', 'image/png');
+      });
+
+      document.getElementById('btn-export-jpeg').addEventListener('click', () => {
+        const quality = Number(document.getElementById('jpeg-quality').value);
+        const bytes = doc.export_jpeg(quality);
+        downloadBlob(bytes, 'kimg-export.jpg', 'image/jpeg');
+      });
+
+      document.getElementById('btn-export-webp').addEventListener('click', () => {
+        const bytes = doc.export_webp();
+        downloadBlob(bytes, 'kimg-export.webp', 'image/webp');
+      });
+
+      function downloadBlob(data, filename, mime) {
+        const blob = new Blob([data], { type: mime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'kimg-export.png';
+        a.download = filename;
         a.click();
         URL.revokeObjectURL(url);
+      }
+
+      // --- Phase 5: Serialization ---
+
+      document.getElementById('btn-save').addEventListener('click', () => {
+        const data = doc.serialize();
+        downloadBlob(data, 'document.kimg', 'application/octet-stream');
       });
+
+      const loadInput = document.getElementById('load-input');
+      document.getElementById('btn-load').addEventListener('click', () => loadInput.click());
+      loadInput.addEventListener('change', () => {
+        if (!loadInput.files.length) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const bytes = new Uint8Array(reader.result);
+          try {
+            doc.free();
+            doc = Document.deserialize(bytes);
+            updateLayerCount();
+            rerender();
+            importNote.textContent = `Document loaded (${bytes.length} bytes)`;
+          } catch (err) {
+            importNote.textContent = `Load error: ${err.message}`;
+          }
+        };
+        reader.readAsArrayBuffer(loadInput.files[0]);
+        loadInput.value = '';
+      });
+
+      // --- PNG round-trip ---
 
       document.getElementById('btn-reimport').addEventListener('click', () => {
         const pngBytes = doc.export_png();
-
         const doc2 = new Document(SIZE, SIZE);
         doc2.add_png_layer('re-imported', pngBytes, 0, 0);
         const rgba2 = doc2.render();
         drawToCanvas(rgba2);
         doc2.free();
-
         setTimeout(() => rerender(), 1500);
       });
 
@@ -459,6 +601,10 @@
         const tRender = performance.now() - t1;
         drawToCanvas(rgba);
         document.getElementById('t-render').textContent = `${tRender.toFixed(2)} ms`;
+      }
+
+      function updateLayerCount() {
+        document.getElementById('t-layers').textContent = `${doc.layer_count()} top-level`;
       }
 
       // Initial render
@@ -505,7 +651,7 @@
       // --- Timing / info ---
 
       document.getElementById('t-init').textContent = `${tInit.toFixed(1)} ms`;
-      document.getElementById('t-layers').textContent = `${doc.layer_count()} top-level (${doc.layer_count() + 3} total)`;
+      updateLayerCount();
 
       // --- Layer tree display ---
 

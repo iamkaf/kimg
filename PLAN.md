@@ -53,21 +53,27 @@ Feature-complete replacement for the JS compositor (core + WASM).
 - [x] WASM bindings for all Phase 3 features (30 WASM tests, 82 core tests)
 - [x] 112 unit tests passing (82 core + 30 WASM)
 
-## Phase 4: Sprite & Game Dev Tools (v0.4)
+## Phase 4: Sprite & Game Dev Tools (v0.4) (done)
 
-- [ ] Sprite sheet packer (bin-packing)
-- [ ] Contact sheet / grid layout
-- [ ] Pixel-art upscale (nearest-neighbor integer scale)
-- [ ] Color quantization and palette generation
-- [ ] Batch rendering pipeline
+- [x] Sprite sheet packer (shelf next-fit bin-packing) — `sprite.rs`
+- [x] Contact sheet / grid layout — `sprite.rs`
+- [x] Pixel-art upscale (nearest-neighbor integer scale) — `sprite.rs`
+- [x] Color quantization (median-cut) and palette generation — `sprite.rs`
+- [x] Batch rendering pipeline — `sprite.rs`
+- [x] WASM bindings for all Phase 4 features (35 WASM tests, 93 core tests)
+- [x] 128 unit tests passing (93 core + 35 WASM)
 
-## Phase 5: Format Support & Serialization (v0.5)
+## Phase 5: Format Support & Serialization (v0.5) (done)
 
-- [ ] JPEG decode/encode
-- [ ] WebP decode/encode
-- [ ] GIF decode (animated frames → layers)
-- [ ] Document serialization (JSON + binary)
-- [ ] PSD layer import
+- [x] JPEG decode/encode (`jpeg-decoder` + `jpeg-encoder`)
+- [x] WebP decode/encode (lossless, `image-webp`)
+- [x] GIF decode (animated frames → layers, `gif` crate)
+- [x] PSD layer import (`psd` crate)
+- [x] Format auto-detection via magic bytes (PNG, JPEG, WebP, GIF, PSD)
+- [x] Document serialization (JSON metadata + binary pixel data) — `serialize.rs`
+- [x] WASM bindings: `import_jpeg`, `import_webp`, `import_gif_frames`, `import_psd`, `import_auto`, `export_jpeg`, `export_webp`, `serialize`, `deserialize`, `detect_format`, `decode_image`
+- [x] Demo page: drag-and-drop import, multi-format export, document save/load
+- [x] 150 unit tests passing (109 core + 41 WASM)
 
 ## Phase 6: Stable Release (v1.0)
 

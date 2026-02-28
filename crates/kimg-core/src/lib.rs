@@ -9,3 +9,5 @@ pub mod codec;
 pub mod convolution;
 pub mod transform;
 pub mod document;
+pub mod serialize;
+pub mod sprite;
