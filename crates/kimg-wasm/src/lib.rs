@@ -5,13 +5,15 @@ use kimg_core::blit::{Anchor, Rotation};
 use kimg_core::buffer::ImageBuffer;
 use kimg_core::codec;
 use kimg_core::color;
+use kimg_core::convolution;
 use kimg_core::document::Document as CoreDocument;
-use kimg_core::filter::HslFilterConfig;
+use kimg_core::filter::{self, HslFilterConfig};
 use kimg_core::layer::{
     FilterLayerData, GradientDirection, GradientLayerData, GradientStop, GroupLayerData,
     ImageLayerData, Layer, LayerCommon, LayerKind, PaintLayerData, SolidColorLayerData,
 };
 use kimg_core::pixel::Rgba;
+use kimg_core::transform;
 
 /// WASM-exposed Document for image compositing.
 #[wasm_bindgen]
@@ -424,6 +426,188 @@ impl Document {
     pub fn layer_count(&self) -> usize {
         self.inner.layers.len()
     }
+
+    // ── Phase 3: Transform operations ──
+
+    /// Resize a layer's buffer using nearest-neighbor (good for pixel art).
+    pub fn resize_layer_nearest(&mut self, id: u32, new_width: u32, new_height: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer = transform::resize_nearest(&img.buffer, new_width, new_height);
+            }
+        }
+    }
+
+    /// Resize a layer's buffer using bilinear interpolation.
+    pub fn resize_layer_bilinear(&mut self, id: u32, new_width: u32, new_height: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer = transform::resize_bilinear(&img.buffer, new_width, new_height);
+            }
+        }
+    }
+
+    /// Resize a layer's buffer using Lanczos3 interpolation (high quality).
+    pub fn resize_layer_lanczos3(&mut self, id: u32, new_width: u32, new_height: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer = transform::resize_lanczos3(&img.buffer, new_width, new_height);
+            }
+        }
+    }
+
+    /// Crop a layer's buffer to the given rectangle.
+    pub fn crop_layer(&mut self, id: u32, x: u32, y: u32, width: u32, height: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer = transform::crop(&img.buffer, x, y, width, height);
+            }
+        }
+    }
+
+    /// Trim transparent edges from a layer's buffer.
+    pub fn trim_layer_alpha(&mut self, id: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer = transform::trim_alpha(&img.buffer);
+            }
+        }
+    }
+
+    /// Rotate a layer's buffer by an arbitrary angle (degrees) with bilinear interpolation.
+    pub fn rotate_layer(&mut self, id: u32, angle_deg: f64) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer = transform::rotate_bilinear(&img.buffer, angle_deg);
+            }
+        }
+    }
+
+    // ── Phase 3: Convolution filters ──
+
+    /// Apply a box blur to a layer. Radius 0 = no-op.
+    pub fn box_blur_layer(&mut self, id: u32, radius: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer = convolution::box_blur(&img.buffer, radius);
+            }
+        }
+    }
+
+    /// Apply a Gaussian blur to a layer. Radius 0 = no-op.
+    pub fn gaussian_blur_layer(&mut self, id: u32, radius: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer = convolution::gaussian_blur(&img.buffer, radius);
+            }
+        }
+    }
+
+    /// Apply a sharpen convolution to a layer.
+    pub fn sharpen_layer(&mut self, id: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer = convolution::convolve(&img.buffer, &convolution::Kernel::sharpen());
+            }
+        }
+    }
+
+    /// Apply edge detection (Laplacian) to a layer.
+    pub fn edge_detect_layer(&mut self, id: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer =
+                    convolution::convolve(&img.buffer, &convolution::Kernel::edge_detect());
+            }
+        }
+    }
+
+    /// Apply emboss effect to a layer.
+    pub fn emboss_layer(&mut self, id: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                img.buffer = convolution::convolve(&img.buffer, &convolution::Kernel::emboss());
+            }
+        }
+    }
+
+    // ── Phase 3: Pixel filters ──
+
+    /// Invert RGB channels of a layer.
+    pub fn invert_layer(&mut self, id: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                filter::invert(&mut img.buffer);
+            }
+        }
+    }
+
+    /// Posterize a layer (reduce color levels per channel).
+    pub fn posterize_layer(&mut self, id: u32, levels: u32) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                filter::posterize(&mut img.buffer, levels);
+            }
+        }
+    }
+
+    /// Convert a layer to black/white based on luminance threshold (0–255).
+    pub fn threshold_layer(&mut self, id: u32, thresh: u8) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                filter::threshold(&mut img.buffer, thresh);
+            }
+        }
+    }
+
+    /// Apply levels adjustment to a layer.
+    #[allow(clippy::too_many_arguments)]
+    pub fn levels_layer(
+        &mut self,
+        id: u32,
+        in_black: u8,
+        in_white: u8,
+        gamma: f64,
+        out_black: u8,
+        out_white: u8,
+    ) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                filter::levels(&mut img.buffer, in_black, in_white, gamma, out_black, out_white);
+            }
+        }
+    }
+
+    /// Apply a gradient map to a layer. `stops_colors` is [r,g,b,a, r,g,b,a, ...],
+    /// `stops_positions` is [f64, f64, ...].
+    pub fn gradient_map_layer(
+        &mut self,
+        id: u32,
+        stops_colors: &[u8],
+        stops_positions: &[f64],
+    ) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Image(img) = &mut layer.kind {
+                let count = stops_positions.len();
+                let mut stops = Vec::with_capacity(count);
+                for i in 0..count {
+                    let ci = i * 4;
+                    if ci + 3 < stops_colors.len() {
+                        stops.push((
+                            stops_positions[i],
+                            Rgba::new(
+                                stops_colors[ci],
+                                stops_colors[ci + 1],
+                                stops_colors[ci + 2],
+                                stops_colors[ci + 3],
+                            ),
+                        ));
+                    }
+                }
+                filter::gradient_map(&mut img.buffer, &stops);
+            }
+        }
+    }
 }
 
 // ── Free functions: color utilities ──
@@ -675,5 +859,159 @@ mod tests {
 
         let layer = doc.inner.find_layer(gid).unwrap();
         assert!(matches!(layer.kind, LayerKind::Image(_)));
+    }
+
+    // ── Phase 3 tests ──
+
+    fn make_red_4x4() -> (Document, u32) {
+        let mut doc = Document::new(4, 4);
+        let rgba: Vec<u8> = [255, 0, 0, 255].iter().copied().cycle().take(4 * 4 * 4).collect();
+        let id = doc.add_image_layer("red", &rgba, 4, 4, 0, 0);
+        (doc, id)
+    }
+
+    #[test]
+    fn resize_layer_nearest_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.resize_layer_nearest(id, 2, 2);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf.len(), 2 * 2 * 4);
+        assert_eq!(buf[0], 255); // still red
+    }
+
+    #[test]
+    fn resize_layer_bilinear_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.resize_layer_bilinear(id, 8, 8);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf.len(), 8 * 8 * 4);
+    }
+
+    #[test]
+    fn resize_layer_lanczos3_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.resize_layer_lanczos3(id, 8, 8);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf.len(), 8 * 8 * 4);
+    }
+
+    #[test]
+    fn crop_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.crop_layer(id, 1, 1, 2, 2);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf.len(), 2 * 2 * 4);
+    }
+
+    #[test]
+    fn trim_layer_alpha_wasm() {
+        let mut doc = Document::new(4, 4);
+        // Only center 2x2 has alpha
+        let mut rgba = vec![0u8; 4 * 4 * 4];
+        for y in 1..3 {
+            for x in 1..3 {
+                let i = (y * 4 + x) * 4;
+                rgba[i] = 255;
+                rgba[i + 3] = 255;
+            }
+        }
+        let id = doc.add_image_layer("img", &rgba, 4, 4, 0, 0);
+        doc.trim_layer_alpha(id);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf.len(), 2 * 2 * 4);
+    }
+
+    #[test]
+    fn rotate_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.rotate_layer(id, 45.0);
+        // Rotated buffer should be larger than original
+        let buf = doc.get_layer_rgba(id);
+        assert!(buf.len() > 4 * 4 * 4);
+    }
+
+    #[test]
+    fn box_blur_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.box_blur_layer(id, 1);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf.len(), 4 * 4 * 4);
+    }
+
+    #[test]
+    fn gaussian_blur_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.gaussian_blur_layer(id, 1);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf.len(), 4 * 4 * 4);
+    }
+
+    #[test]
+    fn sharpen_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.sharpen_layer(id);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf[0], 255); // uniform red stays red after sharpen
+    }
+
+    #[test]
+    fn edge_detect_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.edge_detect_layer(id);
+        // Should not panic
+        let _ = doc.get_layer_rgba(id);
+    }
+
+    #[test]
+    fn emboss_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.emboss_layer(id);
+        let _ = doc.get_layer_rgba(id);
+    }
+
+    #[test]
+    fn invert_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.invert_layer(id);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf[0], 0);   // 255 inverted
+        assert_eq!(buf[1], 255); // 0 inverted
+        assert_eq!(buf[2], 255); // 0 inverted
+    }
+
+    #[test]
+    fn posterize_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.posterize_layer(id, 2);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf[0], 255); // red stays 255 with 2 levels
+    }
+
+    #[test]
+    fn threshold_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.threshold_layer(id, 128);
+        let buf = doc.get_layer_rgba(id);
+        // Red (255,0,0) luminance ≈ 76, below 128 → black
+        assert_eq!(buf[0], 0);
+    }
+
+    #[test]
+    fn levels_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.levels_layer(id, 0, 255, 1.0, 0, 128);
+        let buf = doc.get_layer_rgba(id);
+        assert_eq!(buf[0], 128); // 255 remapped to 128
+    }
+
+    #[test]
+    fn gradient_map_layer_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        let colors = vec![0, 0, 255, 255, 255, 255, 0, 255]; // blue to yellow
+        let positions = vec![0.0, 1.0];
+        doc.gradient_map_layer(id, &colors, &positions);
+        // Red luminance ≈ 76/255 ≈ 0.298 → interpolated between blue and yellow
+        let buf = doc.get_layer_rgba(id);
+        assert!(buf[3] == 255); // alpha preserved
     }
 }

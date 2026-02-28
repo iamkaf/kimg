@@ -43,13 +43,15 @@ Feature-complete replacement for the JS compositor (core + WASM).
 - [x] WASM bindings: `set_blend_mode`, `set_layer_mask`, `remove_layer_mask`, `set_clip_to_below`, `add_solid_color_layer`, `add_gradient_layer`, `flatten_group`
 - [x] 71 unit tests passing (57 core + 14 WASM)
 
-## Phase 3: Advanced Filters & Transforms (v0.3)
+## Phase 3: Advanced Filters & Transforms (v0.3) (done)
 
-- [ ] Convolution kernels (blur, edge detect, emboss)
-- [ ] Levels/Curves, Posterize, Threshold, Invert, Gradient Map
-- [ ] Arbitrary-angle rotation (bilinear interpolation)
-- [ ] Resize (bilinear, Lanczos3)
-- [ ] Crop, trim alpha
+- [x] Convolution kernels (blur, edge detect, emboss, sharpen) — `convolution.rs`
+- [x] Pixel filters: Invert, Posterize, Threshold, Levels, Gradient Map — `filter.rs`
+- [x] Arbitrary-angle rotation (bilinear interpolation) — `transform.rs`
+- [x] Resize (nearest-neighbor, bilinear, Lanczos3) — `transform.rs`
+- [x] Crop, trim alpha — `transform.rs`
+- [x] WASM bindings for all Phase 3 features (30 WASM tests, 82 core tests)
+- [x] 112 unit tests passing (82 core + 30 WASM)
 
 ## Phase 4: Sprite & Game Dev Tools (v0.4)
 

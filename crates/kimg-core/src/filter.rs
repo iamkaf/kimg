@@ -211,6 +211,145 @@ pub fn apply_hsl_filter(buf: &mut ImageBuffer, cfg: &HslFilterConfig) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Pixel-level filters (Phase 3)
+// ---------------------------------------------------------------------------
+
+/// Invert all RGB channels. Alpha is preserved.
+pub fn invert(buf: &mut ImageBuffer) {
+    for i in (0..buf.data.len()).step_by(4) {
+        if buf.data[i + 3] == 0 {
+            continue;
+        }
+        buf.data[i] = 255 - buf.data[i];
+        buf.data[i + 1] = 255 - buf.data[i + 1];
+        buf.data[i + 2] = 255 - buf.data[i + 2];
+    }
+}
+
+/// Reduce color depth per channel. `levels` is the number of discrete
+/// output levels per channel (2 = pure black/white per channel, 256 = no-op).
+pub fn posterize(buf: &mut ImageBuffer, levels: u32) {
+    if levels == 0 || levels >= 256 {
+        return;
+    }
+    let levels_f = levels as f64;
+    for i in (0..buf.data.len()).step_by(4) {
+        if buf.data[i + 3] == 0 {
+            continue;
+        }
+        for c in 0..3 {
+            let v = buf.data[i + c] as f64 / 255.0;
+            let q = (v * (levels_f - 1.0)).round() / (levels_f - 1.0);
+            buf.data[i + c] = (q * 255.0).clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
+/// Convert to black/white based on luminance threshold (0–255).
+pub fn threshold(buf: &mut ImageBuffer, thresh: u8) {
+    for i in (0..buf.data.len()).step_by(4) {
+        if buf.data[i + 3] == 0 {
+            continue;
+        }
+        let lum = (0.299 * buf.data[i] as f64
+            + 0.587 * buf.data[i + 1] as f64
+            + 0.114 * buf.data[i + 2] as f64) as u8;
+        let out = if lum >= thresh { 255 } else { 0 };
+        buf.data[i] = out;
+        buf.data[i + 1] = out;
+        buf.data[i + 2] = out;
+    }
+}
+
+/// Levels adjustment: remap input range [in_black, in_white] to output range
+/// [out_black, out_white] with a gamma curve (midtones). Gamma 1.0 = linear.
+pub fn levels(
+    buf: &mut ImageBuffer,
+    in_black: u8,
+    in_white: u8,
+    gamma: f64,
+    out_black: u8,
+    out_white: u8,
+) {
+    let in_range = (in_white as f64 - in_black as f64).max(1.0);
+    let out_range = out_white as f64 - out_black as f64;
+    let gamma_inv = if gamma > 0.0 { 1.0 / gamma } else { 1.0 };
+
+    // Build lookup table for speed
+    let mut lut = [0u8; 256];
+    for i in 0..256 {
+        let clamped = (i as f64 - in_black as f64).clamp(0.0, in_range) / in_range;
+        let curved = clamped.powf(gamma_inv);
+        lut[i] = (out_black as f64 + curved * out_range).clamp(0.0, 255.0) as u8;
+    }
+
+    for i in (0..buf.data.len()).step_by(4) {
+        if buf.data[i + 3] == 0 {
+            continue;
+        }
+        buf.data[i] = lut[buf.data[i] as usize];
+        buf.data[i + 1] = lut[buf.data[i + 1] as usize];
+        buf.data[i + 2] = lut[buf.data[i + 2] as usize];
+    }
+}
+
+/// Map grayscale luminance to a color gradient. `stops` is a sorted list of
+/// (position 0.0–1.0, Rgba color). Minimum 2 stops required.
+pub fn gradient_map(buf: &mut ImageBuffer, stops: &[(f64, crate::pixel::Rgba)]) {
+    if stops.len() < 2 {
+        return;
+    }
+
+    // Build 256-entry LUT from gradient stops
+    let mut lut = [(0u8, 0u8, 0u8); 256];
+    for i in 0..256 {
+        let t = i as f64 / 255.0;
+        // Find the two surrounding stops
+        let mut lo = 0;
+        let mut hi = stops.len() - 1;
+        for (j, stop) in stops.iter().enumerate() {
+            if stop.0 <= t {
+                lo = j;
+            }
+            if stop.0 >= t && j < hi {
+                hi = j;
+                break;
+            }
+        }
+        if lo == hi {
+            lut[i] = (stops[lo].1.r, stops[lo].1.g, stops[lo].1.b);
+        } else {
+            let range = stops[hi].0 - stops[lo].0;
+            let frac = if range > 0.0 {
+                (t - stops[lo].0) / range
+            } else {
+                0.0
+            };
+            let a = &stops[lo].1;
+            let b = &stops[hi].1;
+            lut[i] = (
+                (a.r as f64 + (b.r as f64 - a.r as f64) * frac).clamp(0.0, 255.0) as u8,
+                (a.g as f64 + (b.g as f64 - a.g as f64) * frac).clamp(0.0, 255.0) as u8,
+                (a.b as f64 + (b.b as f64 - a.b as f64) * frac).clamp(0.0, 255.0) as u8,
+            );
+        }
+    }
+
+    for i in (0..buf.data.len()).step_by(4) {
+        if buf.data[i + 3] == 0 {
+            continue;
+        }
+        let lum = (0.299 * buf.data[i] as f64
+            + 0.587 * buf.data[i + 1] as f64
+            + 0.114 * buf.data[i + 2] as f64) as u8;
+        let (r, g, b) = lut[lum as usize];
+        buf.data[i] = r;
+        buf.data[i + 1] = g;
+        buf.data[i + 2] = b;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,5 +428,81 @@ mod tests {
         let p = buf.get_pixel(0, 0);
         // 200 + round(-0.5 * 255) = 200 - 128 = 72
         assert!(p.a < 80 && p.a > 60, "a={}", p.a);
+    }
+
+    #[test]
+    fn invert_flips_channels() {
+        let mut buf = ImageBuffer::new_transparent(1, 1);
+        buf.set_pixel(0, 0, Rgba::new(100, 150, 200, 255));
+        invert(&mut buf);
+        let p = buf.get_pixel(0, 0);
+        assert_eq!(p, Rgba::new(155, 105, 55, 255));
+    }
+
+    #[test]
+    fn invert_skips_transparent() {
+        let mut buf = ImageBuffer::new_transparent(1, 1);
+        invert(&mut buf);
+        assert_eq!(buf.get_pixel(0, 0), Rgba::TRANSPARENT);
+    }
+
+    #[test]
+    fn posterize_reduces_levels() {
+        let mut buf = ImageBuffer::new_transparent(1, 1);
+        buf.set_pixel(0, 0, Rgba::new(100, 200, 50, 255));
+        posterize(&mut buf, 2);
+        let p = buf.get_pixel(0, 0);
+        // 2 levels → each channel either 0 or 255
+        assert!(p.r == 0 || p.r == 255);
+        assert!(p.g == 0 || p.g == 255);
+        assert!(p.b == 0 || p.b == 255);
+    }
+
+    #[test]
+    fn threshold_produces_bw() {
+        let mut buf = ImageBuffer::new_transparent(1, 1);
+        buf.set_pixel(0, 0, Rgba::new(200, 200, 200, 255));
+        threshold(&mut buf, 128);
+        let p = buf.get_pixel(0, 0);
+        assert_eq!(p.r, 255);
+        assert_eq!(p.g, 255);
+        assert_eq!(p.b, 255);
+    }
+
+    #[test]
+    fn threshold_dark_to_black() {
+        let mut buf = ImageBuffer::new_transparent(1, 1);
+        buf.set_pixel(0, 0, Rgba::new(30, 30, 30, 255));
+        threshold(&mut buf, 128);
+        let p = buf.get_pixel(0, 0);
+        assert_eq!(p.r, 0);
+    }
+
+    #[test]
+    fn levels_remap() {
+        let mut buf = ImageBuffer::new_transparent(1, 1);
+        buf.set_pixel(0, 0, Rgba::new(128, 128, 128, 255));
+        levels(&mut buf, 0, 255, 1.0, 0, 128);
+        let p = buf.get_pixel(0, 0);
+        // Linear remap: 128/255 * 128 ≈ 64
+        assert!(p.r > 60 && p.r < 68, "r={}", p.r);
+    }
+
+    #[test]
+    fn gradient_map_bw_to_color() {
+        let mut buf = ImageBuffer::new_transparent(2, 1);
+        buf.set_pixel(0, 0, Rgba::new(0, 0, 0, 255));
+        buf.set_pixel(1, 0, Rgba::new(255, 255, 255, 255));
+        let stops = vec![
+            (0.0, Rgba::new(255, 0, 0, 255)),
+            (1.0, Rgba::new(0, 0, 255, 255)),
+        ];
+        gradient_map(&mut buf, &stops);
+        let dark = buf.get_pixel(0, 0);
+        let light = buf.get_pixel(1, 0);
+        assert_eq!(dark.r, 255); // black → red
+        assert_eq!(dark.b, 0);
+        assert_eq!(light.b, 255); // white → blue
+        assert_eq!(light.r, 0);
     }
 }

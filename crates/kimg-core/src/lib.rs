@@ -6,4 +6,6 @@ pub mod blit;
 pub mod filter;
 pub mod layer;
 pub mod codec;
+pub mod convolution;
+pub mod transform;
 pub mod document;
