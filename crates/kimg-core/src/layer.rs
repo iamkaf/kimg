@@ -1,6 +1,8 @@
+use crate::blend::BlendMode;
 use crate::blit::{Anchor, Rotation};
 use crate::buffer::ImageBuffer;
 use crate::filter::HslFilterConfig;
+use crate::pixel::Rgba;
 
 /// Unique layer identifier.
 pub type LayerId = u32;
@@ -14,6 +16,11 @@ pub struct LayerCommon {
     pub opacity: f64,
     pub x: i32,
     pub y: i32,
+    pub blend_mode: BlendMode,
+    /// Optional grayscale mask. White = fully visible, black = fully hidden.
+    pub mask: Option<ImageBuffer>,
+    /// When true, this layer is clipped to the alpha of the layer directly below it.
+    pub clip_to_below: bool,
 }
 
 impl LayerCommon {
@@ -25,6 +32,9 @@ impl LayerCommon {
             opacity: 1.0,
             x: 0,
             y: 0,
+            blend_mode: BlendMode::Normal,
+            mask: None,
+            clip_to_below: false,
         }
     }
 }
@@ -58,6 +68,41 @@ pub struct GroupLayerData {
     pub children: Vec<Layer>,
 }
 
+/// Solid color fill layer.
+#[derive(Debug, Clone)]
+pub struct SolidColorLayerData {
+    pub color: Rgba,
+}
+
+/// A stop in a linear gradient.
+#[derive(Debug, Clone, Copy)]
+pub struct GradientStop {
+    /// Position along the gradient, 0.0 to 1.0.
+    pub position: f64,
+    pub color: Rgba,
+}
+
+/// Gradient fill direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GradientDirection {
+    /// Left to right.
+    #[default]
+    Horizontal,
+    /// Top to bottom.
+    Vertical,
+    /// Top-left to bottom-right.
+    DiagonalDown,
+    /// Bottom-left to top-right.
+    DiagonalUp,
+}
+
+/// Linear gradient fill layer.
+#[derive(Debug, Clone)]
+pub struct GradientLayerData {
+    pub stops: Vec<GradientStop>,
+    pub direction: GradientDirection,
+}
+
 /// A layer in the compositing document.
 #[derive(Debug, Clone)]
 pub struct Layer {
@@ -72,6 +117,8 @@ pub enum LayerKind {
     Paint(PaintLayerData),
     Filter(FilterLayerData),
     Group(GroupLayerData),
+    SolidColor(SolidColorLayerData),
+    Gradient(GradientLayerData),
 }
 
 #[cfg(test)]
@@ -87,5 +134,8 @@ mod tests {
         assert_eq!(c.opacity, 1.0);
         assert_eq!(c.x, 0);
         assert_eq!(c.y, 0);
+        assert_eq!(c.blend_mode, BlendMode::Normal);
+        assert!(c.mask.is_none());
+        assert!(!c.clip_to_below);
     }
 }

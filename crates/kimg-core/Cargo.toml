@@ -5,3 +5,4 @@ edition = "2021"
 description = "Pure Rust pixel engine for layer-based image compositing"
 
 [dependencies]
+png = "0.17"

@@ -5,4 +5,5 @@ pub mod blend;
 pub mod blit;
 pub mod filter;
 pub mod layer;
+pub mod codec;
 pub mod document;

@@ -16,7 +16,7 @@
       padding: 48px 24px;
     }
     .container {
-      max-width: 640px;
+      max-width: 800px;
       width: 100%;
     }
     h1 {
@@ -29,27 +29,45 @@
       color: #8b949e;
       margin-bottom: 32px;
     }
+    .canvas-row {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+    .canvas-panel {
+      flex: 1;
+      min-width: 240px;
+    }
+    .canvas-panel h2 {
+      font-size: 13px;
+      font-weight: 600;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
     .canvas-wrap {
       background: #161b22;
       border: 1px solid #30363d;
       border-radius: 8px;
-      padding: 24px;
+      padding: 16px;
       display: flex;
       justify-content: center;
-      margin-bottom: 24px;
+      align-items: center;
     }
     canvas {
       image-rendering: pixelated;
       image-rendering: crisp-edges;
     }
-    .info {
+    .panel {
       background: #161b22;
       border: 1px solid #30363d;
       border-radius: 8px;
       padding: 16px 20px;
       margin-bottom: 16px;
     }
-    .info h2 {
+    .panel h2 {
       font-size: 13px;
       font-weight: 600;
       color: #8b949e;
@@ -90,47 +108,157 @@
     }
     .layer-name { color: #f0f6fc; }
     .layer-detail { color: #8b949e; font-size: 12px; }
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+    .slider-row label {
+      color: #8b949e;
+      width: 100px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+    .slider-row input[type="range"] {
+      flex: 1;
+      accent-color: #58a6ff;
+    }
+    .slider-row .slider-val {
+      color: #58a6ff;
+      width: 50px;
+      text-align: right;
+      font-size: 12px;
+    }
+    .color-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid #21262d;
+    }
+    .color-row:last-child { border-bottom: none; }
+    .color-swatch {
+      width: 32px;
+      height: 32px;
+      border-radius: 4px;
+      border: 1px solid #30363d;
+      flex-shrink: 0;
+    }
+    .color-info { flex: 1; }
+    .color-label { color: #f0f6fc; font-size: 13px; }
+    .color-detail { color: #8b949e; font-size: 12px; }
+    .btn {
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: #30363d; }
+    .btn-row { display: flex; gap: 8px; margin-top: 10px; }
     #status {
       color: #8b949e;
       padding: 16px;
       text-align: center;
     }
     .error { color: #f85149; }
+    .badge {
+      display: inline-block;
+      background: #1f6feb33;
+      color: #58a6ff;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      margin-left: 8px;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>kimg</h1>
-    <p class="subtitle">Rust+WASM compositor — proof of concept</p>
-
-    <div class="canvas-wrap">
-      <canvas id="canvas" width="128" height="128" style="width: 384px; height: 384px;"></canvas>
-    </div>
+    <h1>kimg <span class="badge">Phase 1</span></h1>
+    <p class="subtitle">Rust+WASM compositor — layer setters, groups, filters, PNG, color utilities</p>
 
     <div id="status">Initializing WASM...</div>
 
-    <div id="timing-panel" class="info" style="display:none">
-      <h2>Performance</h2>
-      <div class="info-grid">
-        <span class="label">WASM init</span>
-        <span class="value" id="t-init">—</span>
-        <span class="label">Render</span>
-        <span class="value" id="t-render">—</span>
-        <span class="label">Canvas</span>
-        <span class="value" id="t-canvas">—</span>
-        <span class="label">Layers</span>
-        <span class="value" id="t-layers">—</span>
-      </div>
-    </div>
+    <div id="main-ui" style="display:none">
 
-    <div id="layers-panel" class="info" style="display:none">
-      <h2>Layer Stack (top to bottom)</h2>
-      <ul class="layers" id="layer-list"></ul>
+      <div class="canvas-row">
+        <div class="canvas-panel">
+          <h2>Live render</h2>
+          <div class="canvas-wrap">
+            <canvas id="canvas" width="128" height="128" style="width: 384px; height: 384px;"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="controls-panel">
+        <h2>Filter Controls (scoped to group)</h2>
+        <div id="sliders"></div>
+        <div class="slider-row" style="margin-top:8px">
+          <label>Checker opacity</label>
+          <input type="range" id="opacity-slider" min="0" max="100" value="100">
+          <span class="slider-val" id="opacity-val">1.00</span>
+        </div>
+        <div class="slider-row">
+          <label>Checker visible</label>
+          <input type="checkbox" id="visible-check" checked>
+          <span class="slider-val"></span>
+        </div>
+        <div class="slider-row">
+          <label>Rotation</label>
+          <input type="range" id="rotation-slider" min="0" max="3" value="0" step="1">
+          <span class="slider-val" id="rotation-val">0</span>
+        </div>
+        <div class="slider-row">
+          <label>Flip X / Y</label>
+          <input type="checkbox" id="flip-x"> X
+          <input type="checkbox" id="flip-y"> Y
+          <span class="slider-val"></span>
+        </div>
+        <div class="btn-row">
+          <button class="btn" id="btn-export">Export PNG</button>
+          <button class="btn" id="btn-reimport">PNG round-trip</button>
+        </div>
+      </div>
+
+      <div class="panel" id="timing-panel">
+        <h2>Performance</h2>
+        <div class="info-grid">
+          <span class="label">WASM init</span>
+          <span class="value" id="t-init">-</span>
+          <span class="label">Render</span>
+          <span class="value" id="t-render">-</span>
+          <span class="label">Total layers</span>
+          <span class="value" id="t-layers">-</span>
+        </div>
+      </div>
+
+      <div class="panel" id="color-panel">
+        <h2>Color Utilities</h2>
+        <div id="color-results"></div>
+      </div>
+
+      <div class="panel" id="layers-panel">
+        <h2>Layer Stack (top to bottom)</h2>
+        <ul class="layers" id="layer-list"></ul>
+      </div>
     </div>
   </div>
 
   <script type="module">
-    import init, { Document } from '../pkg/kimg_wasm.js';
+    import init, {
+      Document,
+      hex_to_rgb,
+      rgb_to_hex,
+      relative_luminance,
+      contrast_ratio,
+      dominant_rgb_from_rgba,
+    } from '../pkg/kimg_wasm.js';
 
     // --- Pixel data generators ---
 
@@ -166,7 +294,6 @@
           if (on) {
             buf[i] = r; buf[i+1] = g; buf[i+2] = b; buf[i+3] = a;
           }
-          // else stays transparent
         }
       }
       return buf;
@@ -181,62 +308,231 @@
       await init();
       const tInit = performance.now() - t0;
 
-      // Build the document
       const SIZE = 128;
       const doc = new Document(SIZE, SIZE);
 
-      const layers = [
-        { name: 'Background',  detail: '128x128 solid',    swatch: '#3b82f6',
-          data: solidRgba(128, 128, 59, 130, 246, 255),    w: 128, h: 128, x: 0, y: 0 },
-        { name: 'Red gradient', detail: '128x128 alpha',   swatch: 'linear-gradient(to right, transparent, #ef4444)',
-          data: gradientRgba(128, 128, 239, 68, 68),       w: 128, h: 128, x: 0, y: 0 },
-        { name: 'Checkerboard', detail: '64x64 @ (32,32)', swatch: '#22c55e',
-          data: checkerRgba(64, 64, 34, 197, 94, 200, 8),  w: 64, h: 64, x: 32, y: 32 },
-        { name: 'White square', detail: '16x16 @ (56,56)', swatch: '#ffffff',
-          data: solidRgba(16, 16, 255, 255, 255, 255),     w: 16, h: 16, x: 56, y: 56 },
+      // --- Build layer tree ---
+
+      // 1. Background (top-level)
+      const bgId = doc.add_image_layer('Background', solidRgba(128, 128, 59, 130, 246, 255), 128, 128, 0, 0);
+
+      // 2. Group with image children + a scoped filter
+      const groupId = doc.add_group_layer('Tinted group');
+      const gradientId = doc.add_image_to_group(groupId, 'Red gradient', gradientRgba(128, 128, 239, 68, 68), 128, 128, 0, 0);
+      const checkerId = doc.add_image_to_group(groupId, 'Checkerboard', checkerRgba(64, 64, 34, 197, 94, 200, 8), 64, 64, 32, 32);
+      const filterId = doc.add_filter_to_group(groupId, 'Group filter');
+
+      // 3. White square with transforms (top-level)
+      const squareId = doc.add_image_layer('White square', solidRgba(16, 16, 255, 255, 255, 255), 16, 16, 56, 56);
+      doc.set_anchor(squareId, 1); // Center anchor
+
+      // Layer metadata for UI
+      const layerInfo = [
+        { name: 'White square',   detail: '16x16 center-anchored', swatch: '#ffffff', id: squareId },
+        { name: 'Tinted group',   detail: 'group with scoped filter', swatch: '#8b949e', id: groupId,
+          children: [
+            { name: 'Group filter', detail: 'HSL filter', swatch: '#a855f7', id: filterId },
+            { name: 'Checkerboard', detail: '64x64 @ (32,32)', swatch: '#22c55e', id: checkerId },
+            { name: 'Red gradient', detail: '128x128 alpha', swatch: 'linear-gradient(to right, transparent, #ef4444)', id: gradientId },
+          ],
+        },
+        { name: 'Background',    detail: '128x128 solid', swatch: '#3b82f6', id: bgId },
       ];
 
-      for (const l of layers) {
-        doc.add_image_layer(l.name, l.data, l.w, l.h, l.x, l.y);
+      // --- Filter sliders ---
+
+      const filterDefs = [
+        { key: 'hue',         label: 'Hue',         min: -180, max: 180, step: 1,    init: 0 },
+        { key: 'saturation',  label: 'Saturation',  min: -100, max: 100, step: 1,    init: 0 },
+        { key: 'lightness',   label: 'Lightness',   min: -100, max: 100, step: 1,    init: 0 },
+        { key: 'brightness',  label: 'Brightness',  min: -100, max: 100, step: 1,    init: 0 },
+        { key: 'contrast',    label: 'Contrast',    min: -100, max: 100, step: 1,    init: 0 },
+        { key: 'temperature', label: 'Temperature', min: -100, max: 100, step: 1,    init: 0 },
+        { key: 'tint',        label: 'Tint',        min: -100, max: 100, step: 1,    init: 0 },
+        { key: 'sharpen',     label: 'Sharpen',     min: 0,    max: 100, step: 1,    init: 0 },
+      ];
+
+      const filterState = {};
+      filterDefs.forEach(d => filterState[d.key] = d.init);
+
+      const slidersEl = document.getElementById('sliders');
+      for (const d of filterDefs) {
+        const row = document.createElement('div');
+        row.className = 'slider-row';
+        row.innerHTML = `
+          <label>${d.label}</label>
+          <input type="range" id="f-${d.key}" min="${d.min}" max="${d.max}" step="${d.step}" value="${d.init}">
+          <span class="slider-val" id="fv-${d.key}">${d.init}</span>
+        `;
+        slidersEl.appendChild(row);
+        row.querySelector('input').addEventListener('input', (e) => {
+          filterState[d.key] = Number(e.target.value);
+          row.querySelector('.slider-val').textContent = e.target.value;
+          updateFilter();
+          rerender();
+        });
       }
 
-      // Render
-      const t1 = performance.now();
-      const rgba = doc.render();
-      const tRender = performance.now() - t1;
+      function updateFilter() {
+        doc.set_filter_config(
+          filterId,
+          filterState.hue,
+          filterState.saturation / 100,
+          filterState.lightness / 100,
+          0,
+          filterState.brightness / 100,
+          filterState.contrast / 100,
+          filterState.temperature / 100,
+          filterState.tint / 100,
+          filterState.sharpen / 100,
+        );
+      }
 
-      // Draw to canvas
+      // --- Layer property controls ---
+
+      document.getElementById('opacity-slider').addEventListener('input', (e) => {
+        const v = Number(e.target.value) / 100;
+        document.getElementById('opacity-val').textContent = v.toFixed(2);
+        doc.set_opacity(checkerId, v);
+        rerender();
+      });
+
+      document.getElementById('visible-check').addEventListener('change', (e) => {
+        doc.set_visible(checkerId, e.target.checked);
+        rerender();
+      });
+
+      document.getElementById('rotation-slider').addEventListener('input', (e) => {
+        const deg = Number(e.target.value) * 90;
+        document.getElementById('rotation-val').textContent = `${deg}`;
+        doc.set_rotation(squareId, deg);
+        rerender();
+      });
+
+      document.getElementById('flip-x').addEventListener('change', () => {
+        doc.set_flip(squareId, document.getElementById('flip-x').checked, document.getElementById('flip-y').checked);
+        rerender();
+      });
+      document.getElementById('flip-y').addEventListener('change', () => {
+        doc.set_flip(squareId, document.getElementById('flip-x').checked, document.getElementById('flip-y').checked);
+        rerender();
+      });
+
+      // --- PNG export / round-trip ---
+
+      document.getElementById('btn-export').addEventListener('click', () => {
+        const pngBytes = doc.export_png();
+        const blob = new Blob([pngBytes], { type: 'image/png' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'kimg-export.png';
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+
+      document.getElementById('btn-reimport').addEventListener('click', () => {
+        const pngBytes = doc.export_png();
+
+        const doc2 = new Document(SIZE, SIZE);
+        doc2.add_png_layer('re-imported', pngBytes, 0, 0);
+        const rgba2 = doc2.render();
+        drawToCanvas(rgba2);
+        doc2.free();
+
+        setTimeout(() => rerender(), 1500);
+      });
+
+      // --- Render loop ---
+
       const canvas = document.getElementById('canvas');
       const ctx = canvas.getContext('2d');
-      const imageData = new ImageData(new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength), SIZE, SIZE);
-      const t2 = performance.now();
-      ctx.putImageData(imageData, 0, 0);
-      const tCanvas = performance.now() - t2;
 
-      // Update UI
-      statusEl.style.display = 'none';
-
-      document.getElementById('timing-panel').style.display = '';
-      document.getElementById('t-init').textContent = `${tInit.toFixed(1)} ms`;
-      document.getElementById('t-render').textContent = `${tRender.toFixed(2)} ms`;
-      document.getElementById('t-canvas').textContent = `${SIZE}x${SIZE} (${(SIZE*SIZE*4/1024).toFixed(0)} KB RGBA)`;
-      document.getElementById('t-layers').textContent = `${doc.layer_count()}`;
-
-      document.getElementById('layers-panel').style.display = '';
-      const listEl = document.getElementById('layer-list');
-      for (let i = layers.length - 1; i >= 0; i--) {
-        const l = layers[i];
-        const li = document.createElement('li');
-        li.innerHTML = `
-          <span class="layer-index">${i}</span>
-          <span class="layer-swatch" style="background: ${l.swatch}"></span>
-          <span class="layer-name">${l.name}</span>
-          <span class="layer-detail">${l.detail}</span>
-        `;
-        listEl.appendChild(li);
+      function drawToCanvas(rgba) {
+        const imageData = new ImageData(new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength), SIZE, SIZE);
+        ctx.putImageData(imageData, 0, 0);
       }
 
-      doc.free();
+      function rerender() {
+        const t1 = performance.now();
+        const rgba = doc.render();
+        const tRender = performance.now() - t1;
+        drawToCanvas(rgba);
+        document.getElementById('t-render').textContent = `${tRender.toFixed(2)} ms`;
+      }
+
+      // Initial render
+      rerender();
+
+      // --- Color utilities demo ---
+
+      const bgHex = '#3b82f6';
+      const whiteHex = '#ffffff';
+      const blackHex = '#000000';
+
+      const bgRgb = hex_to_rgb(bgHex);
+      const bgLum = relative_luminance(bgHex);
+      const crWhite = contrast_ratio(bgHex, whiteHex);
+      const crBlack = contrast_ratio(bgHex, blackHex);
+
+      const bgData = solidRgba(128, 128, 59, 130, 246, 255);
+      const dominant = dominant_rgb_from_rgba(bgData, 128, 128);
+      const dominantHex = dominant.length === 3 ? rgb_to_hex(dominant[0], dominant[1], dominant[2]) : '?';
+
+      const colorResults = document.getElementById('color-results');
+      const colorEntries = [
+        { swatch: bgHex, label: `hex_to_rgb("${bgHex}")`, detail: `rgb(${bgRgb[0]}, ${bgRgb[1]}, ${bgRgb[2]})` },
+        { swatch: bgHex, label: `relative_luminance("${bgHex}")`, detail: bgLum.toFixed(4) },
+        { swatch: bgHex, label: `contrast_ratio vs white`, detail: `${crWhite.toFixed(2)}:1` },
+        { swatch: bgHex, label: `contrast_ratio vs black`, detail: `${crBlack.toFixed(2)}:1` },
+        { swatch: dominantHex, label: `dominant_rgb_from_rgba (bg)`, detail: `${dominantHex}` },
+        { swatch: dominantHex, label: `rgb_to_hex(${dominant[0]}, ${dominant[1]}, ${dominant[2]})`, detail: dominantHex },
+      ];
+
+      for (const c of colorEntries) {
+        const row = document.createElement('div');
+        row.className = 'color-row';
+        row.innerHTML = `
+          <div class="color-swatch" style="background: ${c.swatch}"></div>
+          <div class="color-info">
+            <div class="color-label">${c.label}</div>
+            <div class="color-detail">${c.detail}</div>
+          </div>
+        `;
+        colorResults.appendChild(row);
+      }
+
+      // --- Timing / info ---
+
+      document.getElementById('t-init').textContent = `${tInit.toFixed(1)} ms`;
+      document.getElementById('t-layers').textContent = `${doc.layer_count()} top-level (${doc.layer_count() + 3} total)`;
+
+      // --- Layer tree display ---
+
+      const listEl = document.getElementById('layer-list');
+      function addLayerRow(info, depth) {
+        const li = document.createElement('li');
+        li.style.paddingLeft = `${depth * 20}px`;
+        li.innerHTML = `
+          <span class="layer-index">${info.id}</span>
+          <span class="layer-swatch" style="background: ${info.swatch}"></span>
+          <span class="layer-name">${info.name}</span>
+          <span class="layer-detail">${info.detail}</span>
+        `;
+        listEl.appendChild(li);
+        if (info.children) {
+          for (const child of info.children) {
+            addLayerRow(child, depth + 1);
+          }
+        }
+      }
+      for (const info of layerInfo) {
+        addLayerRow(info, 0);
+      }
+
+      // Show UI
+      statusEl.style.display = 'none';
+      document.getElementById('main-ui').style.display = '';
 
     } catch (err) {
       statusEl.classList.add('error');

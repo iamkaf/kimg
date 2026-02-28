@@ -1,8 +1,11 @@
-use crate::blend::blend_normal;
+use crate::blend::{blend, blend_normal};
 use crate::blit::{blit_transformed, BlitParams};
 use crate::buffer::ImageBuffer;
-use crate::filter::apply_hsl_filter;
-use crate::layer::{GroupLayerData, Layer, LayerKind};
+use crate::filter::{apply_hsl_filter, HslFilterConfig};
+use crate::layer::{
+    GradientDirection, GradientLayerData, GroupLayerData, Layer, LayerKind, SolidColorLayerData,
+};
+use crate::pixel::Rgba;
 
 /// A compositing document with a canvas size and a layer tree.
 #[derive(Debug, Clone)]
@@ -30,6 +33,107 @@ impl Document {
         id
     }
 
+    /// Find a layer by ID (immutable), searching recursively through groups.
+    pub fn find_layer(&self, id: u32) -> Option<&Layer> {
+        fn search(layers: &[Layer], id: u32) -> Option<&Layer> {
+            for layer in layers {
+                if layer.common.id == id {
+                    return Some(layer);
+                }
+                if let LayerKind::Group(g) = &layer.kind {
+                    if let Some(found) = search(&g.children, id) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        }
+        search(&self.layers, id)
+    }
+
+    /// Find a layer by ID (mutable), searching recursively through groups.
+    pub fn find_layer_mut(&mut self, id: u32) -> Option<&mut Layer> {
+        fn search(layers: &mut [Layer], id: u32) -> Option<&mut Layer> {
+            for layer in layers {
+                if layer.common.id == id {
+                    return Some(layer);
+                }
+                if let LayerKind::Group(g) = &mut layer.kind {
+                    if let Some(found) = search(&mut g.children, id) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        }
+        search(&mut self.layers, id)
+    }
+
+    /// Add a child layer to a group. Returns the child's ID on success.
+    pub fn add_child_to_group(
+        &mut self,
+        group_id: u32,
+        child: Layer,
+    ) -> Result<u32, &'static str> {
+        let child_id = child.common.id;
+        let layer = self.find_layer_mut(group_id).ok_or("group not found")?;
+        match &mut layer.kind {
+            LayerKind::Group(g) => {
+                g.children.push(child);
+                Ok(child_id)
+            }
+            _ => Err("layer is not a group"),
+        }
+    }
+
+    /// Remove a child from a group by child ID. Returns true if found and removed.
+    pub fn remove_child_from_group(&mut self, group_id: u32, child_id: u32) -> bool {
+        let layer = match self.find_layer_mut(group_id) {
+            Some(l) => l,
+            None => return false,
+        };
+        match &mut layer.kind {
+            LayerKind::Group(g) => {
+                let before = g.children.len();
+                g.children.retain(|c| c.common.id != child_id);
+                g.children.len() < before
+            }
+            _ => false,
+        }
+    }
+
+    /// Flatten a group layer into a single image layer in-place.
+    /// The group is rendered to a buffer, then replaced with an Image layer
+    /// that preserves the group's common properties.
+    pub fn flatten_group(&mut self, group_id: u32) -> bool {
+        // First render the group to a buffer
+        let layer = match self.find_layer(group_id) {
+            Some(l) => l,
+            None => return false,
+        };
+        let group = match &layer.kind {
+            LayerKind::Group(g) => g,
+            _ => return false,
+        };
+
+        let mut buf = ImageBuffer::new_transparent(self.width, self.height);
+        render_group(group, &mut buf, 1.0);
+
+        // Now replace the layer kind
+        let layer = self.find_layer_mut(group_id).unwrap();
+        layer.kind = LayerKind::Image(crate::layer::ImageLayerData {
+            buffer: buf,
+            anchor: crate::blit::Anchor::TopLeft,
+            flip_x: false,
+            flip_y: false,
+            rotation: crate::blit::Rotation::None,
+        });
+        // Reset position since the buffer is already at canvas coordinates
+        layer.common.x = 0;
+        layer.common.y = 0;
+        true
+    }
+
     /// Render the full document to a flat RGBA buffer.
     /// Traverses layers back-to-front (last in list = topmost).
     pub fn render(&self) -> ImageBuffer {
@@ -39,62 +143,278 @@ impl Document {
     }
 }
 
+/// Render a solid color fill to a full-canvas buffer.
+fn render_solid_color(color: &SolidColorLayerData, width: u32, height: u32) -> ImageBuffer {
+    let mut buf = ImageBuffer::new_transparent(width, height);
+    buf.fill(color.color);
+    buf
+}
+
+/// Render a gradient to a full-canvas buffer.
+fn render_gradient(grad: &GradientLayerData, width: u32, height: u32) -> ImageBuffer {
+    let mut buf = ImageBuffer::new_transparent(width, height);
+    if grad.stops.is_empty() || width == 0 || height == 0 {
+        return buf;
+    }
+
+    let w = width as usize;
+    let h = height as usize;
+
+    for y in 0..h {
+        for x in 0..w {
+            let t = match grad.direction {
+                GradientDirection::Horizontal => x as f64 / (w - 1).max(1) as f64,
+                GradientDirection::Vertical => y as f64 / (h - 1).max(1) as f64,
+                GradientDirection::DiagonalDown => {
+                    (x as f64 / (w - 1).max(1) as f64 + y as f64 / (h - 1).max(1) as f64) / 2.0
+                }
+                GradientDirection::DiagonalUp => {
+                    (x as f64 / (w - 1).max(1) as f64
+                        + (1.0 - y as f64 / (h - 1).max(1) as f64))
+                        / 2.0
+                }
+            };
+
+            let color = sample_gradient(&grad.stops, t);
+            let i = (y * w + x) * 4;
+            buf.data[i] = color.r;
+            buf.data[i + 1] = color.g;
+            buf.data[i + 2] = color.b;
+            buf.data[i + 3] = color.a;
+        }
+    }
+
+    buf
+}
+
+/// Sample a gradient at position t (0..1) using sorted stops.
+fn sample_gradient(stops: &[crate::layer::GradientStop], t: f64) -> Rgba {
+    if stops.len() == 1 {
+        return stops[0].color;
+    }
+    let t = t.clamp(0.0, 1.0);
+
+    // Find the two stops surrounding t
+    let mut left = &stops[0];
+    let mut right = &stops[stops.len() - 1];
+    for i in 0..stops.len() - 1 {
+        if t >= stops[i].position && t <= stops[i + 1].position {
+            left = &stops[i];
+            right = &stops[i + 1];
+            break;
+        }
+    }
+
+    let span = right.position - left.position;
+    if span <= 0.0 {
+        return left.color;
+    }
+    let f = (t - left.position) / span;
+    let inv = 1.0 - f;
+
+    Rgba::new(
+        (left.color.r as f64 * inv + right.color.r as f64 * f + 0.5) as u8,
+        (left.color.g as f64 * inv + right.color.g as f64 * f + 0.5) as u8,
+        (left.color.b as f64 * inv + right.color.b as f64 * f + 0.5) as u8,
+        (left.color.a as f64 * inv + right.color.a as f64 * f + 0.5) as u8,
+    )
+}
+
+/// Apply a layer mask to a rendered layer buffer. The mask's luminance
+/// (using only the first channel as grayscale) multiplies the alpha channel.
+fn apply_mask(buf: &mut ImageBuffer, mask: &ImageBuffer) {
+    let w = buf.width.min(mask.width) as usize;
+    let h = buf.height.min(mask.height) as usize;
+    let buf_stride = buf.width as usize;
+    let mask_stride = mask.width as usize;
+
+    for y in 0..h {
+        for x in 0..w {
+            let bi = (y * buf_stride + x) * 4;
+            let mi = (y * mask_stride + x) * 4;
+            // Use the mask's first channel (grayscale) as the mask value
+            let mask_val = mask.data[mi] as f64 / 255.0;
+            let a = buf.data[bi + 3] as f64;
+            buf.data[bi + 3] = (a * mask_val + 0.5) as u8;
+        }
+    }
+}
+
+/// Clip `layer_buf` to the alpha of `below_buf`. Where below has alpha=0,
+/// the layer becomes transparent.
+fn apply_clipping_mask(layer_buf: &mut ImageBuffer, below_buf: &ImageBuffer) {
+    let w = layer_buf.width.min(below_buf.width) as usize;
+    let h = layer_buf.height.min(below_buf.height) as usize;
+    let ls = layer_buf.width as usize;
+    let bs = below_buf.width as usize;
+
+    for y in 0..h {
+        for x in 0..w {
+            let li = (y * ls + x) * 4;
+            let bi = (y * bs + x) * 4;
+            let below_a = below_buf.data[bi + 3] as f64 / 255.0;
+            let a = layer_buf.data[li + 3] as f64;
+            layer_buf.data[li + 3] = (a * below_a + 0.5) as u8;
+        }
+    }
+}
+
+/// Render a single layer to an isolated canvas-sized RGBA buffer.
+fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageBuffer {
+    let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
+
+    match &layer.kind {
+        LayerKind::Image(img) => {
+            blit_transformed(
+                &mut buf,
+                &img.buffer,
+                &BlitParams {
+                    dx: layer.common.x,
+                    dy: layer.common.y,
+                    anchor: img.anchor,
+                    flip_x: img.flip_x,
+                    flip_y: img.flip_y,
+                    rotation: img.rotation,
+                    opacity: layer.common.opacity,
+                },
+            );
+        }
+        LayerKind::Paint(paint) => {
+            blit_transformed(
+                &mut buf,
+                &paint.buffer,
+                &BlitParams {
+                    dx: layer.common.x,
+                    dy: layer.common.y,
+                    anchor: paint.anchor,
+                    flip_x: false,
+                    flip_y: false,
+                    rotation: crate::blit::Rotation::None,
+                    opacity: layer.common.opacity,
+                },
+            );
+        }
+        LayerKind::SolidColor(sc) => {
+            let fill = render_solid_color(sc, canvas_w, canvas_h);
+            if layer.common.opacity < 1.0 {
+                // Apply opacity
+                for i in (0..buf.data.len()).step_by(4) {
+                    buf.data[i] = fill.data[i];
+                    buf.data[i + 1] = fill.data[i + 1];
+                    buf.data[i + 2] = fill.data[i + 2];
+                    buf.data[i + 3] =
+                        (fill.data[i + 3] as f64 * layer.common.opacity + 0.5) as u8;
+                }
+            } else {
+                buf = fill;
+            }
+        }
+        LayerKind::Gradient(grad) => {
+            let fill = render_gradient(grad, canvas_w, canvas_h);
+            if layer.common.opacity < 1.0 {
+                for i in (0..buf.data.len()).step_by(4) {
+                    buf.data[i] = fill.data[i];
+                    buf.data[i + 1] = fill.data[i + 1];
+                    buf.data[i + 2] = fill.data[i + 2];
+                    buf.data[i + 3] =
+                        (fill.data[i + 3] as f64 * layer.common.opacity + 0.5) as u8;
+                }
+            } else {
+                buf = fill;
+            }
+        }
+        LayerKind::Group(group) => {
+            render_group(group, &mut buf, layer.common.opacity);
+        }
+        LayerKind::Filter(_) => {
+            // Filters are handled at the list level, not as individual buffers
+        }
+    }
+
+    // Apply layer mask if present
+    if let Some(mask) = &layer.common.mask {
+        apply_mask(&mut buf, mask);
+    }
+
+    buf
+}
+
 /// Render a list of layers onto `output`, back-to-front.
 /// Layers at the end of the vec are drawn on top.
 fn render_layers(layers: &[Layer], output: &mut ImageBuffer) {
+    let canvas_w = output.width;
+    let canvas_h = output.height;
+
+    // We need the previous rendered state for clipping masks
+    let mut prev_composite = output.clone();
+
     for layer in layers {
         if !layer.common.visible {
             continue;
         }
 
         match &layer.kind {
-            LayerKind::Image(img) => {
-                blit_transformed(
-                    output,
-                    &img.buffer,
-                    &BlitParams {
-                        dx: layer.common.x,
-                        dy: layer.common.y,
-                        anchor: img.anchor,
-                        flip_x: img.flip_x,
-                        flip_y: img.flip_y,
-                        rotation: img.rotation,
-                        opacity: layer.common.opacity,
-                    },
-                );
-            }
-            LayerKind::Paint(paint) => {
-                blit_transformed(
-                    output,
-                    &paint.buffer,
-                    &BlitParams {
-                        dx: layer.common.x,
-                        dy: layer.common.y,
-                        anchor: paint.anchor,
-                        flip_x: false,
-                        flip_y: false,
-                        rotation: crate::blit::Rotation::None,
-                        opacity: layer.common.opacity,
-                    },
-                );
-            }
             LayerKind::Filter(filter) => {
                 apply_hsl_filter(output, &filter.config);
+                prev_composite = output.clone();
             }
-            LayerKind::Group(group) => {
-                render_group(group, output, layer.common.opacity);
+            _ => {
+                let mut layer_buf = render_layer_to_buffer(layer, canvas_w, canvas_h);
+
+                // Clipping mask: clip to the alpha of what was rendered before this layer
+                if layer.common.clip_to_below {
+                    apply_clipping_mask(&mut layer_buf, &prev_composite);
+                }
+
+                blend(output, &layer_buf, layer.common.blend_mode);
+                prev_composite = output.clone();
             }
         }
     }
 }
 
-/// Render a group into an isolated buffer, then blend onto the output.
+/// Render a group into an isolated buffer using scoped filter rendering,
+/// then blend onto the output.
+///
+/// Two-pass approach matching Spriteform's `renderSmartVariantScoped`:
+/// - Pass 1: render non-filter layers (Image, Paint, nested Group, etc.) back-to-front
+/// - Pass 2: apply all filter layers in order to the composited group buffer
 fn render_group(group: &GroupLayerData, output: &mut ImageBuffer, opacity: f64) {
-    let mut group_buf = ImageBuffer::new_transparent(output.width, output.height);
-    render_layers(&group.children, &mut group_buf);
+    let canvas_w = output.width;
+    let canvas_h = output.height;
+    let mut group_buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
+    let mut filters: Vec<&HslFilterConfig> = Vec::new();
+
+    let mut prev_composite = group_buf.clone();
+
+    // Pass 1: render non-filter layers, collect filters
+    for layer in &group.children {
+        if !layer.common.visible {
+            continue;
+        }
+        match &layer.kind {
+            LayerKind::Filter(filter) => {
+                filters.push(&filter.config);
+            }
+            _ => {
+                let mut layer_buf = render_layer_to_buffer(layer, canvas_w, canvas_h);
+
+                if layer.common.clip_to_below {
+                    apply_clipping_mask(&mut layer_buf, &prev_composite);
+                }
+
+                blend(&mut group_buf, &layer_buf, layer.common.blend_mode);
+                prev_composite = group_buf.clone();
+            }
+        }
+    }
+
+    // Pass 2: apply all collected filters to the composited group buffer
+    for config in &filters {
+        apply_hsl_filter(&mut group_buf, config);
+    }
 
     if opacity < 1.0 {
-        // Scale the group buffer's alpha by the group opacity
         for i in (0..group_buf.data.len()).step_by(4) {
             let a = group_buf.data[i + 3] as f64;
             group_buf.data[i + 3] = (a * opacity).round() as u8;
@@ -107,9 +427,33 @@ fn render_group(group: &GroupLayerData, output: &mut ImageBuffer, opacity: f64) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blend::BlendMode;
     use crate::blit::{Anchor, Rotation};
     use crate::layer::*;
     use crate::pixel::Rgba;
+
+    fn img_layer(id: u32, name: &str, buf: ImageBuffer, x: i32, y: i32) -> Layer {
+        Layer {
+            common: LayerCommon {
+                x,
+                y,
+                ..LayerCommon::new(id, name)
+            },
+            kind: LayerKind::Image(ImageLayerData {
+                buffer: buf,
+                anchor: Anchor::TopLeft,
+                flip_x: false,
+                flip_y: false,
+                rotation: Rotation::None,
+            }),
+        }
+    }
+
+    fn solid_buf(w: u32, h: u32, color: Rgba) -> ImageBuffer {
+        let mut buf = ImageBuffer::new_transparent(w, h);
+        buf.fill(color);
+        buf
+    }
 
     #[test]
     fn empty_document_renders_transparent() {
@@ -126,18 +470,8 @@ mod tests {
     fn single_opaque_image_layer() {
         let mut doc = Document::new(4, 4);
         let id = doc.next_id();
-        let mut buf = ImageBuffer::new_transparent(2, 2);
-        buf.fill(Rgba::new(255, 0, 0, 255));
-        doc.layers.push(Layer {
-            common: LayerCommon { x: 1, y: 1, ..LayerCommon::new(id, "red") },
-            kind: LayerKind::Image(ImageLayerData {
-                buffer: buf,
-                anchor: Anchor::TopLeft,
-                flip_x: false,
-                flip_y: false,
-                rotation: Rotation::None,
-            }),
-        });
+        doc.layers
+            .push(img_layer(id, "red", solid_buf(2, 2, Rgba::new(255, 0, 0, 255)), 1, 1));
         let result = doc.render();
         assert_eq!(result.get_pixel(0, 0), Rgba::TRANSPARENT);
         assert_eq!(result.get_pixel(1, 1), Rgba::new(255, 0, 0, 255));
@@ -149,21 +483,9 @@ mod tests {
     fn hidden_layer_is_skipped() {
         let mut doc = Document::new(2, 2);
         let id = doc.next_id();
-        let mut buf = ImageBuffer::new_transparent(2, 2);
-        buf.fill(Rgba::new(255, 0, 0, 255));
-        doc.layers.push(Layer {
-            common: LayerCommon {
-                visible: false,
-                ..LayerCommon::new(id, "hidden")
-            },
-            kind: LayerKind::Image(ImageLayerData {
-                buffer: buf,
-                anchor: Anchor::TopLeft,
-                flip_x: false,
-                flip_y: false,
-                rotation: Rotation::None,
-            }),
-        });
+        let mut layer = img_layer(id, "hidden", solid_buf(2, 2, Rgba::new(255, 0, 0, 255)), 0, 0);
+        layer.common.visible = false;
+        doc.layers.push(layer);
         let result = doc.render();
         assert_eq!(result.get_pixel(0, 0), Rgba::TRANSPARENT);
     }
@@ -171,75 +493,265 @@ mod tests {
     #[test]
     fn two_layers_blend_correctly() {
         let mut doc = Document::new(1, 1);
-
-        // Bottom: blue
         let id1 = doc.next_id();
-        let mut buf1 = ImageBuffer::new_transparent(1, 1);
-        buf1.set_pixel(0, 0, Rgba::new(0, 0, 255, 255));
-        doc.layers.push(Layer {
-            common: LayerCommon::new(id1, "blue"),
-            kind: LayerKind::Image(ImageLayerData {
-                buffer: buf1,
-                anchor: Anchor::TopLeft,
-                flip_x: false,
-                flip_y: false,
-                rotation: Rotation::None,
-            }),
-        });
-
-        // Top: semi-transparent red
+        doc.layers.push(img_layer(
+            id1, "blue", solid_buf(1, 1, Rgba::new(0, 0, 255, 255)), 0, 0,
+        ));
         let id2 = doc.next_id();
-        let mut buf2 = ImageBuffer::new_transparent(1, 1);
-        buf2.set_pixel(0, 0, Rgba::new(255, 0, 0, 128));
-        doc.layers.push(Layer {
-            common: LayerCommon::new(id2, "red"),
-            kind: LayerKind::Image(ImageLayerData {
-                buffer: buf2,
-                anchor: Anchor::TopLeft,
-                flip_x: false,
-                flip_y: false,
-                rotation: Rotation::None,
-            }),
-        });
-
+        doc.layers.push(img_layer(
+            id2, "red", solid_buf(1, 1, Rgba::new(255, 0, 0, 128)), 0, 0,
+        ));
         let result = doc.render();
         let p = result.get_pixel(0, 0);
-        // Semi-transparent red over opaque blue
         assert!(p.r > 100, "r={}", p.r);
         assert!(p.b > 100, "b={}", p.b);
         assert_eq!(p.a, 255);
     }
 
     #[test]
-    fn group_layer_renders_isolated() {
+    fn find_layer_in_tree() {
         let mut doc = Document::new(2, 2);
-
-        // A group containing a red pixel
         let id1 = doc.next_id();
-        let mut buf = ImageBuffer::new_transparent(2, 2);
-        buf.set_pixel(0, 0, Rgba::new(255, 0, 0, 255));
-
         let child_id = doc.next_id();
-        let child = Layer {
-            common: LayerCommon::new(child_id, "red"),
-            kind: LayerKind::Image(ImageLayerData {
-                buffer: buf,
-                anchor: Anchor::TopLeft,
-                flip_x: false,
-                flip_y: false,
-                rotation: Rotation::None,
-            }),
-        };
-
+        let child = img_layer(child_id, "child", solid_buf(2, 2, Rgba::new(255, 0, 0, 255)), 0, 0);
         doc.layers.push(Layer {
             common: LayerCommon::new(id1, "group"),
             kind: LayerKind::Group(GroupLayerData {
                 children: vec![child],
             }),
         });
+        assert!(doc.find_layer(child_id).is_some());
+        assert!(doc.find_layer(id1).is_some());
+        assert!(doc.find_layer(999).is_none());
+        let layer = doc.find_layer_mut(child_id).unwrap();
+        layer.common.visible = false;
+    }
 
+    #[test]
+    fn add_remove_child_from_group() {
+        let mut doc = Document::new(2, 2);
+        let group_id = doc.next_id();
+        doc.layers.push(Layer {
+            common: LayerCommon::new(group_id, "group"),
+            kind: LayerKind::Group(GroupLayerData {
+                children: Vec::new(),
+            }),
+        });
+        let child_id = doc.next_id();
+        let child = Layer {
+            common: LayerCommon::new(child_id, "child"),
+            kind: LayerKind::Filter(FilterLayerData {
+                config: HslFilterConfig::default(),
+            }),
+        };
+        assert!(doc.add_child_to_group(group_id, child).is_ok());
+        assert!(doc.find_layer(child_id).is_some());
+        assert!(doc.remove_child_from_group(group_id, child_id));
+        assert!(doc.find_layer(child_id).is_none());
+    }
+
+    #[test]
+    fn scoped_filter_applies_only_within_group() {
+        let mut doc = Document::new(1, 1);
+        let id_bg = doc.next_id();
+        doc.layers.push(img_layer(
+            id_bg, "bg", solid_buf(1, 1, Rgba::new(255, 0, 0, 255)), 0, 0,
+        ));
+        let group_id = doc.next_id();
+        let child_img_id = doc.next_id();
+        let child_img = img_layer(
+            child_img_id, "green", solid_buf(1, 1, Rgba::new(0, 255, 0, 128)), 0, 0,
+        );
+        let filter_id = doc.next_id();
+        let child_filter = Layer {
+            common: LayerCommon::new(filter_id, "filter"),
+            kind: LayerKind::Filter(FilterLayerData {
+                config: HslFilterConfig {
+                    hue_deg: 120.0,
+                    ..Default::default()
+                },
+            }),
+        };
+        doc.layers.push(Layer {
+            common: LayerCommon::new(group_id, "group"),
+            kind: LayerKind::Group(GroupLayerData {
+                children: vec![child_img, child_filter],
+            }),
+        });
+        let _result = doc.render();
+    }
+
+    #[test]
+    fn group_layer_renders_isolated() {
+        let mut doc = Document::new(2, 2);
+        let id1 = doc.next_id();
+        let child_id = doc.next_id();
+        let mut buf = ImageBuffer::new_transparent(2, 2);
+        buf.set_pixel(0, 0, Rgba::new(255, 0, 0, 255));
+        let child = img_layer(child_id, "red", buf, 0, 0);
+        doc.layers.push(Layer {
+            common: LayerCommon::new(id1, "group"),
+            kind: LayerKind::Group(GroupLayerData {
+                children: vec![child],
+            }),
+        });
         let result = doc.render();
         assert_eq!(result.get_pixel(0, 0), Rgba::new(255, 0, 0, 255));
         assert_eq!(result.get_pixel(1, 1), Rgba::TRANSPARENT);
+    }
+
+    // ── Phase 2 tests ──
+
+    #[test]
+    fn blend_mode_multiply_in_document() {
+        let mut doc = Document::new(1, 1);
+        let id1 = doc.next_id();
+        doc.layers.push(img_layer(
+            id1, "base", solid_buf(1, 1, Rgba::new(200, 100, 50, 255)), 0, 0,
+        ));
+        let id2 = doc.next_id();
+        let mut layer = img_layer(
+            id2, "top", solid_buf(1, 1, Rgba::new(128, 128, 128, 255)), 0, 0,
+        );
+        layer.common.blend_mode = BlendMode::Multiply;
+        doc.layers.push(layer);
+
+        let result = doc.render();
+        let p = result.get_pixel(0, 0);
+        // multiply: 200/255 * 128/255 * 255 ≈ 100
+        assert!(p.r > 95 && p.r < 110, "r={}", p.r);
+    }
+
+    #[test]
+    fn layer_mask_hides_pixels() {
+        let mut doc = Document::new(2, 1);
+        let id = doc.next_id();
+        let mut layer = img_layer(
+            id, "red", solid_buf(2, 1, Rgba::new(255, 0, 0, 255)), 0, 0,
+        );
+        // Mask: left pixel white (visible), right pixel black (hidden)
+        let mut mask = ImageBuffer::new_transparent(2, 1);
+        mask.set_pixel(0, 0, Rgba::new(255, 255, 255, 255));
+        mask.set_pixel(1, 0, Rgba::new(0, 0, 0, 255));
+        layer.common.mask = Some(mask);
+        doc.layers.push(layer);
+
+        let result = doc.render();
+        assert_eq!(result.get_pixel(0, 0), Rgba::new(255, 0, 0, 255));
+        assert_eq!(result.get_pixel(1, 0), Rgba::TRANSPARENT);
+    }
+
+    #[test]
+    fn clipping_mask_clips_to_below() {
+        let mut doc = Document::new(2, 1);
+
+        // Bottom layer: only left pixel has content
+        let id1 = doc.next_id();
+        let mut below_buf = ImageBuffer::new_transparent(2, 1);
+        below_buf.set_pixel(0, 0, Rgba::new(0, 255, 0, 255));
+        doc.layers.push(img_layer(id1, "below", below_buf, 0, 0));
+
+        // Top layer: full red, clipped to below
+        let id2 = doc.next_id();
+        let mut layer = img_layer(
+            id2, "clipped", solid_buf(2, 1, Rgba::new(255, 0, 0, 255)), 0, 0,
+        );
+        layer.common.clip_to_below = true;
+        doc.layers.push(layer);
+
+        let result = doc.render();
+        // Left pixel: red clipped to green alpha (opaque) → red over green
+        let p0 = result.get_pixel(0, 0);
+        assert_eq!(p0.r, 255);
+        assert_eq!(p0.g, 0);
+        // Right pixel: red clipped to transparent → transparent
+        assert_eq!(result.get_pixel(1, 0), Rgba::TRANSPARENT);
+    }
+
+    #[test]
+    fn solid_color_layer() {
+        let mut doc = Document::new(2, 2);
+        let id = doc.next_id();
+        doc.layers.push(Layer {
+            common: LayerCommon::new(id, "fill"),
+            kind: LayerKind::SolidColor(SolidColorLayerData {
+                color: Rgba::new(100, 200, 50, 255),
+            }),
+        });
+        let result = doc.render();
+        assert_eq!(result.get_pixel(0, 0), Rgba::new(100, 200, 50, 255));
+        assert_eq!(result.get_pixel(1, 1), Rgba::new(100, 200, 50, 255));
+    }
+
+    #[test]
+    fn gradient_layer_horizontal() {
+        let mut doc = Document::new(3, 1);
+        let id = doc.next_id();
+        doc.layers.push(Layer {
+            common: LayerCommon::new(id, "gradient"),
+            kind: LayerKind::Gradient(GradientLayerData {
+                stops: vec![
+                    GradientStop {
+                        position: 0.0,
+                        color: Rgba::new(0, 0, 0, 255),
+                    },
+                    GradientStop {
+                        position: 1.0,
+                        color: Rgba::new(255, 255, 255, 255),
+                    },
+                ],
+                direction: GradientDirection::Horizontal,
+            }),
+        });
+        let result = doc.render();
+        let p0 = result.get_pixel(0, 0);
+        let p1 = result.get_pixel(1, 0);
+        let p2 = result.get_pixel(2, 0);
+        assert!(p0.r < 10, "left should be ~black, r={}", p0.r);
+        assert!(p1.r > 120 && p1.r < 136, "mid should be ~128, r={}", p1.r);
+        assert!(p2.r > 250, "right should be ~white, r={}", p2.r);
+    }
+
+    #[test]
+    fn flatten_group_produces_image() {
+        let mut doc = Document::new(2, 2);
+        let group_id = doc.next_id();
+        let child_id = doc.next_id();
+        let child = img_layer(
+            child_id, "red", solid_buf(2, 2, Rgba::new(255, 0, 0, 255)), 0, 0,
+        );
+        doc.layers.push(Layer {
+            common: LayerCommon::new(group_id, "group"),
+            kind: LayerKind::Group(GroupLayerData {
+                children: vec![child],
+            }),
+        });
+
+        assert!(doc.flatten_group(group_id));
+
+        // Should now be an image layer
+        let layer = doc.find_layer(group_id).unwrap();
+        assert!(matches!(layer.kind, LayerKind::Image(_)));
+
+        let result = doc.render();
+        assert_eq!(result.get_pixel(0, 0), Rgba::new(255, 0, 0, 255));
+    }
+
+    #[test]
+    fn solid_color_with_opacity() {
+        let mut doc = Document::new(1, 1);
+        let id = doc.next_id();
+        let mut layer = Layer {
+            common: LayerCommon::new(id, "fill"),
+            kind: LayerKind::SolidColor(SolidColorLayerData {
+                color: Rgba::new(255, 0, 0, 255),
+            }),
+        };
+        layer.common.opacity = 0.5;
+        doc.layers.push(layer);
+
+        let result = doc.render();
+        let p = result.get_pixel(0, 0);
+        assert!(p.a > 120 && p.a < 136, "a={}", p.a);
     }
 }

@@ -16,30 +16,32 @@ Bootstrap the project with end-to-end WASM compilation.
 - [x] WASM bindings via `wasm-bindgen`
 - [x] Build script producing `.wasm` + `.js` + `.d.ts`
 - [x] Browser demo page (`demo/index.html`) — static proof-of-concept
-- [x] 28 unit tests passing
+- [x] 28 unit tests passing (at time of Phase 0 completion)
 
-## Phase 1: Spriteform Parity (v0.1) (current)
+## Phase 1: Spriteform Parity (v0.1) (done)
 
-Feature-complete replacement for the JS compositor.
+Feature-complete replacement for the JS compositor (core + WASM).
 
-- [ ] WASM API: layer property setters (opacity, visible, position, flip, rotation, anchor)
-- [ ] WASM API: filter config setters (hue, saturation, lightness, brightness, etc.)
-- [ ] WASM API: group layer child management
-- [ ] PNG decode/encode (via `png` crate)
-- [ ] Raw RGBA import/export
-- [ ] Base64 RGBA encode/decode
-- [ ] Scoped filter application (filters within group affect only that group)
-- [ ] npm package with Node.js + Browser entrypoints
-- [ ] Color utilities: hex conversion, dominant color, luminance, contrast ratio
-- [ ] Integration tests comparing output to JS compositor golden images
+- [x] WASM API: layer property setters (opacity, visible, position, flip, rotation, anchor)
+- [x] WASM API: filter config bulk setter (all 9 fields)
+- [x] WASM API: group layer child management (add image/filter/group, remove)
+- [x] PNG decode/encode (via `png` crate, `codec.rs`)
+- [x] Raw RGBA import/export (`add_png_layer`, `export_png`, `get_layer_rgba`)
+- [x] Scoped filter rendering (two-pass: render non-filter layers, then apply filters)
+- [x] Color utilities: `hex_to_rgb`, `rgb_to_hex`, `srgb_to_linear`, `relative_luminance`, `contrast_ratio`, `dominant_rgb_from_rgba`
+- [x] Recursive layer tree search (`find_layer`, `find_layer_mut`)
+- [x] Interactive demo page with live filter sliders, PNG export/round-trip, color panel
+- [x] 50 unit tests passing (42 core + 8 WASM)
 
-## Phase 2: Extended Blend Modes & Masks (v0.2)
+## Phase 2: Extended Blend Modes & Masks (v0.2) (done)
 
-- [ ] All 16 Photoshop-compatible blend modes
-- [ ] Layer masks (grayscale alpha)
-- [ ] Clipping masks
-- [ ] SolidColorLayer, GradientLayer
-- [ ] Flatten group to single layer
+- [x] All 16 Photoshop-compatible blend modes (Normal, Multiply, Screen, Overlay, Darken, Lighten, ColorDodge, ColorBurn, HardLight, SoftLight, Difference, Exclusion, Hue, Saturation, Color, Luminosity)
+- [x] Layer masks (grayscale alpha, applied via red channel)
+- [x] Clipping masks (`clip_to_below` flag)
+- [x] SolidColorLayer, GradientLayer (horizontal, vertical, diagonal)
+- [x] Flatten group to single image layer
+- [x] WASM bindings: `set_blend_mode`, `set_layer_mask`, `remove_layer_mask`, `set_clip_to_below`, `add_solid_color_layer`, `add_gradient_layer`, `flatten_group`
+- [x] 71 unit tests passing (57 core + 14 WASM)
 
 ## Phase 3: Advanced Filters & Transforms (v0.3)
 
@@ -73,3 +75,10 @@ Feature-complete replacement for the JS compositor.
 - [ ] WASM-SIMD optimized builds
 - [ ] Fuzz-tested codec paths
 - [ ] Security audit
+
+## Backlog (unscheduled)
+
+- [ ] npm package with Node.js + Browser entrypoints
+- [ ] Integration tests comparing output to JS compositor golden images
+- [ ] Base64 RGBA encode/decode (JS-only, `atob`/`btoa`)
+- [ ] `readableTextColor` (trivial in JS once `relative_luminance` exposed)
