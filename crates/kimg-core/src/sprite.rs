@@ -5,20 +5,31 @@ use crate::transform::resize_nearest;
 
 // ── Sprite sheet packer ──
 
+/// Represents a single sprite packed within a larger texture atlas.
 #[derive(Debug, Clone)]
 pub struct PackedSprite {
+    /// Original index of the sprite in the input slice.
     pub index: usize,
+    /// X coordinate of the sprite's top-left corner in the atlas.
     pub x: u32,
+    /// Y coordinate of the sprite's top-left corner in the atlas.
     pub y: u32,
+    /// Width of the sprite.
     pub width: u32,
+    /// Height of the sprite.
     pub height: u32,
 }
 
+/// A packed sprite sheet atlas.
 #[derive(Debug, Clone)]
 pub struct SpriteSheet {
+    /// The final merged atlas image.
     pub buffer: ImageBuffer,
+    /// Locations of each packed sprite.
     pub sprites: Vec<PackedSprite>,
+    /// Width of the atlas.
     pub width: u32,
+    /// Height of the atlas.
     pub height: u32,
 }
 
@@ -120,11 +131,18 @@ pub fn pack_sprites(
 
 // ── Contact sheet ──
 
+/// Options for generating a uniform contact sheet.
+#[non_exhaustive]
 pub struct ContactSheetOptions {
+    /// Number of columns in the grid. If 0, auto-computed.
     pub columns: u32,
+    /// Cell width in pixels.
     pub cell_width: u32,
+    /// Cell height in pixels.
     pub cell_height: u32,
+    /// Padding between cells in pixels.
     pub padding: u32,
+    /// Background color of the sheet.
     pub background: Rgba,
 }
 
@@ -228,8 +246,10 @@ pub fn pixel_scale(src: &ImageBuffer, factor: u32) -> ImageBuffer {
 
 // ── Color quantization ──
 
+/// A color palette extracted from an image.
 #[derive(Debug, Clone)]
 pub struct Palette {
+    /// The unique colors in the palette.
     pub colors: Vec<Rgba>,
 }
 
@@ -415,13 +435,19 @@ impl ColorBox {
 
 // ── Batch rendering ──
 
+/// A single document to be rendered in a batch process.
 pub struct BatchItem {
+    /// The document to render.
     pub document: Document,
+    /// The name/identifier for the output.
     pub name: String,
 }
 
+/// Result of a batch render operation.
 pub struct BatchResult {
+    /// The name/identifier of the rendered output.
     pub name: String,
+    /// The rendered output image buffer.
     pub buffer: ImageBuffer,
 }
 

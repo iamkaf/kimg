@@ -3,6 +3,7 @@ use std::io::Cursor;
 
 /// Errors that can occur during image encoding/decoding.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum CodecError {
     /// The input data could not be decoded.
     DecodingError(String),
@@ -23,16 +24,24 @@ impl std::error::Error for CodecError {}
 
 /// Detected image format based on magic bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ImageFormat {
+    /// Portable Network Graphics (.png)
     Png,
+    /// Joint Photographic Experts Group (.jpg, .jpeg)
     Jpeg,
+    /// Web Picture format (.webp)
     WebP,
+    /// Graphics Interchange Format (.gif)
     Gif,
+    /// Adobe Photoshop Document (.psd)
     Psd,
+    /// Unrecognized format
     Unknown,
 }
 
 impl ImageFormat {
+    /// Returns a string representation of the format (e.g. "png", "jpeg").
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Png => "png",
@@ -297,9 +306,12 @@ pub fn encode_webp(buf: &ImageBuffer) -> Result<Vec<u8>, CodecError> {
 
 // ── GIF ──
 
-/// A single frame from an animated GIF.
+/// An individual animation frame.
+#[derive(Debug, Clone)]
 pub struct GifFrame {
+    /// The image buffer for the frame.
     pub buffer: ImageBuffer,
+    /// Delay before the next frame in milliseconds.
     pub delay_ms: u32,
 }
 
@@ -390,13 +402,19 @@ pub fn decode_gif(data: &[u8]) -> Result<Vec<GifFrame>, CodecError> {
 
 // ── PSD ──
 
-/// A layer extracted from a PSD file.
+/// Parsed layer from PSD.
 pub struct PsdLayer {
+    /// Layer name extracted from the PSD.
     pub name: String,
+    /// Pixel data for the layer.
     pub buffer: ImageBuffer,
+    /// Left bound of the layer.
     pub x: i32,
+    /// Top bound of the layer.
     pub y: i32,
+    /// Global opacity of the layer [0.0, 1.0].
     pub opacity: f64,
+    /// Whether the layer is visible.
     pub visible: bool,
 }
 

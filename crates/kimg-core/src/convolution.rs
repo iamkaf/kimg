@@ -3,7 +3,9 @@ use crate::buffer::ImageBuffer;
 /// A convolution kernel (NxN, odd dimensions).
 #[derive(Debug, Clone)]
 pub struct Kernel {
+    /// Dimension of the kernel (e.g. 3 for 3x3).
     pub size: usize,
+    /// Flat row-major array of kernel weights.
     pub data: Vec<f64>,
 }
 

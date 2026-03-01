@@ -6,8 +6,11 @@ use crate::filter::HslFilterConfig;
 use crate::layer::*;
 use crate::pixel::Rgba;
 
+/// Errors that can occur during document serialization and deserialization.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum SerializeError {
+    /// The input data was invalid or corrupted.
     InvalidData(String),
 }
 

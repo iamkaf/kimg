@@ -5,6 +5,7 @@ use crate::color::{hsl_to_rgb, rgb_to_hsl};
 ///
 /// Ported from Spriteform compositorRenderMath.ts `applyHslFilter`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct HslFilterConfig {
     /// Hue offset in degrees.
     pub hue_deg: f64,

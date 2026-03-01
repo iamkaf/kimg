@@ -10,13 +10,17 @@ use crate::pixel::Rgba;
 /// A compositing document with a canvas size and a layer tree.
 #[derive(Debug, Clone)]
 pub struct Document {
+    /// Canvas width in pixels.
     pub width: u32,
+    /// Canvas height in pixels.
     pub height: u32,
+    /// The ordered tree of layers (bottom to top).
     pub layers: Vec<Layer>,
     next_id: u32,
 }
 
 impl Document {
+    /// Create a new empty document with the given dimensions.
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             width,

@@ -2,17 +2,25 @@ use crate::buffer::ImageBuffer;
 
 /// Anchor point for positioning a layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Anchor {
+    /// Anchor the layer by its top-left corner.
     TopLeft,
+    /// Anchor the layer by its center.
     Center,
 }
 
 /// Rotation in 90-degree increments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Rotation {
+    /// No rotation.
     None,
+    /// 90 degrees clockwise rotation.
     Cw90,
+    /// 180 degrees clockwise rotation.
     Cw180,
+    /// 270 degrees clockwise rotation.
     Cw270,
 }
 
@@ -30,13 +38,21 @@ impl Rotation {
 }
 
 /// Parameters for a transformed blit operation.
+#[non_exhaustive]
 pub struct BlitParams {
+    /// X offset according to the anchor.
     pub dx: i32,
+    /// Y offset according to the anchor.
     pub dy: i32,
+    /// The anchor point used for dx/dy positioning.
     pub anchor: Anchor,
+    /// Whether to flip horizontally.
     pub flip_x: bool,
+    /// Whether to flip vertically.
     pub flip_y: bool,
+    /// Rotation in 90-degree increments.
     pub rotation: Rotation,
+    /// Global opacity of the blit operation, 0.0 to 1.0.
     pub opacity: f64,
 }
 

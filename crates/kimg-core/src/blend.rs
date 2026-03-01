@@ -3,23 +3,40 @@ use crate::color::{hsl_to_rgb, rgb_to_hsl};
 
 /// Photoshop-compatible blend modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum BlendMode {
+    /// Default alpha compositing.
     #[default]
     Normal,
+    /// Multiplies the base and blend colors.
     Multiply,
+    /// Multiplies the inverse of the base and blend colors.
     Screen,
+    /// Multiplies or screens the colors securely, depending on the base color.
     Overlay,
+    /// Selects the darker of the base or blend color.
     Darken,
+    /// Selects the lighter of the base or blend color.
     Lighten,
+    /// Brightens the base color to reflect the blend color by decreasing contrast.
     ColorDodge,
+    /// Darkens the base color to reflect the blend color by increasing contrast.
     ColorBurn,
+    /// Multiplies or screens the colors, depending on the blend color.
     HardLight,
+    /// Darkens or lightens the colors, depending on the blend color.
     SoftLight,
+    /// Subtracts the blend color from the base color or vice versa, depending on brightness.
     Difference,
+    /// Creates an effect similar to but lower in contrast than the Difference mode.
     Exclusion,
+    /// Creates a result color with the luminance and saturation of the base color and the hue of the blend color.
     Hue,
+    /// Creates a result color with the luminance and hue of the base color and the saturation of the blend color.
     Saturation,
+    /// Creates a result color with the luminance of the base color and the hue and saturation of the blend color.
     Color,
+    /// Creates a result color with the hue and saturation of the base color and the luminance of the blend color.
     Luminosity,
 }
 

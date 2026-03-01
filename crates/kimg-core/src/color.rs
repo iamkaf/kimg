@@ -1,16 +1,22 @@
 /// Simple RGB color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgb {
+    /// Red channel (0-255).
     pub r: u8,
+    /// Green channel (0-255).
     pub g: u8,
+    /// Blue channel (0-255).
     pub b: u8,
 }
 
 /// HSL color with h in degrees [0, 360), s and l in [0, 1].
 #[derive(Debug, Clone, Copy)]
 pub struct Hsl {
+    /// Hue in degrees [0, 360).
     pub h: f64,
+    /// Saturation [0.0, 1.0].
     pub s: f64,
+    /// Lightness [0.0, 1.0].
     pub l: f64,
 }
 

@@ -1,13 +1,24 @@
-/// RGBA pixel with 8-bit channels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// A 32-bit RGBA color pixel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgba {
+    /// Red channel (0-255).
     pub r: u8,
+    /// Green channel (0-255).
     pub g: u8,
+    /// Blue channel (0-255).
     pub b: u8,
+    /// Alpha channel (0-255). 0 is transparent, 255 is fully opaque.
     pub a: u8,
 }
 
+impl Default for Rgba {
+    fn default() -> Self {
+        Self::TRANSPARENT
+    }
+}
+
 impl Rgba {
+    /// A fully transparent pixel (0, 0, 0, 0).
     pub const TRANSPARENT: Rgba = Rgba {
         r: 0,
         g: 0,
@@ -15,6 +26,7 @@ impl Rgba {
         a: 0,
     };
 
+    /// Create a new RGBA pixel.
     pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
     }

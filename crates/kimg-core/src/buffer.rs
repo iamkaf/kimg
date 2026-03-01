@@ -1,10 +1,14 @@
 use crate::pixel::Rgba;
 
 /// Owned RGBA image buffer stored as contiguous `Vec<u8>` in RGBA8 order.
-#[derive(Debug, Clone)]
+/// 2D image buffer containing raw RGBA pixel data.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageBuffer {
+    /// Width of the image in pixels.
     pub width: u32,
+    /// Height of the image in pixels.
     pub height: u32,
+    /// Flat RGBA pixel data, with size `width * height * 4`.
     pub data: Vec<u8>,
 }
 
