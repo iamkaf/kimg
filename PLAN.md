@@ -86,7 +86,7 @@ Feature-complete replacement for the JS compositor (core + WASM).
 
 ## Backlog (unscheduled)
 
-- [ ] npm package with Node.js + Browser entrypoints
-- [ ] Integration tests comparing output to JS compositor golden images
-- [ ] Base64 RGBA encode/decode (JS-only, `atob`/`btoa`)
-- [ ] `readableTextColor` (trivial in JS once `relative_luminance` exposed)
+- [x] npm package with Node.js + Browser entrypoints
+- [x] Integration tests comparing output to JS compositor golden images
+- [x] Base64 RGBA encode/decode (JS-only, `atob`/`btoa`)
+- [x] `readableTextColor` (trivial in JS once `relative_luminance` exposed)

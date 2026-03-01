@@ -1,5 +1,5 @@
 use crate::buffer::ImageBuffer;
-use crate::color::{rgb_to_hsl, hsl_to_rgb};
+use crate::color::{hsl_to_rgb, rgb_to_hsl};
 
 /// Photoshop-compatible blend modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -72,21 +72,49 @@ impl BlendMode {
 
 // ── Per-channel blend math (all inputs/outputs in 0.0..1.0) ──
 
-fn blend_channel_multiply(b: f64, s: f64) -> f64 { b * s }
-fn blend_channel_screen(b: f64, s: f64) -> f64 { b + s - b * s }
-fn blend_channel_overlay(b: f64, s: f64) -> f64 {
-    if b <= 0.5 { 2.0 * b * s } else { 1.0 - 2.0 * (1.0 - b) * (1.0 - s) }
+fn blend_channel_multiply(b: f64, s: f64) -> f64 {
+    b * s
 }
-fn blend_channel_darken(b: f64, s: f64) -> f64 { b.min(s) }
-fn blend_channel_lighten(b: f64, s: f64) -> f64 { b.max(s) }
+fn blend_channel_screen(b: f64, s: f64) -> f64 {
+    b + s - b * s
+}
+fn blend_channel_overlay(b: f64, s: f64) -> f64 {
+    if b <= 0.5 {
+        2.0 * b * s
+    } else {
+        1.0 - 2.0 * (1.0 - b) * (1.0 - s)
+    }
+}
+fn blend_channel_darken(b: f64, s: f64) -> f64 {
+    b.min(s)
+}
+fn blend_channel_lighten(b: f64, s: f64) -> f64 {
+    b.max(s)
+}
 fn blend_channel_color_dodge(b: f64, s: f64) -> f64 {
-    if b <= 0.0 { 0.0 } else if s >= 1.0 { 1.0 } else { (b / (1.0 - s)).min(1.0) }
+    if b <= 0.0 {
+        0.0
+    } else if s >= 1.0 {
+        1.0
+    } else {
+        (b / (1.0 - s)).min(1.0)
+    }
 }
 fn blend_channel_color_burn(b: f64, s: f64) -> f64 {
-    if b >= 1.0 { 1.0 } else if s <= 0.0 { 0.0 } else { 1.0 - ((1.0 - b) / s).min(1.0) }
+    if b >= 1.0 {
+        1.0
+    } else if s <= 0.0 {
+        0.0
+    } else {
+        1.0 - ((1.0 - b) / s).min(1.0)
+    }
 }
 fn blend_channel_hard_light(b: f64, s: f64) -> f64 {
-    if s <= 0.5 { 2.0 * b * s } else { 1.0 - 2.0 * (1.0 - b) * (1.0 - s) }
+    if s <= 0.5 {
+        2.0 * b * s
+    } else {
+        1.0 - 2.0 * (1.0 - b) * (1.0 - s)
+    }
 }
 fn blend_channel_soft_light(b: f64, s: f64) -> f64 {
     // W3C compositing spec formula
@@ -101,24 +129,80 @@ fn blend_channel_soft_light(b: f64, s: f64) -> f64 {
         b + (2.0 * s - 1.0) * (d - b)
     }
 }
-fn blend_channel_difference(b: f64, s: f64) -> f64 { (b - s).abs() }
-fn blend_channel_exclusion(b: f64, s: f64) -> f64 { b + s - 2.0 * b * s }
+fn blend_channel_difference(b: f64, s: f64) -> f64 {
+    (b - s).abs()
+}
+fn blend_channel_exclusion(b: f64, s: f64) -> f64 {
+    b + s - 2.0 * b * s
+}
 
 /// Apply per-channel blend for simple (non-HSL) modes.
-fn blend_channels(mode: BlendMode, br: f64, bg: f64, bb: f64, sr: f64, sg: f64, sb: f64) -> (f64, f64, f64) {
+fn blend_channels(
+    mode: BlendMode,
+    br: f64,
+    bg: f64,
+    bb: f64,
+    sr: f64,
+    sg: f64,
+    sb: f64,
+) -> (f64, f64, f64) {
     match mode {
         BlendMode::Normal => (sr, sg, sb),
-        BlendMode::Multiply => (blend_channel_multiply(br, sr), blend_channel_multiply(bg, sg), blend_channel_multiply(bb, sb)),
-        BlendMode::Screen => (blend_channel_screen(br, sr), blend_channel_screen(bg, sg), blend_channel_screen(bb, sb)),
-        BlendMode::Overlay => (blend_channel_overlay(br, sr), blend_channel_overlay(bg, sg), blend_channel_overlay(bb, sb)),
-        BlendMode::Darken => (blend_channel_darken(br, sr), blend_channel_darken(bg, sg), blend_channel_darken(bb, sb)),
-        BlendMode::Lighten => (blend_channel_lighten(br, sr), blend_channel_lighten(bg, sg), blend_channel_lighten(bb, sb)),
-        BlendMode::ColorDodge => (blend_channel_color_dodge(br, sr), blend_channel_color_dodge(bg, sg), blend_channel_color_dodge(bb, sb)),
-        BlendMode::ColorBurn => (blend_channel_color_burn(br, sr), blend_channel_color_burn(bg, sg), blend_channel_color_burn(bb, sb)),
-        BlendMode::HardLight => (blend_channel_hard_light(br, sr), blend_channel_hard_light(bg, sg), blend_channel_hard_light(bb, sb)),
-        BlendMode::SoftLight => (blend_channel_soft_light(br, sr), blend_channel_soft_light(bg, sg), blend_channel_soft_light(bb, sb)),
-        BlendMode::Difference => (blend_channel_difference(br, sr), blend_channel_difference(bg, sg), blend_channel_difference(bb, sb)),
-        BlendMode::Exclusion => (blend_channel_exclusion(br, sr), blend_channel_exclusion(bg, sg), blend_channel_exclusion(bb, sb)),
+        BlendMode::Multiply => (
+            blend_channel_multiply(br, sr),
+            blend_channel_multiply(bg, sg),
+            blend_channel_multiply(bb, sb),
+        ),
+        BlendMode::Screen => (
+            blend_channel_screen(br, sr),
+            blend_channel_screen(bg, sg),
+            blend_channel_screen(bb, sb),
+        ),
+        BlendMode::Overlay => (
+            blend_channel_overlay(br, sr),
+            blend_channel_overlay(bg, sg),
+            blend_channel_overlay(bb, sb),
+        ),
+        BlendMode::Darken => (
+            blend_channel_darken(br, sr),
+            blend_channel_darken(bg, sg),
+            blend_channel_darken(bb, sb),
+        ),
+        BlendMode::Lighten => (
+            blend_channel_lighten(br, sr),
+            blend_channel_lighten(bg, sg),
+            blend_channel_lighten(bb, sb),
+        ),
+        BlendMode::ColorDodge => (
+            blend_channel_color_dodge(br, sr),
+            blend_channel_color_dodge(bg, sg),
+            blend_channel_color_dodge(bb, sb),
+        ),
+        BlendMode::ColorBurn => (
+            blend_channel_color_burn(br, sr),
+            blend_channel_color_burn(bg, sg),
+            blend_channel_color_burn(bb, sb),
+        ),
+        BlendMode::HardLight => (
+            blend_channel_hard_light(br, sr),
+            blend_channel_hard_light(bg, sg),
+            blend_channel_hard_light(bb, sb),
+        ),
+        BlendMode::SoftLight => (
+            blend_channel_soft_light(br, sr),
+            blend_channel_soft_light(bg, sg),
+            blend_channel_soft_light(bb, sb),
+        ),
+        BlendMode::Difference => (
+            blend_channel_difference(br, sr),
+            blend_channel_difference(bg, sg),
+            blend_channel_difference(bb, sb),
+        ),
+        BlendMode::Exclusion => (
+            blend_channel_exclusion(br, sr),
+            blend_channel_exclusion(bg, sg),
+            blend_channel_exclusion(bb, sb),
+        ),
         // HSL modes handled separately
         BlendMode::Hue | BlendMode::Saturation | BlendMode::Color | BlendMode::Luminosity => {
             blend_hsl_mode(mode, br, bg, bb, sr, sg, sb)
@@ -127,7 +211,15 @@ fn blend_channels(mode: BlendMode, br: f64, bg: f64, bb: f64, sr: f64, sg: f64, 
 }
 
 /// HSL-based blend modes: Hue, Saturation, Color, Luminosity.
-fn blend_hsl_mode(mode: BlendMode, br: f64, bg: f64, bb: f64, sr: f64, sg: f64, sb: f64) -> (f64, f64, f64) {
+fn blend_hsl_mode(
+    mode: BlendMode,
+    br: f64,
+    bg: f64,
+    bb: f64,
+    sr: f64,
+    sg: f64,
+    sb: f64,
+) -> (f64, f64, f64) {
     let base_hsl = rgb_to_hsl((br * 255.0) as u8, (bg * 255.0) as u8, (bb * 255.0) as u8);
     let src_hsl = rgb_to_hsl((sr * 255.0) as u8, (sg * 255.0) as u8, (sb * 255.0) as u8);
 
@@ -291,20 +383,39 @@ mod tests {
     #[test]
     fn blend_mode_from_str() {
         assert_eq!(BlendMode::from_str_lossy("multiply"), BlendMode::Multiply);
-        assert_eq!(BlendMode::from_str_lossy("color-dodge"), BlendMode::ColorDodge);
-        assert_eq!(BlendMode::from_str_lossy("Color Dodge"), BlendMode::ColorDodge);
-        assert_eq!(BlendMode::from_str_lossy("HARD_LIGHT"), BlendMode::HardLight);
+        assert_eq!(
+            BlendMode::from_str_lossy("color-dodge"),
+            BlendMode::ColorDodge
+        );
+        assert_eq!(
+            BlendMode::from_str_lossy("Color Dodge"),
+            BlendMode::ColorDodge
+        );
+        assert_eq!(
+            BlendMode::from_str_lossy("HARD_LIGHT"),
+            BlendMode::HardLight
+        );
         assert_eq!(BlendMode::from_str_lossy("unknown"), BlendMode::Normal);
     }
 
     #[test]
     fn blend_mode_roundtrip_str() {
         let modes = [
-            BlendMode::Normal, BlendMode::Multiply, BlendMode::Screen,
-            BlendMode::Overlay, BlendMode::Darken, BlendMode::Lighten,
-            BlendMode::ColorDodge, BlendMode::ColorBurn, BlendMode::HardLight,
-            BlendMode::SoftLight, BlendMode::Difference, BlendMode::Exclusion,
-            BlendMode::Hue, BlendMode::Saturation, BlendMode::Color,
+            BlendMode::Normal,
+            BlendMode::Multiply,
+            BlendMode::Screen,
+            BlendMode::Overlay,
+            BlendMode::Darken,
+            BlendMode::Lighten,
+            BlendMode::ColorDodge,
+            BlendMode::ColorBurn,
+            BlendMode::HardLight,
+            BlendMode::SoftLight,
+            BlendMode::Difference,
+            BlendMode::Exclusion,
+            BlendMode::Hue,
+            BlendMode::Saturation,
+            BlendMode::Color,
             BlendMode::Luminosity,
         ];
         for mode in modes {

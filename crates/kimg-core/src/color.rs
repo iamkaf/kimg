@@ -46,7 +46,7 @@ pub fn rgb_to_hsl(r: u8, g: u8, b: u8) -> Hsl {
 }
 
 fn clamp_byte(n: f64) -> u8 {
-    (n as i32).max(0).min(255) as u8
+    (n as i32).clamp(0, 255) as u8
 }
 
 /// Convert HSL to RGB (0-255).
@@ -137,14 +137,22 @@ pub fn contrast_ratio(a_hex: &str, b_hex: &str) -> Option<f64> {
 }
 
 /// Find the dominant color in an RGBA pixel buffer using a 5-bit histogram.
-pub fn dominant_rgb_from_rgba(data: &[u8], width: u32, height: u32, max_samples: u32) -> Option<Rgb> {
+pub fn dominant_rgb_from_rgba(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    max_samples: u32,
+) -> Option<Rgb> {
     let w = width as usize;
     let h = height as usize;
     if w == 0 || h == 0 || data.len() < w * h * 4 {
         return None;
     }
 
-    let step = ((w * h) as f64 / max_samples.max(1) as f64).sqrt().floor().max(1.0) as usize;
+    let step = ((w * h) as f64 / max_samples.max(1) as f64)
+        .sqrt()
+        .floor()
+        .max(1.0) as usize;
     let mut bins = vec![0u32; 32 * 32 * 32];
 
     let mut y = 0;
@@ -223,13 +231,34 @@ mod tests {
 
     #[test]
     fn hex_to_rgb_6digit() {
-        assert_eq!(hex_to_rgb("#ff8000"), Some(Rgb { r: 255, g: 128, b: 0 }));
-        assert_eq!(hex_to_rgb("FF8000"), Some(Rgb { r: 255, g: 128, b: 0 }));
+        assert_eq!(
+            hex_to_rgb("#ff8000"),
+            Some(Rgb {
+                r: 255,
+                g: 128,
+                b: 0
+            })
+        );
+        assert_eq!(
+            hex_to_rgb("FF8000"),
+            Some(Rgb {
+                r: 255,
+                g: 128,
+                b: 0
+            })
+        );
     }
 
     #[test]
     fn hex_to_rgb_3digit() {
-        assert_eq!(hex_to_rgb("#f80"), Some(Rgb { r: 255, g: 136, b: 0 }));
+        assert_eq!(
+            hex_to_rgb("#f80"),
+            Some(Rgb {
+                r: 255,
+                g: 136,
+                b: 0
+            })
+        );
     }
 
     #[test]
@@ -241,9 +270,20 @@ mod tests {
 
     #[test]
     fn rgb_to_hex_roundtrip() {
-        let hex = rgb_to_hex(Rgb { r: 255, g: 128, b: 0 });
+        let hex = rgb_to_hex(Rgb {
+            r: 255,
+            g: 128,
+            b: 0,
+        });
         assert_eq!(hex, "#ff8000");
-        assert_eq!(hex_to_rgb(&hex), Some(Rgb { r: 255, g: 128, b: 0 }));
+        assert_eq!(
+            hex_to_rgb(&hex),
+            Some(Rgb {
+                r: 255,
+                g: 128,
+                b: 0
+            })
+        );
     }
 
     #[test]
@@ -286,5 +326,31 @@ mod tests {
     fn dominant_rgb_all_transparent() {
         let data = vec![0u8; 4 * 4 * 4];
         assert_eq!(dominant_rgb_from_rgba(&data, 4, 4, 4096), None);
+    }
+
+    #[test]
+    fn readable_text_color_logic() {
+        // Threshold used by JS readableTextColor: luminance > 0.179 → black text
+        let threshold = 0.179;
+
+        let white_lum = relative_luminance("#ffffff").unwrap();
+        assert!(white_lum > threshold, "white bg should get black text");
+
+        let black_lum = relative_luminance("#000000").unwrap();
+        assert!(black_lum < threshold, "black bg should get white text");
+
+        // Mid-gray (#808080): luminance ≈ 0.2159, should get black text
+        let gray_lum = relative_luminance("#808080").unwrap();
+        assert!(
+            gray_lum > threshold,
+            "mid-gray lum={gray_lum} should be above threshold"
+        );
+
+        // Dark blue (#1e3a5f): luminance should be below threshold → white text
+        let dark_lum = relative_luminance("#1e3a5f").unwrap();
+        assert!(
+            dark_lum < threshold,
+            "dark blue lum={dark_lum} should get white text"
+        );
     }
 }

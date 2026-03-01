@@ -137,11 +137,11 @@ impl Document {
     ) -> u32 {
         let count = stops_positions.len();
         let mut stops = Vec::with_capacity(count);
-        for i in 0..count {
+        for (i, &pos) in stops_positions.iter().enumerate().take(count) {
             let ci = i * 4;
             if ci + 3 < stops_colors.len() {
                 stops.push(GradientStop {
-                    position: stops_positions[i],
+                    position: pos,
                     color: Rgba::new(
                         stops_colors[ci],
                         stops_colors[ci + 1],
@@ -200,13 +200,7 @@ impl Document {
     }
 
     /// Set a grayscale layer mask from RGBA data. Uses the red channel as mask value.
-    pub fn set_layer_mask(
-        &mut self,
-        id: u32,
-        mask_data: &[u8],
-        mask_width: u32,
-        mask_height: u32,
-    ) {
+    pub fn set_layer_mask(&mut self, id: u32, mask_data: &[u8], mask_width: u32, mask_height: u32) {
         if let Some(layer) = self.inner.find_layer_mut(id) {
             if let Some(buf) = ImageBuffer::from_rgba(mask_width, mask_height, mask_data.to_vec()) {
                 layer.common.mask = Some(buf);
@@ -575,28 +569,30 @@ impl Document {
     ) {
         if let Some(layer) = self.inner.find_layer_mut(id) {
             if let LayerKind::Image(img) = &mut layer.kind {
-                filter::levels(&mut img.buffer, in_black, in_white, gamma, out_black, out_white);
+                filter::levels(
+                    &mut img.buffer,
+                    in_black,
+                    in_white,
+                    gamma,
+                    out_black,
+                    out_white,
+                );
             }
         }
     }
 
     /// Apply a gradient map to a layer. `stops_colors` is [r,g,b,a, r,g,b,a, ...],
     /// `stops_positions` is [f64, f64, ...].
-    pub fn gradient_map_layer(
-        &mut self,
-        id: u32,
-        stops_colors: &[u8],
-        stops_positions: &[f64],
-    ) {
+    pub fn gradient_map_layer(&mut self, id: u32, stops_colors: &[u8], stops_positions: &[f64]) {
         if let Some(layer) = self.inner.find_layer_mut(id) {
             if let LayerKind::Image(img) = &mut layer.kind {
                 let count = stops_positions.len();
                 let mut stops = Vec::with_capacity(count);
-                for i in 0..count {
+                for (i, &pos) in stops_positions.iter().enumerate().take(count) {
                     let ci = i * 4;
                     if ci + 3 < stops_colors.len() {
                         stops.push((
-                            stops_positions[i],
+                            pos,
                             Rgba::new(
                                 stops_colors[ci],
                                 stops_colors[ci + 1],
@@ -824,11 +820,13 @@ impl Document {
         layer_ids
             .iter()
             .filter_map(|&id| {
-                self.inner.find_layer(id).and_then(|layer| match &layer.kind {
-                    LayerKind::Image(img) => Some(img.buffer.clone()),
-                    LayerKind::Paint(paint) => Some(paint.buffer.clone()),
-                    _ => None,
-                })
+                self.inner
+                    .find_layer(id)
+                    .and_then(|layer| match &layer.kind {
+                        LayerKind::Image(img) => Some(img.buffer.clone()),
+                        LayerKind::Paint(paint) => Some(paint.buffer.clone()),
+                        _ => None,
+                    })
             })
             .collect()
     }
@@ -850,7 +848,12 @@ fn flat_to_palette(data: &[u8]) -> sprite::Palette {
     let mut colors = Vec::with_capacity(count);
     for i in 0..count {
         let idx = i * 4;
-        colors.push(Rgba::new(data[idx], data[idx + 1], data[idx + 2], data[idx + 3]));
+        colors.push(Rgba::new(
+            data[idx],
+            data[idx + 1],
+            data[idx + 2],
+            data[idx + 3],
+        ));
     }
     sprite::Palette { colors }
 }
@@ -951,7 +954,9 @@ mod tests {
     #[test]
     fn add_image_layer_and_render() {
         let mut doc = Document::new(2, 2);
-        let rgba = vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
+        let rgba = vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+        ];
         doc.add_image_layer("test", &rgba, 2, 2, 0, 0);
         let result = doc.render();
         assert_eq!(result[0], 255);
@@ -1018,7 +1023,9 @@ mod tests {
     #[test]
     fn png_roundtrip_via_wasm() {
         let mut doc = Document::new(2, 2);
-        let rgba = vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
+        let rgba = vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+        ];
         doc.add_image_layer("test", &rgba, 2, 2, 0, 0);
 
         let png_bytes = doc.export_png();
@@ -1153,7 +1160,12 @@ mod tests {
 
     fn make_red_4x4() -> (Document, u32) {
         let mut doc = Document::new(4, 4);
-        let rgba: Vec<u8> = [255, 0, 0, 255].iter().copied().cycle().take(4 * 4 * 4).collect();
+        let rgba: Vec<u8> = [255, 0, 0, 255]
+            .iter()
+            .copied()
+            .cycle()
+            .take(4 * 4 * 4)
+            .collect();
         let id = doc.add_image_layer("red", &rgba, 4, 4, 0, 0);
         (doc, id)
     }
@@ -1262,7 +1274,7 @@ mod tests {
         let (mut doc, id) = make_red_4x4();
         doc.invert_layer(id);
         let buf = doc.get_layer_rgba(id);
-        assert_eq!(buf[0], 0);   // 255 inverted
+        assert_eq!(buf[0], 0); // 255 inverted
         assert_eq!(buf[1], 255); // 0 inverted
         assert_eq!(buf[2], 255); // 0 inverted
     }
@@ -1308,8 +1320,18 @@ mod tests {
     #[test]
     fn pack_sprites_wasm() {
         let mut doc = Document::new(32, 32);
-        let rgba1: Vec<u8> = [255, 0, 0, 255].iter().copied().cycle().take(8 * 8 * 4).collect();
-        let rgba2: Vec<u8> = [0, 255, 0, 255].iter().copied().cycle().take(8 * 8 * 4).collect();
+        let rgba1: Vec<u8> = [255, 0, 0, 255]
+            .iter()
+            .copied()
+            .cycle()
+            .take(8 * 8 * 4)
+            .collect();
+        let rgba2: Vec<u8> = [0, 255, 0, 255]
+            .iter()
+            .copied()
+            .cycle()
+            .take(8 * 8 * 4)
+            .collect();
         let id1 = doc.add_image_layer("a", &rgba1, 8, 8, 0, 0);
         let id2 = doc.add_image_layer("b", &rgba2, 8, 8, 0, 0);
 
@@ -1324,7 +1346,12 @@ mod tests {
     #[test]
     fn contact_sheet_wasm() {
         let mut doc = Document::new(32, 32);
-        let rgba: Vec<u8> = [255, 0, 0, 255].iter().copied().cycle().take(8 * 8 * 4).collect();
+        let rgba: Vec<u8> = [255, 0, 0, 255]
+            .iter()
+            .copied()
+            .cycle()
+            .take(8 * 8 * 4)
+            .collect();
         let id1 = doc.add_image_layer("a", &rgba, 8, 8, 0, 0);
         let id2 = doc.add_image_layer("b", &rgba, 8, 8, 0, 0);
 
@@ -1360,7 +1387,7 @@ mod tests {
         let palette = vec![0, 255, 0, 255];
         doc.quantize_layer(id, &palette);
         let buf = doc.get_layer_rgba(id);
-        assert_eq!(buf[0], 0);   // was red, now green
+        assert_eq!(buf[0], 0); // was red, now green
         assert_eq!(buf[1], 255);
         assert_eq!(buf[2], 0);
     }
@@ -1390,7 +1417,12 @@ mod tests {
     #[test]
     fn export_jpeg_wasm() {
         let mut doc = Document::new(4, 4);
-        let rgba: Vec<u8> = [128, 128, 128, 255].iter().copied().cycle().take(4 * 4 * 4).collect();
+        let rgba: Vec<u8> = [128, 128, 128, 255]
+            .iter()
+            .copied()
+            .cycle()
+            .take(4 * 4 * 4)
+            .collect();
         doc.add_image_layer("test", &rgba, 4, 4, 0, 0);
         let jpeg = doc.export_jpeg(80);
         assert!(!jpeg.is_empty());
@@ -1401,7 +1433,12 @@ mod tests {
     #[test]
     fn export_webp_wasm() {
         let mut doc = Document::new(4, 4);
-        let rgba: Vec<u8> = [128, 128, 128, 255].iter().copied().cycle().take(4 * 4 * 4).collect();
+        let rgba: Vec<u8> = [128, 128, 128, 255]
+            .iter()
+            .copied()
+            .cycle()
+            .take(4 * 4 * 4)
+            .collect();
         doc.add_image_layer("test", &rgba, 4, 4, 0, 0);
         let webp = doc.export_webp();
         assert!(!webp.is_empty());
@@ -1411,7 +1448,12 @@ mod tests {
     #[test]
     fn serialize_deserialize_wasm() {
         let mut doc = Document::new(4, 4);
-        let rgba: Vec<u8> = [255, 0, 0, 255].iter().copied().cycle().take(4 * 4 * 4).collect();
+        let rgba: Vec<u8> = [255, 0, 0, 255]
+            .iter()
+            .copied()
+            .cycle()
+            .take(4 * 4 * 4)
+            .collect();
         doc.add_image_layer("red", &rgba, 4, 4, 0, 0);
         doc.add_solid_color_layer("fill", 0, 255, 0, 255);
 

@@ -157,7 +157,8 @@ pub fn contact_sheet(images: &[&ImageBuffer], opts: &ContactSheetOptions) -> Ima
         let row = i as u32 / columns;
 
         // Resize to fit within cell, preserving aspect ratio, nearest-neighbor
-        let (fit_w, fit_h) = fit_dimensions(img.width, img.height, opts.cell_width, opts.cell_height);
+        let (fit_w, fit_h) =
+            fit_dimensions(img.width, img.height, opts.cell_width, opts.cell_height);
         let resized = if fit_w == img.width && fit_h == img.height {
             (*img).clone()
         } else {
@@ -191,11 +192,11 @@ pub fn contact_sheet(images: &[&ImageBuffer], opts: &ContactSheetOptions) -> Ima
                     let sf = sa as f64 / 255.0;
                     let inv = 1.0 - sf;
                     for c in 0..3 {
-                        output.data[di + c] =
-                            (resized.data[si + c] as f64 * sf + output.data[di + c] as f64 * inv) as u8;
+                        output.data[di + c] = (resized.data[si + c] as f64 * sf
+                            + output.data[di + c] as f64 * inv)
+                            as u8;
                     }
-                    output.data[di + 3] =
-                        (sa as f64 + output.data[di + 3] as f64 * inv) as u8;
+                    output.data[di + 3] = (sa as f64 + output.data[di + 3] as f64 * inv) as u8;
                 }
             }
         }
@@ -384,7 +385,12 @@ impl ColorBox {
         self.pixels.sort_by_key(|p| p[axis]);
         let mid = self.pixels.len() / 2;
         let right = self.pixels.split_off(mid);
-        (ColorBox { pixels: self.pixels }, ColorBox { pixels: right })
+        (
+            ColorBox {
+                pixels: self.pixels,
+            },
+            ColorBox { pixels: right },
+        )
     }
 
     fn average(&self) -> Rgba {
@@ -600,7 +606,10 @@ mod tests {
         // Every pixel should be one of the palette colors
         for x in 0..10 {
             let p = quantized.get_pixel(x, 0);
-            let is_palette = palette.colors.iter().any(|c| c.r == p.r && c.g == p.g && c.b == p.b);
+            let is_palette = palette
+                .colors
+                .iter()
+                .any(|c| c.r == p.r && c.g == p.g && c.b == p.b);
             assert!(is_palette, "pixel at x={} is ({},{},{})", x, p.r, p.g, p.b);
         }
     }
@@ -627,8 +636,14 @@ mod tests {
         });
 
         let items = vec![
-            BatchItem { document: doc1, name: "first".into() },
-            BatchItem { document: doc2, name: "second".into() },
+            BatchItem {
+                document: doc1,
+                name: "first".into(),
+            },
+            BatchItem {
+                document: doc2,
+                name: "second".into(),
+            },
         ];
 
         let results = batch_render(&items);

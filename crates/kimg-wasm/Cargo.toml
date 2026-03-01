@@ -3,6 +3,8 @@ name = "kimg-wasm"
 version = "0.1.0"
 edition = "2021"
 description = "WASM bindings for kimg image compositing engine"
+license = "MIT"
+repository = "https://github.com/iamkaf/kimg"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

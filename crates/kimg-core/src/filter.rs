@@ -43,7 +43,7 @@ impl Default for HslFilterConfig {
 }
 
 fn clamp_byte(n: f64) -> u8 {
-    (n as i32).max(0).min(255) as u8
+    (n as i32).clamp(0, 255) as u8
 }
 
 /// Apply the full HSL + tone filter pipeline in-place on `buf`.
@@ -52,11 +52,11 @@ pub fn apply_hsl_filter(buf: &mut ImageBuffer, cfg: &HslFilterConfig) {
     let sat = cfg.saturation;
     let light = cfg.lightness;
     let a_delta = cfg.alpha;
-    let brightness = cfg.brightness.max(-1.0).min(1.0);
-    let contrast = cfg.contrast.max(-1.0).min(1.0);
-    let temperature = cfg.temperature.max(-1.0).min(1.0);
-    let tint = cfg.tint.max(-1.0).min(1.0);
-    let sharpen = cfg.sharpen.max(0.0).min(1.0);
+    let brightness = cfg.brightness.clamp(-1.0, 1.0);
+    let contrast = cfg.contrast.clamp(-1.0, 1.0);
+    let temperature = cfg.temperature.clamp(-1.0, 1.0);
+    let tint = cfg.tint.clamp(-1.0, 1.0);
+    let sharpen = cfg.sharpen.clamp(0.0, 1.0);
 
     let has_post_adjust =
         brightness != 0.0 || contrast != 0.0 || temperature != 0.0 || tint != 0.0 || sharpen > 0.0;
@@ -86,15 +86,15 @@ pub fn apply_hsl_filter(buf: &mut ImageBuffer, cfg: &HslFilterConfig) {
 
         let hsl = rgb_to_hsl(r, g, b);
         let nh = hsl.h + hue;
-        let ns = (hsl.s + sat).max(0.0).min(1.0);
-        let nl = (hsl.l + light).max(0.0).min(1.0);
+        let ns = (hsl.s + sat).clamp(0.0, 1.0);
+        let nl = (hsl.l + light).clamp(0.0, 1.0);
         let (nr, ng, nb) = hsl_to_rgb(nh, ns, nl);
 
         buf.data[i] = nr;
         buf.data[i + 1] = ng;
         buf.data[i + 2] = nb;
 
-        let na = (a as f64 + (a_delta * 255.0).round()).max(0.0).min(255.0) as u8;
+        let na = (a as f64 + (a_delta * 255.0).round()).clamp(0.0, 255.0) as u8;
         buf.data[i + 3] = na;
 
         if has_post_adjust {
@@ -172,9 +172,9 @@ pub fn apply_hsl_filter(buf: &mut ImageBuffer, cfg: &HslFilterConfig) {
                     let blur_g = sum_g / weight;
                     let blur_b = sum_b / weight;
                     let amount = sharpen * 1.2;
-                    r = (r + (r - blur_r) * amount).max(0.0).min(255.0);
-                    g = (g + (g - blur_g) * amount).max(0.0).min(255.0);
-                    b = (b + (b - blur_b) * amount).max(0.0).min(255.0);
+                    r = (r + (r - blur_r) * amount).clamp(0.0, 255.0);
+                    g = (g + (g - blur_g) * amount).clamp(0.0, 255.0);
+                    b = (b + (b - blur_b) * amount).clamp(0.0, 255.0);
                 }
             }
 
@@ -278,10 +278,10 @@ pub fn levels(
 
     // Build lookup table for speed
     let mut lut = [0u8; 256];
-    for i in 0..256 {
+    for (i, entry) in lut.iter_mut().enumerate() {
         let clamped = (i as f64 - in_black as f64).clamp(0.0, in_range) / in_range;
         let curved = clamped.powf(gamma_inv);
-        lut[i] = (out_black as f64 + curved * out_range).clamp(0.0, 255.0) as u8;
+        *entry = (out_black as f64 + curved * out_range).clamp(0.0, 255.0) as u8;
     }
 
     for i in (0..buf.data.len()).step_by(4) {
@@ -303,7 +303,7 @@ pub fn gradient_map(buf: &mut ImageBuffer, stops: &[(f64, crate::pixel::Rgba)]) 
 
     // Build 256-entry LUT from gradient stops
     let mut lut = [(0u8, 0u8, 0u8); 256];
-    for i in 0..256 {
+    for (i, entry) in lut.iter_mut().enumerate() {
         let t = i as f64 / 255.0;
         // Find the two surrounding stops
         let mut lo = 0;
@@ -318,7 +318,7 @@ pub fn gradient_map(buf: &mut ImageBuffer, stops: &[(f64, crate::pixel::Rgba)]) 
             }
         }
         if lo == hi {
-            lut[i] = (stops[lo].1.r, stops[lo].1.g, stops[lo].1.b);
+            *entry = (stops[lo].1.r, stops[lo].1.g, stops[lo].1.b);
         } else {
             let range = stops[hi].0 - stops[lo].0;
             let frac = if range > 0.0 {
@@ -328,7 +328,7 @@ pub fn gradient_map(buf: &mut ImageBuffer, stops: &[(f64, crate::pixel::Rgba)]) 
             };
             let a = &stops[lo].1;
             let b = &stops[hi].1;
-            lut[i] = (
+            *entry = (
                 (a.r as f64 + (b.r as f64 - a.r as f64) * frac).clamp(0.0, 255.0) as u8,
                 (a.g as f64 + (b.g as f64 - a.g as f64) * frac).clamp(0.0, 255.0) as u8,
                 (a.b as f64 + (b.b as f64 - a.b as f64) * frac).clamp(0.0, 255.0) as u8,
@@ -364,7 +364,12 @@ mod tests {
         apply_hsl_filter(&mut buf, &HslFilterConfig::default());
         // HSL roundtrip may introduce ±1 rounding error per channel
         for (a, b) in buf.data.iter().zip(original.data.iter()) {
-            assert!((*a as i16 - *b as i16).abs() <= 1, "got {} expected {}", a, b);
+            assert!(
+                (*a as i16 - *b as i16).abs() <= 1,
+                "got {} expected {}",
+                a,
+                b
+            );
         }
     }
 

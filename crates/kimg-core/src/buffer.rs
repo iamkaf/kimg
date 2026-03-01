@@ -25,7 +25,11 @@ impl ImageBuffer {
         if data.len() != expected {
             return None;
         }
-        Some(Self { width, height, data })
+        Some(Self {
+            width,
+            height,
+            data,
+        })
     }
 
     /// Get the pixel at (x, y). Panics if out of bounds.

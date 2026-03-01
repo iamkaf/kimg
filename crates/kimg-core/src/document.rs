@@ -70,11 +70,7 @@ impl Document {
     }
 
     /// Add a child layer to a group. Returns the child's ID on success.
-    pub fn add_child_to_group(
-        &mut self,
-        group_id: u32,
-        child: Layer,
-    ) -> Result<u32, &'static str> {
+    pub fn add_child_to_group(&mut self, group_id: u32, child: Layer) -> Result<u32, &'static str> {
         let child_id = child.common.id;
         let layer = self.find_layer_mut(group_id).ok_or("group not found")?;
         match &mut layer.kind {
@@ -169,8 +165,7 @@ fn render_gradient(grad: &GradientLayerData, width: u32, height: u32) -> ImageBu
                     (x as f64 / (w - 1).max(1) as f64 + y as f64 / (h - 1).max(1) as f64) / 2.0
                 }
                 GradientDirection::DiagonalUp => {
-                    (x as f64 / (w - 1).max(1) as f64
-                        + (1.0 - y as f64 / (h - 1).max(1) as f64))
+                    (x as f64 / (w - 1).max(1) as f64 + (1.0 - y as f64 / (h - 1).max(1) as f64))
                         / 2.0
                 }
             };
@@ -302,8 +297,7 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
                     buf.data[i] = fill.data[i];
                     buf.data[i + 1] = fill.data[i + 1];
                     buf.data[i + 2] = fill.data[i + 2];
-                    buf.data[i + 3] =
-                        (fill.data[i + 3] as f64 * layer.common.opacity + 0.5) as u8;
+                    buf.data[i + 3] = (fill.data[i + 3] as f64 * layer.common.opacity + 0.5) as u8;
                 }
             } else {
                 buf = fill;
@@ -316,8 +310,7 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
                     buf.data[i] = fill.data[i];
                     buf.data[i + 1] = fill.data[i + 1];
                     buf.data[i + 2] = fill.data[i + 2];
-                    buf.data[i + 3] =
-                        (fill.data[i + 3] as f64 * layer.common.opacity + 0.5) as u8;
+                    buf.data[i + 3] = (fill.data[i + 3] as f64 * layer.common.opacity + 0.5) as u8;
                 }
             } else {
                 buf = fill;
@@ -470,8 +463,13 @@ mod tests {
     fn single_opaque_image_layer() {
         let mut doc = Document::new(4, 4);
         let id = doc.next_id();
-        doc.layers
-            .push(img_layer(id, "red", solid_buf(2, 2, Rgba::new(255, 0, 0, 255)), 1, 1));
+        doc.layers.push(img_layer(
+            id,
+            "red",
+            solid_buf(2, 2, Rgba::new(255, 0, 0, 255)),
+            1,
+            1,
+        ));
         let result = doc.render();
         assert_eq!(result.get_pixel(0, 0), Rgba::TRANSPARENT);
         assert_eq!(result.get_pixel(1, 1), Rgba::new(255, 0, 0, 255));
@@ -483,7 +481,13 @@ mod tests {
     fn hidden_layer_is_skipped() {
         let mut doc = Document::new(2, 2);
         let id = doc.next_id();
-        let mut layer = img_layer(id, "hidden", solid_buf(2, 2, Rgba::new(255, 0, 0, 255)), 0, 0);
+        let mut layer = img_layer(
+            id,
+            "hidden",
+            solid_buf(2, 2, Rgba::new(255, 0, 0, 255)),
+            0,
+            0,
+        );
         layer.common.visible = false;
         doc.layers.push(layer);
         let result = doc.render();
@@ -495,11 +499,19 @@ mod tests {
         let mut doc = Document::new(1, 1);
         let id1 = doc.next_id();
         doc.layers.push(img_layer(
-            id1, "blue", solid_buf(1, 1, Rgba::new(0, 0, 255, 255)), 0, 0,
+            id1,
+            "blue",
+            solid_buf(1, 1, Rgba::new(0, 0, 255, 255)),
+            0,
+            0,
         ));
         let id2 = doc.next_id();
         doc.layers.push(img_layer(
-            id2, "red", solid_buf(1, 1, Rgba::new(255, 0, 0, 128)), 0, 0,
+            id2,
+            "red",
+            solid_buf(1, 1, Rgba::new(255, 0, 0, 128)),
+            0,
+            0,
         ));
         let result = doc.render();
         let p = result.get_pixel(0, 0);
@@ -513,7 +525,13 @@ mod tests {
         let mut doc = Document::new(2, 2);
         let id1 = doc.next_id();
         let child_id = doc.next_id();
-        let child = img_layer(child_id, "child", solid_buf(2, 2, Rgba::new(255, 0, 0, 255)), 0, 0);
+        let child = img_layer(
+            child_id,
+            "child",
+            solid_buf(2, 2, Rgba::new(255, 0, 0, 255)),
+            0,
+            0,
+        );
         doc.layers.push(Layer {
             common: LayerCommon::new(id1, "group"),
             kind: LayerKind::Group(GroupLayerData {
@@ -555,12 +573,20 @@ mod tests {
         let mut doc = Document::new(1, 1);
         let id_bg = doc.next_id();
         doc.layers.push(img_layer(
-            id_bg, "bg", solid_buf(1, 1, Rgba::new(255, 0, 0, 255)), 0, 0,
+            id_bg,
+            "bg",
+            solid_buf(1, 1, Rgba::new(255, 0, 0, 255)),
+            0,
+            0,
         ));
         let group_id = doc.next_id();
         let child_img_id = doc.next_id();
         let child_img = img_layer(
-            child_img_id, "green", solid_buf(1, 1, Rgba::new(0, 255, 0, 128)), 0, 0,
+            child_img_id,
+            "green",
+            solid_buf(1, 1, Rgba::new(0, 255, 0, 128)),
+            0,
+            0,
         );
         let filter_id = doc.next_id();
         let child_filter = Layer {
@@ -607,11 +633,19 @@ mod tests {
         let mut doc = Document::new(1, 1);
         let id1 = doc.next_id();
         doc.layers.push(img_layer(
-            id1, "base", solid_buf(1, 1, Rgba::new(200, 100, 50, 255)), 0, 0,
+            id1,
+            "base",
+            solid_buf(1, 1, Rgba::new(200, 100, 50, 255)),
+            0,
+            0,
         ));
         let id2 = doc.next_id();
         let mut layer = img_layer(
-            id2, "top", solid_buf(1, 1, Rgba::new(128, 128, 128, 255)), 0, 0,
+            id2,
+            "top",
+            solid_buf(1, 1, Rgba::new(128, 128, 128, 255)),
+            0,
+            0,
         );
         layer.common.blend_mode = BlendMode::Multiply;
         doc.layers.push(layer);
@@ -626,9 +660,7 @@ mod tests {
     fn layer_mask_hides_pixels() {
         let mut doc = Document::new(2, 1);
         let id = doc.next_id();
-        let mut layer = img_layer(
-            id, "red", solid_buf(2, 1, Rgba::new(255, 0, 0, 255)), 0, 0,
-        );
+        let mut layer = img_layer(id, "red", solid_buf(2, 1, Rgba::new(255, 0, 0, 255)), 0, 0);
         // Mask: left pixel white (visible), right pixel black (hidden)
         let mut mask = ImageBuffer::new_transparent(2, 1);
         mask.set_pixel(0, 0, Rgba::new(255, 255, 255, 255));
@@ -654,7 +686,11 @@ mod tests {
         // Top layer: full red, clipped to below
         let id2 = doc.next_id();
         let mut layer = img_layer(
-            id2, "clipped", solid_buf(2, 1, Rgba::new(255, 0, 0, 255)), 0, 0,
+            id2,
+            "clipped",
+            solid_buf(2, 1, Rgba::new(255, 0, 0, 255)),
+            0,
+            0,
         );
         layer.common.clip_to_below = true;
         doc.layers.push(layer);
@@ -718,7 +754,11 @@ mod tests {
         let group_id = doc.next_id();
         let child_id = doc.next_id();
         let child = img_layer(
-            child_id, "red", solid_buf(2, 2, Rgba::new(255, 0, 0, 255)), 0, 0,
+            child_id,
+            "red",
+            solid_buf(2, 2, Rgba::new(255, 0, 0, 255)),
+            0,
+            0,
         );
         doc.layers.push(Layer {
             common: LayerCommon::new(group_id, "group"),
@@ -753,5 +793,112 @@ mod tests {
         let result = doc.render();
         let p = result.get_pixel(0, 0);
         assert!(p.a > 120 && p.a < 136, "a={}", p.a);
+    }
+
+    // ── Golden-image integration tests ──
+
+    #[test]
+    fn golden_solid_over_solid() {
+        // Two opaque 2×2 layers: blue base, red top → every pixel should be pure red
+        let mut doc = Document::new(2, 2);
+        let id1 = doc.next_id();
+        doc.layers.push(img_layer(
+            id1,
+            "blue",
+            solid_buf(2, 2, Rgba::new(0, 0, 255, 255)),
+            0,
+            0,
+        ));
+        let id2 = doc.next_id();
+        doc.layers.push(img_layer(
+            id2,
+            "red",
+            solid_buf(2, 2, Rgba::new(255, 0, 0, 255)),
+            0,
+            0,
+        ));
+
+        let result = doc.render();
+        let expected = Rgba::new(255, 0, 0, 255);
+        for y in 0..2 {
+            for x in 0..2 {
+                assert_eq!(result.get_pixel(x, y), expected, "pixel ({x},{y}) mismatch");
+            }
+        }
+    }
+
+    #[test]
+    fn golden_opacity_blend() {
+        // 1×1 canvas: blue base (opaque) + red layer at 50% opacity
+        // Porter-Duff source-over: resulting color should blend
+        let mut doc = Document::new(1, 1);
+        let id1 = doc.next_id();
+        doc.layers.push(img_layer(
+            id1,
+            "blue",
+            solid_buf(1, 1, Rgba::new(0, 0, 255, 255)),
+            0,
+            0,
+        ));
+        let id2 = doc.next_id();
+        // Create a red pixel with alpha = 128 (≈50%)
+        doc.layers.push(img_layer(
+            id2,
+            "red-50",
+            solid_buf(1, 1, Rgba::new(255, 0, 0, 128)),
+            0,
+            0,
+        ));
+
+        let result = doc.render();
+        let p = result.get_pixel(0, 0);
+        // alpha = 128 + 255*(1 - 128/255) = 255 (fully opaque output)
+        assert_eq!(p.a, 255, "alpha should be 255");
+        // red ≈ 255 * (128/255) / 1.0 = 128
+        assert!(p.r > 120 && p.r < 136, "r={} expected ~128", p.r);
+        // blue ≈ 255 * (1 - 128/255) = ~127
+        assert!(p.b > 120 && p.b < 136, "b={} expected ~127", p.b);
+        assert!(p.g < 5, "g={} expected ~0", p.g);
+    }
+
+    #[test]
+    fn golden_filter_pipeline() {
+        // 2×2 canvas with red pixels, apply a saturation=-1 filter to desaturate to grayscale
+        let mut doc = Document::new(2, 2);
+        let id1 = doc.next_id();
+        doc.layers.push(img_layer(
+            id1,
+            "red",
+            solid_buf(2, 2, Rgba::new(255, 0, 0, 255)),
+            0,
+            0,
+        ));
+        let filter_id = doc.next_id();
+        doc.layers.push(Layer {
+            common: LayerCommon::new(filter_id, "desat"),
+            kind: LayerKind::Filter(FilterLayerData {
+                config: HslFilterConfig {
+                    saturation: -1.0, // fully desaturate
+                    ..Default::default()
+                },
+            }),
+        });
+
+        let result = doc.render();
+        for y in 0..2 {
+            for x in 0..2 {
+                let p = result.get_pixel(x, y);
+                // Desaturated red → grayscale, all RGB channels should be equal
+                assert_eq!(p.r, p.g, "pixel ({x},{y}) r={} != g={}", p.r, p.g);
+                assert_eq!(p.g, p.b, "pixel ({x},{y}) g={} != b={}", p.g, p.b);
+                assert_eq!(p.a, 255, "pixel ({x},{y}) alpha should be 255");
+                // Luminance of pure red in HSL → L=0.5, so grayscale ≈ 128
+                assert!(
+                    p.r > 120 && p.r < 136,
+                    "pixel ({x},{y}) gray value {}, expected ~128",
+                    p.r
+                );
+            }
+        }
     }
 }

@@ -41,7 +41,7 @@ pub struct BlitParams {
 }
 
 fn clamp_byte(n: f64) -> u8 {
-    (n as i32).max(0).min(255) as u8
+    (n as i32).clamp(0, 255) as u8
 }
 
 /// Blit `src` onto `dst` with position, anchor, flip, rotation, and opacity.
@@ -65,7 +65,7 @@ pub fn blit_transformed(dst: &mut ImageBuffer, src: &ImageBuffer, params: &BlitP
         Anchor::TopLeft => (params.dx, params.dy),
     };
 
-    let op = params.opacity.max(0.0).min(1.0);
+    let op = params.opacity.clamp(0.0, 1.0);
 
     let dw = dst.width as i32;
     let dh = dst.height as i32;

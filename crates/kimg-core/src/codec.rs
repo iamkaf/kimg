@@ -543,10 +543,12 @@ mod tests {
             use gif::Encoder;
             let mut encoder = Encoder::new(&mut buf, 1, 1, &[]).unwrap();
             use gif::Frame;
-            let mut frame = Frame::default();
-            frame.width = 1;
-            frame.height = 1;
-            frame.buffer = std::borrow::Cow::Owned(vec![0]); // palette index 0
+            let mut frame = Frame {
+                width: 1,
+                height: 1,
+                buffer: std::borrow::Cow::Owned(vec![0]),
+                ..Frame::default()
+            };
             let palette = vec![255, 0, 0]; // red
             frame.palette = Some(palette);
             encoder.write_frame(&frame).unwrap();

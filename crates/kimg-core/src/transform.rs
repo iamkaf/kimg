@@ -46,12 +46,12 @@ fn sample_bilinear(src: &ImageBuffer, fx: f64, fy: f64) -> [f64; 4] {
     let i11 = (y1 * w + x1) * 4;
 
     let mut result = [0.0f64; 4];
-    for c in 0..4 {
+    for (c, res) in result.iter_mut().enumerate() {
         let c00 = src.data[i00 + c] as f64;
         let c10 = src.data[i10 + c] as f64;
         let c01 = src.data[i01 + c] as f64;
         let c11 = src.data[i11 + c] as f64;
-        result[c] = c00 * (1.0 - dx) * (1.0 - dy)
+        *res = c00 * (1.0 - dx) * (1.0 - dy)
             + c10 * dx * (1.0 - dy)
             + c01 * (1.0 - dx) * dy
             + c11 * dx * dy;
@@ -129,15 +129,15 @@ fn resize_lanczos3_horizontal(src: &ImageBuffer, new_width: u32) -> ImageBuffer 
                 let w = lanczos3(center - i as f64);
                 weight_sum += w;
                 let idx = (y * sw + si) * 4;
-                for c in 0..4 {
-                    sum[c] += src.data[idx + c] as f64 * w;
+                for (c, s) in sum.iter_mut().enumerate() {
+                    *s += src.data[idx + c] as f64 * w;
                 }
             }
 
             if weight_sum > 0.0 {
                 let di = (y * dw + x) * 4;
-                for c in 0..4 {
-                    dst.data[di + c] = (sum[c] / weight_sum).clamp(0.0, 255.0) as u8;
+                for (c, s) in sum.iter().enumerate() {
+                    dst.data[di + c] = (*s / weight_sum).clamp(0.0, 255.0) as u8;
                 }
             }
         }
@@ -166,15 +166,15 @@ fn resize_lanczos3_vertical(src: &ImageBuffer, new_height: u32) -> ImageBuffer {
                 let w = lanczos3(center - i as f64);
                 weight_sum += w;
                 let idx = (si * sw + x) * 4;
-                for c in 0..4 {
-                    sum[c] += src.data[idx + c] as f64 * w;
+                for (c, s) in sum.iter_mut().enumerate() {
+                    *s += src.data[idx + c] as f64 * w;
                 }
             }
 
             if weight_sum > 0.0 {
                 let di = (y * sw + x) * 4;
-                for c in 0..4 {
-                    dst.data[di + c] = (sum[c] / weight_sum).clamp(0.0, 255.0) as u8;
+                for (c, s) in sum.iter().enumerate() {
+                    dst.data[di + c] = (*s / weight_sum).clamp(0.0, 255.0) as u8;
                 }
             }
         }
@@ -259,12 +259,7 @@ pub fn rotate_bilinear(src: &ImageBuffer, angle_deg: f64) -> ImageBuffer {
     let cy = sh / 2.0;
 
     // Compute bounding box of rotated image
-    let corners = [
-        (0.0, 0.0),
-        (sw, 0.0),
-        (0.0, sh),
-        (sw, sh),
-    ];
+    let corners = [(0.0, 0.0), (sw, 0.0), (0.0, sh), (sw, sh)];
     let mut min_x = f64::MAX;
     let mut min_y = f64::MAX;
     let mut max_x = f64::MIN;

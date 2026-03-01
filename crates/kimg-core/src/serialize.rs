@@ -52,8 +52,7 @@ pub fn deserialize(data: &[u8]) -> Result<Document, SerializeError> {
         return Err(SerializeError::InvalidData("data too short".into()));
     }
 
-    let json_len =
-        u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    let json_len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
     if data.len() < 4 + json_len {
         return Err(SerializeError::InvalidData("truncated JSON".into()));
     }
@@ -62,15 +61,13 @@ pub fn deserialize(data: &[u8]) -> Result<Document, SerializeError> {
         .map_err(|e| SerializeError::InvalidData(e.to_string()))?;
     let pixel_data = &data[4 + json_len..];
 
-    let doc_obj = parse_json_object(json_str)
-        .map_err(|e| SerializeError::InvalidData(e))?;
+    let doc_obj = parse_json_object(json_str).map_err(SerializeError::InvalidData)?;
 
     let width = get_json_u32(&doc_obj, "width")?;
     let height = get_json_u32(&doc_obj, "height")?;
     let next_id = get_json_u32(&doc_obj, "next_id")?;
 
-    let layers_str = get_json_str(&doc_obj, "layers")
-        .map_err(|e| SerializeError::InvalidData(e))?;
+    let layers_str = get_json_str(&doc_obj, "layers").map_err(SerializeError::InvalidData)?;
     let layers = deserialize_layers(layers_str, pixel_data)?;
 
     let mut doc = Document::new(width, height);
@@ -101,7 +98,10 @@ fn get_next_id(doc: &Document) -> u32 {
 }
 
 fn serialize_layers(layers: &[Layer], pixel_data: &mut Vec<u8>) -> String {
-    let parts: Vec<String> = layers.iter().map(|l| serialize_layer(l, pixel_data)).collect();
+    let parts: Vec<String> = layers
+        .iter()
+        .map(|l| serialize_layer(l, pixel_data))
+        .collect();
     parts.join(",")
 }
 
@@ -125,7 +125,10 @@ fn serialize_layer(layer: &Layer, pixel_data: &mut Vec<u8>) -> String {
         pixel_data.extend_from_slice(&mask.data);
         props.push_str(&format!(
             r#","mask":{{"width":{},"height":{},"buffer_offset":{},"buffer_len":{}}}"#,
-            mask.width, mask.height, offset, mask.data.len()
+            mask.width,
+            mask.height,
+            offset,
+            mask.data.len()
         ));
     }
 
@@ -135,8 +138,14 @@ fn serialize_layer(layer: &Layer, pixel_data: &mut Vec<u8>) -> String {
             pixel_data.extend_from_slice(&img.buffer.data);
             format!(
                 r#""kind":"image","width":{},"height":{},"buffer_offset":{},"buffer_len":{},"anchor":"{}","flip_x":{},"flip_y":{},"rotation":"{}""#,
-                img.buffer.width, img.buffer.height, offset, img.buffer.data.len(),
-                anchor_str(img.anchor), img.flip_x, img.flip_y, rotation_str(img.rotation),
+                img.buffer.width,
+                img.buffer.height,
+                offset,
+                img.buffer.data.len(),
+                anchor_str(img.anchor),
+                img.flip_x,
+                img.flip_y,
+                rotation_str(img.rotation),
             )
         }
         LayerKind::Paint(paint) => {
@@ -144,16 +153,25 @@ fn serialize_layer(layer: &Layer, pixel_data: &mut Vec<u8>) -> String {
             pixel_data.extend_from_slice(&paint.buffer.data);
             format!(
                 r#""kind":"paint","width":{},"height":{},"buffer_offset":{},"buffer_len":{},"anchor":"{}""#,
-                paint.buffer.width, paint.buffer.height, offset, paint.buffer.data.len(),
+                paint.buffer.width,
+                paint.buffer.height,
+                offset,
+                paint.buffer.data.len(),
                 anchor_str(paint.anchor),
             )
         }
         LayerKind::Filter(f) => {
             format!(
                 r#""kind":"filter","hue_deg":{},"saturation":{},"lightness":{},"alpha":{},"brightness":{},"contrast":{},"temperature":{},"tint":{},"sharpen":{}"#,
-                f.config.hue_deg, f.config.saturation, f.config.lightness,
-                f.config.alpha, f.config.brightness, f.config.contrast,
-                f.config.temperature, f.config.tint, f.config.sharpen,
+                f.config.hue_deg,
+                f.config.saturation,
+                f.config.lightness,
+                f.config.alpha,
+                f.config.brightness,
+                f.config.contrast,
+                f.config.temperature,
+                f.config.tint,
+                f.config.sharpen,
             )
         }
         LayerKind::Group(g) => {
@@ -167,12 +185,16 @@ fn serialize_layer(layer: &Layer, pixel_data: &mut Vec<u8>) -> String {
             )
         }
         LayerKind::Gradient(grad) => {
-            let stops: Vec<String> = grad.stops.iter().map(|s| {
-                format!(
-                    r#"{{"position":{},"color":[{},{},{},{}]}}"#,
-                    s.position, s.color.r, s.color.g, s.color.b, s.color.a,
-                )
-            }).collect();
+            let stops: Vec<String> = grad
+                .stops
+                .iter()
+                .map(|s| {
+                    format!(
+                        r#"{{"position":{},"color":[{},{},{},{}]}}"#,
+                        s.position, s.color.r, s.color.g, s.color.b, s.color.a,
+                    )
+                })
+                .collect();
             format!(
                 r#""kind":"gradient","direction":"{}","stops":[{}]"#,
                 gradient_dir_str(grad.direction),
@@ -238,8 +260,9 @@ fn get_json_str<'a>(obj: &'a JsonObject, key: &str) -> Result<&'a str, String> {
 }
 
 fn get_json_u32(obj: &JsonObject, key: &str) -> Result<u32, SerializeError> {
-    let v = get_json_str(obj, key).map_err(|e| SerializeError::InvalidData(e))?;
-    v.parse().map_err(|_| SerializeError::InvalidData(format!("invalid u32: {v}")))
+    let v = get_json_str(obj, key).map_err(SerializeError::InvalidData)?;
+    v.parse()
+        .map_err(|_| SerializeError::InvalidData(format!("invalid u32: {v}")))
 }
 
 fn get_json_f64(obj: &JsonObject, key: &str) -> Result<f64, String> {
@@ -326,11 +349,26 @@ fn parse_json_string_at(s: &str, pos: usize) -> Result<(String, usize), String> 
     while i < bytes.len() {
         if bytes[i] == b'\\' && i + 1 < bytes.len() {
             match bytes[i + 1] {
-                b'"' => { result.push('"'); i += 2; }
-                b'\\' => { result.push('\\'); i += 2; }
-                b'n' => { result.push('\n'); i += 2; }
-                b'r' => { result.push('\r'); i += 2; }
-                b't' => { result.push('\t'); i += 2; }
+                b'"' => {
+                    result.push('"');
+                    i += 2;
+                }
+                b'\\' => {
+                    result.push('\\');
+                    i += 2;
+                }
+                b'n' => {
+                    result.push('\n');
+                    i += 2;
+                }
+                b'r' => {
+                    result.push('\r');
+                    i += 2;
+                }
+                b't' => {
+                    result.push('\t');
+                    i += 2;
+                }
                 b'u' if i + 5 < bytes.len() => {
                     let hex = &s[i + 2..i + 6];
                     if let Ok(cp) = u32::from_str_radix(hex, 16) {
@@ -340,7 +378,10 @@ fn parse_json_string_at(s: &str, pos: usize) -> Result<(String, usize), String> 
                     }
                     i += 6;
                 }
-                _ => { result.push(bytes[i + 1] as char); i += 2; }
+                _ => {
+                    result.push(bytes[i + 1] as char);
+                    i += 2;
+                }
             }
         } else if bytes[i] == b'"' {
             return Ok((result, i + 1));
@@ -403,16 +444,14 @@ fn find_matching_bracket(s: &str, pos: usize, open: u8, close: u8) -> Result<usi
             if bytes[i] == b'"' {
                 in_string = false;
             }
-        } else {
-            if bytes[i] == b'"' {
-                in_string = true;
-            } else if bytes[i] == open {
-                depth += 1;
-            } else if bytes[i] == close {
-                depth -= 1;
-                if depth == 0 {
-                    return Ok(i + 1);
-                }
+        } else if bytes[i] == b'"' {
+            in_string = true;
+        } else if bytes[i] == open {
+            depth += 1;
+        } else if bytes[i] == close {
+            depth -= 1;
+            if depth == 0 {
+                return Ok(i + 1);
             }
         }
         i += 1;
@@ -461,23 +500,33 @@ fn parse_json_array(s: &str) -> Result<Vec<String>, String> {
 /// Parse a JSON array of u8 values like "[255,0,0,255]".
 fn parse_json_u8_array(s: &str) -> Result<Vec<u8>, String> {
     let items = parse_json_array(s)?;
-    items.iter().map(|v| v.parse::<u8>().map_err(|_| format!("invalid u8: {v}"))).collect()
+    items
+        .iter()
+        .map(|v| v.parse::<u8>().map_err(|_| format!("invalid u8: {v}")))
+        .collect()
 }
 
 // ── Deserialization helpers ──
 
 fn ensure_array_wrapped(s: &str) -> String {
-    if s.trim().starts_with('[') { s.to_string() } else { format!("[{}]", s) }
+    if s.trim().starts_with('[') {
+        s.to_string()
+    } else {
+        format!("[{}]", s)
+    }
 }
 
 fn ensure_object_wrapped(s: &str) -> String {
-    if s.trim().starts_with('{') { s.to_string() } else { format!("{{{}}}", s) }
+    if s.trim().starts_with('{') {
+        s.to_string()
+    } else {
+        format!("{{{}}}", s)
+    }
 }
 
 fn deserialize_layers(s: &str, pixel_data: &[u8]) -> Result<Vec<Layer>, SerializeError> {
     let wrapped = ensure_array_wrapped(s);
-    let raw_items = parse_json_array(&wrapped)
-        .map_err(|e| SerializeError::InvalidData(e))?;
+    let raw_items = parse_json_array(&wrapped).map_err(SerializeError::InvalidData)?;
     let mut layers = Vec::new();
     for item in &raw_items {
         layers.push(deserialize_layer(item, pixel_data)?);
@@ -492,8 +541,7 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
     } else {
         format!("{{{}}}", s)
     };
-    let obj = parse_json_object(&wrapped)
-        .map_err(|e| SerializeError::InvalidData(e))?;
+    let obj = parse_json_object(&wrapped).map_err(SerializeError::InvalidData)?;
 
     let e = |s: String| SerializeError::InvalidData(s);
 
@@ -501,28 +549,35 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
     let name = get_json_str(&obj, "name").map_err(e)?.to_string();
     let visible = get_json_bool(&obj, "visible").map_err(e)?;
     let opacity = get_json_f64(&obj, "opacity").map_err(e)?;
-    let x: i32 = get_json_str(&obj, "x").map_err(e)?
-        .parse().map_err(|_| SerializeError::InvalidData("invalid x".into()))?;
-    let y: i32 = get_json_str(&obj, "y").map_err(e)?
-        .parse().map_err(|_| SerializeError::InvalidData("invalid y".into()))?;
+    let x: i32 = get_json_str(&obj, "x")
+        .map_err(e)?
+        .parse()
+        .map_err(|_| SerializeError::InvalidData("invalid x".into()))?;
+    let y: i32 = get_json_str(&obj, "y")
+        .map_err(e)?
+        .parse()
+        .map_err(|_| SerializeError::InvalidData("invalid y".into()))?;
     let blend_mode_str = get_json_str(&obj, "blend_mode").map_err(e)?;
     let blend_mode = BlendMode::from_str_lossy(blend_mode_str);
     let clip_to_below = get_json_bool(&obj, "clip_to_below").map_err(e)?;
 
     let mask = if let Ok(mask_str) = get_json_str(&obj, "mask") {
         let mask_wrapped = ensure_object_wrapped(mask_str);
-        let mask_obj = parse_json_object(&mask_wrapped)
-            .map_err(|e| SerializeError::InvalidData(e))?;
+        let mask_obj = parse_json_object(&mask_wrapped).map_err(SerializeError::InvalidData)?;
         let mw = get_json_u32(&mask_obj, "width")?;
         let mh = get_json_u32(&mask_obj, "height")?;
         let moff: usize = get_json_str(&mask_obj, "buffer_offset")
-            .map_err(|e| SerializeError::InvalidData(e))?
-            .parse().map_err(|_| SerializeError::InvalidData("invalid mask offset".into()))?;
+            .map_err(SerializeError::InvalidData)?
+            .parse()
+            .map_err(|_| SerializeError::InvalidData("invalid mask offset".into()))?;
         let mlen: usize = get_json_str(&mask_obj, "buffer_len")
-            .map_err(|e| SerializeError::InvalidData(e))?
-            .parse().map_err(|_| SerializeError::InvalidData("invalid mask len".into()))?;
+            .map_err(SerializeError::InvalidData)?
+            .parse()
+            .map_err(|_| SerializeError::InvalidData("invalid mask len".into()))?;
         if moff + mlen > pixel_data.len() {
-            return Err(SerializeError::InvalidData("mask pixel data out of bounds".into()));
+            return Err(SerializeError::InvalidData(
+                "mask pixel data out of bounds".into(),
+            ));
         }
         ImageBuffer::from_rgba(mw, mh, pixel_data[moff..moff + mlen].to_vec())
     } else {
@@ -546,7 +601,9 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             let offset = parse_usize(&obj, "buffer_offset")?;
             let len = parse_usize(&obj, "buffer_len")?;
             if offset + len > pixel_data.len() {
-                return Err(SerializeError::InvalidData("pixel data out of bounds".into()));
+                return Err(SerializeError::InvalidData(
+                    "pixel data out of bounds".into(),
+                ));
             }
             let buffer = ImageBuffer::from_rgba(w, h, pixel_data[offset..offset + len].to_vec())
                 .ok_or_else(|| SerializeError::InvalidData("buffer size mismatch".into()))?;
@@ -568,7 +625,9 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             let offset = parse_usize(&obj, "buffer_offset")?;
             let len = parse_usize(&obj, "buffer_len")?;
             if offset + len > pixel_data.len() {
-                return Err(SerializeError::InvalidData("pixel data out of bounds".into()));
+                return Err(SerializeError::InvalidData(
+                    "pixel data out of bounds".into(),
+                ));
             }
             let buffer = ImageBuffer::from_rgba(w, h, pixel_data[offset..offset + len].to_vec())
                 .ok_or_else(|| SerializeError::InvalidData("buffer size mismatch".into()))?;
@@ -602,10 +661,11 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             } else {
                 format!("[{}]", color_str)
             };
-            let rgba = parse_json_u8_array(&color_wrapped)
-                .map_err(|e| SerializeError::InvalidData(e))?;
+            let rgba = parse_json_u8_array(&color_wrapped).map_err(SerializeError::InvalidData)?;
             if rgba.len() != 4 {
-                return Err(SerializeError::InvalidData("solid_color needs 4 values".into()));
+                return Err(SerializeError::InvalidData(
+                    "solid_color needs 4 values".into(),
+                ));
             }
             LayerKind::SolidColor(SolidColorLayerData {
                 color: Rgba::new(rgba[0], rgba[1], rgba[2], rgba[3]),
@@ -621,22 +681,24 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             };
             let stops_str = get_json_str(&obj, "stops").map_err(e)?;
             let stops_wrapped = ensure_array_wrapped(stops_str);
-            let stop_items = parse_json_array(&stops_wrapped)
-                .map_err(|e| SerializeError::InvalidData(e))?;
+            let stop_items =
+                parse_json_array(&stops_wrapped).map_err(SerializeError::InvalidData)?;
             let mut stops = Vec::new();
             for item in &stop_items {
                 let stop_wrapped = ensure_object_wrapped(item);
-                let stop_obj = parse_json_object(&stop_wrapped)
-                    .map_err(|e| SerializeError::InvalidData(e))?;
-                let position = get_json_f64(&stop_obj, "position")
-                    .map_err(|e| SerializeError::InvalidData(e))?;
-                let color_str = get_json_str(&stop_obj, "color")
-                    .map_err(|e| SerializeError::InvalidData(e))?;
+                let stop_obj =
+                    parse_json_object(&stop_wrapped).map_err(SerializeError::InvalidData)?;
+                let position =
+                    get_json_f64(&stop_obj, "position").map_err(SerializeError::InvalidData)?;
+                let color_str =
+                    get_json_str(&stop_obj, "color").map_err(SerializeError::InvalidData)?;
                 let color_wrapped = ensure_array_wrapped(color_str);
-                let rgba = parse_json_u8_array(&color_wrapped)
-                    .map_err(|e| SerializeError::InvalidData(e))?;
+                let rgba =
+                    parse_json_u8_array(&color_wrapped).map_err(SerializeError::InvalidData)?;
                 if rgba.len() != 4 {
-                    return Err(SerializeError::InvalidData("gradient stop needs 4 values".into()));
+                    return Err(SerializeError::InvalidData(
+                        "gradient stop needs 4 values".into(),
+                    ));
                 }
                 stops.push(GradientStop {
                     position,
@@ -646,7 +708,9 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             LayerKind::Gradient(GradientLayerData { stops, direction })
         }
         other => {
-            return Err(SerializeError::InvalidData(format!("unknown layer kind: {other}")));
+            return Err(SerializeError::InvalidData(format!(
+                "unknown layer kind: {other}"
+            )));
         }
     };
 
@@ -654,8 +718,9 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
 }
 
 fn parse_usize(obj: &JsonObject, key: &str) -> Result<usize, SerializeError> {
-    let v = get_json_str(obj, key).map_err(|e| SerializeError::InvalidData(e))?;
-    v.parse().map_err(|_| SerializeError::InvalidData(format!("invalid usize: {v}")))
+    let v = get_json_str(obj, key).map_err(SerializeError::InvalidData)?;
+    v.parse()
+        .map_err(|_| SerializeError::InvalidData(format!("invalid usize: {v}")))
 }
 
 fn parse_anchor(s: &str) -> Anchor {
@@ -749,8 +814,14 @@ mod tests {
             common: LayerCommon::new(id2, "gradient"),
             kind: LayerKind::Gradient(GradientLayerData {
                 stops: vec![
-                    GradientStop { position: 0.0, color: Rgba::new(0, 0, 0, 255) },
-                    GradientStop { position: 1.0, color: Rgba::new(255, 255, 255, 255) },
+                    GradientStop {
+                        position: 0.0,
+                        color: Rgba::new(0, 0, 0, 255),
+                    },
+                    GradientStop {
+                        position: 1.0,
+                        color: Rgba::new(255, 255, 255, 255),
+                    },
                 ],
                 direction: GradientDirection::Vertical,
             }),

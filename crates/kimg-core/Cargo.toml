@@ -3,6 +3,11 @@ name = "kimg-core"
 version = "0.1.0"
 edition = "2021"
 description = "Pure Rust pixel engine for layer-based image compositing"
+license = "MIT"
+repository = "https://github.com/iamkaf/kimg"
+homepage = "https://github.com/iamkaf/kimg"
+keywords = ["image", "compositor", "pixel", "layer", "blend"]
+categories = ["multimedia::images", "graphics", "wasm"]
 
 [dependencies]
 png = "0.17"
