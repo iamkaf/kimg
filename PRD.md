@@ -747,43 +747,43 @@ Priority: Ship the core that can replace Spriteform's JS compositor.
 
 ### v0.2 — Extended Blend Modes & Masks
 
-- [ ] All 16 blend modes (darken, multiply, screen, overlay, etc.)
-- [ ] Layer masks (grayscale alpha mask per layer)
-- [ ] Clipping masks
+- [x] All 16 blend modes (darken, multiply, screen, overlay, etc.)
+- [x] Layer masks (grayscale alpha mask per layer)
+- [x] Clipping masks
 - [ ] Mask inversion
-- [ ] Flatten group to single layer
-- [ ] SolidColorLayer, GradientLayer
+- [x] Flatten group to single layer
+- [x] SolidColorLayer, GradientLayer
 
 ### v0.3 — Advanced Filters & Transforms
 
-- [ ] Convolution kernels (blur, edge detect, emboss, custom)
-- [ ] Levels/Curves adjustment
-- [ ] Posterize, Threshold, Invert filters
-- [ ] Gradient Map filter
-- [ ] Arbitrary-angle rotation (bilinear interpolation)
-- [ ] Resize with bilinear and Lanczos3 interpolation
-- [ ] Crop, trim alpha
+- [x] Convolution kernels (blur, edge detect, emboss, custom)
+- [x] Levels/Curves adjustment
+- [x] Posterize, Threshold, Invert filters
+- [x] Gradient Map filter
+- [x] Arbitrary-angle rotation (bilinear interpolation)
+- [x] Resize with bilinear and Lanczos3 interpolation
+- [x] Crop, trim alpha
 
 ### v0.4 — Sprite & Game Dev Tools
 
-- [ ] Sprite sheet packer (bin-packing algorithm)
-- [ ] Contact sheet / grid layout generator
-- [ ] Pixel-art upscale (nearest-neighbor with integer scales)
-- [ ] Color quantization and palette generation
+- [x] Sprite sheet packer (bin-packing algorithm)
+- [x] Contact sheet / grid layout generator
+- [x] Pixel-art upscale (nearest-neighbor with integer scales)
+- [x] Color quantization and palette generation
 - [ ] Histogram and image statistics
-- [ ] Batch rendering pipeline
+- [x] Batch rendering pipeline
 
 ### v0.5 — Format Support & Serialization
 
-- [ ] JPEG decode/encode
-- [ ] WebP decode/encode (via `webp` crate)
-- [ ] GIF decode (animated frames to layer sequence)
-- [ ] Document serialization (JSON + binary blobs)
-- [ ] PSD read support (layer tree import)
+- [x] JPEG decode/encode
+- [x] WebP decode/encode (via `webp` crate)
+- [x] GIF decode (animated frames to layer sequence)
+- [x] Document serialization (JSON + binary blobs)
+- [x] PSD read support (layer tree import)
 
 ### v1.0 — Stable Release
 
-- [ ] API stability guarantee
+- [x] API stability guarantee
 - [ ] Comprehensive documentation and examples
 - [ ] Performance benchmarks published
 - [ ] WASM-SIMD optimized builds
