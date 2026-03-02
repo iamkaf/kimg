@@ -162,13 +162,13 @@ Must be true before calling the API stable:
 
 ### 3. Core/Binding Delta
 
-- [ ] Add `removeLayer(id)` for both top-level and nested layers
-- [ ] Add `moveLayer(id, target)` for reorder/reparent operations
-- [ ] Add `getLayer(id)` metadata snapshot
-- [ ] Add `listLayers({ parentId?, recursive? })`
-- [ ] Add `resizeCanvas(width, height)` on `Composition`
-- [ ] Add a single layer patch/update path that the JS wrapper can target cleanly
-- [ ] Keep current raw methods for backwards compatibility until the facade is complete
+- [x] Add `removeLayer(id)` for both top-level and nested layers
+- [x] Add `moveLayer(id, target)` for reorder/reparent operations
+- [x] Add `getLayer(id)` metadata snapshot
+- [x] Add `listLayers({ parentId?, recursive? })`
+- [x] Add `resizeCanvas(width, height)` on `Composition`
+- [x] Add a single layer patch/update path that the JS wrapper can target cleanly
+- [x] Keep current raw methods for backwards compatibility until the facade is complete
 
 ### 4. Requested Feature Tracks
 

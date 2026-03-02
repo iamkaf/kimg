@@ -23,6 +23,62 @@ use crate::pixel::Rgba;
 /// Unique layer identifier.
 pub type LayerId = u32;
 
+/// Patch payload for filter-layer configuration.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct FilterLayerPatch {
+    /// Hue offset in degrees.
+    pub hue_deg: Option<f64>,
+    /// Saturation delta, -1.0 to 1.0.
+    pub saturation: Option<f64>,
+    /// Lightness delta, -1.0 to 1.0.
+    pub lightness: Option<f64>,
+    /// Alpha delta, -1.0 to 1.0.
+    pub alpha: Option<f64>,
+    /// Brightness delta, -1.0 to 1.0.
+    pub brightness: Option<f64>,
+    /// Contrast delta, -1.0 to 1.0.
+    pub contrast: Option<f64>,
+    /// Temperature shift, -1.0 to 1.0.
+    pub temperature: Option<f64>,
+    /// Tint shift, -1.0 to 1.0.
+    pub tint: Option<f64>,
+    /// Sharpen strength, 0.0 to 1.0.
+    pub sharpen: Option<f64>,
+}
+
+/// Patch payload for updating a layer through one stable mutation path.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct LayerPatch {
+    /// Replace the layer name.
+    pub name: Option<String>,
+    /// Set layer visibility.
+    pub visible: Option<bool>,
+    /// Set layer opacity.
+    pub opacity: Option<f64>,
+    /// Set layer X position.
+    pub x: Option<i32>,
+    /// Set layer Y position.
+    pub y: Option<i32>,
+    /// Set the layer blend mode.
+    pub blend_mode: Option<BlendMode>,
+    /// Set whether the layer mask is inverted.
+    pub mask_inverted: Option<bool>,
+    /// Set whether the layer clips to the layer below it.
+    pub clip_to_below: Option<bool>,
+    /// Set the anchor for image/paint layers.
+    pub anchor: Option<Anchor>,
+    /// Set horizontal flip for image layers.
+    pub flip_x: Option<bool>,
+    /// Set vertical flip for image layers.
+    pub flip_y: Option<bool>,
+    /// Set snapped rotation for image layers.
+    pub rotation: Option<Rotation>,
+    /// Patch filter-layer configuration values.
+    pub filter: Option<FilterLayerPatch>,
+}
+
 /// Common properties shared by all layer types.
 #[derive(Debug, Clone)]
 #[non_exhaustive]

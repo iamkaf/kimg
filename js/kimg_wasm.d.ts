@@ -1,3 +1,70 @@
+export interface RawFilterConfig {
+    hueDeg?: number;
+    hue?: number;
+    saturation?: number;
+    lightness?: number;
+    alpha?: number;
+    brightness?: number;
+    contrast?: number;
+    temperature?: number;
+    tint?: number;
+    sharpen?: number;
+}
+
+export interface RawLayerPatch {
+    name?: string;
+    visible?: boolean;
+    opacity?: number;
+    x?: number;
+    y?: number;
+    blendMode?: string;
+    maskInverted?: boolean;
+    clipToBelow?: boolean;
+    anchor?: "topLeft" | "top_left" | "center" | 0 | 1;
+    flipX?: boolean;
+    flipY?: boolean;
+    rotation?: number;
+    filterConfig?: RawFilterConfig;
+}
+
+export interface RawLayerSnapshot {
+    id: number;
+    parentId: number | null;
+    index: number;
+    depth: number;
+    kind: "image" | "paint" | "filter" | "group" | "solidColor" | "gradient";
+    name: string;
+    visible: boolean;
+    opacity: number;
+    x: number;
+    y: number;
+    blendMode: string;
+    hasMask: boolean;
+    maskInverted: boolean;
+    clipToBelow: boolean;
+    width?: number;
+    height?: number;
+    anchor?: "topLeft" | "center";
+    flipX?: boolean;
+    flipY?: boolean;
+    rotation?: number;
+    filterConfig?: {
+        hueDeg: number;
+        saturation: number;
+        lightness: number;
+        alpha: number;
+        brightness: number;
+        contrast: number;
+        temperature: number;
+        tint: number;
+        sharpen: number;
+    };
+    childCount?: number;
+    color?: number[];
+    direction?: "horizontal" | "vertical" | "diagonalDown" | "diagonalUp";
+    stopCount?: number;
+}
+
 export class Composition {
     constructor(width: number, height: number);
     static deserialize(data: Uint8Array): Composition;
@@ -37,6 +104,12 @@ export class Composition {
     add_group_to_group(group_id: number, name: string): number;
     remove_from_group(group_id: number, child_id: number): boolean;
     flatten_group(group_id: number): boolean;
+    remove_layer(id: number): boolean;
+    move_layer(id: number, parent_id: number, index: number): boolean;
+    resize_canvas(width: number, height: number): void;
+    get_layer(id: number): RawLayerSnapshot | undefined;
+    list_layers(parent_id: number, recursive: boolean): RawLayerSnapshot[];
+    update_layer(id: number, patch: RawLayerPatch): boolean;
     add_png_layer(name: string, png_bytes: Uint8Array, x: number, y: number): number;
     export_png(): Uint8Array;
     get_layer_rgba(id: number): Uint8Array;

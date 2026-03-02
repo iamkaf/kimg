@@ -114,8 +114,46 @@ export interface FilterConfig {
     sharpen?: number;
 }
 
+export interface FilterConfigSnapshot {
+    hueDeg: number;
+    saturation: number;
+    lightness: number;
+    alpha: number;
+    brightness: number;
+    contrast: number;
+    temperature: number;
+    tint: number;
+    sharpen: number;
+}
+
 export interface ExportJpegOptions {
     quality?: number;
+}
+
+export interface LayerUpdate {
+    name?: string;
+    visible?: boolean;
+    opacity?: number;
+    x?: number;
+    y?: number;
+    blendMode?: string;
+    maskInverted?: boolean;
+    clipToBelow?: boolean;
+    anchor?: Anchor;
+    flipX?: boolean;
+    flipY?: boolean;
+    rotation?: number;
+    filterConfig?: FilterConfig;
+}
+
+export interface MoveLayerTarget {
+    parentId?: number | null;
+    index?: number;
+}
+
+export interface ListLayersOptions {
+    parentId?: number | null;
+    recursive?: boolean;
 }
 
 export interface RadiusOptions {
@@ -180,6 +218,42 @@ export interface RgbColor {
     b: number;
 }
 
+export type LayerKind =
+    | "image"
+    | "paint"
+    | "filter"
+    | "group"
+    | "solidColor"
+    | "gradient";
+
+export interface LayerInfo {
+    id: number;
+    parentId: number | null;
+    index: number;
+    depth: number;
+    kind: LayerKind;
+    name: string;
+    visible: boolean;
+    opacity: number;
+    x: number;
+    y: number;
+    blendMode: string;
+    hasMask: boolean;
+    maskInverted: boolean;
+    clipToBelow: boolean;
+    width?: number;
+    height?: number;
+    anchor?: "topLeft" | "center";
+    flipX?: boolean;
+    flipY?: boolean;
+    rotation?: number;
+    filterConfig?: FilterConfigSnapshot;
+    childCount?: number;
+    color?: number[];
+    direction?: Exclude<GradientDirection, 0 | 1 | 2 | 3>;
+    stopCount?: number;
+}
+
 export class Composition {
     private constructor();
 
@@ -221,6 +295,13 @@ export class Composition {
     setLayerRotation(id: number, rotation: number): void;
     setLayerAnchor(id: number, anchor: Anchor): void;
     setFilterLayerConfig(id: number, config: FilterConfig): void;
+    updateLayer(id: number, patch: LayerUpdate): boolean;
+    getLayer(id: number): LayerInfo | null;
+    listLayers(options?: ListLayersOptions): LayerInfo[];
+    removeLayer(id: number): boolean;
+    moveLayer(id: number, target: MoveLayerTarget): boolean;
+    resizeCanvas(width: number, height: number): void;
+    resizeCanvas(size: Size): void;
 
     flattenGroup(groupId: number): boolean;
     removeFromGroup(groupId: number, childId: number): boolean;

@@ -78,6 +78,14 @@ function normalizeInteger(value, fieldName) {
     return Math.trunc(normalizeFiniteNumber(value, fieldName));
 }
 
+function normalizeString(value, fieldName) {
+    if (typeof value !== "string") {
+        throw new TypeError(`${fieldName} must be a string.`);
+    }
+
+    return value;
+}
+
 function normalizeByteInput(value, fieldName) {
     if (value instanceof Uint8Array) {
         return value;
@@ -227,12 +235,122 @@ function normalizeFlipArg(flipXOrOptions, flipY) {
     };
 }
 
+function normalizeListLayersOptions(options) {
+    if (options === undefined) {
+        return {
+            parentId: -1,
+            recursive: true,
+        };
+    }
+
+    const object = requireObject(options, "listLayers");
+    return {
+        parentId: object.parentId == null ? -1 : normalizeLayerId(object.parentId, "listLayers.parentId"),
+        recursive: object.recursive ?? true,
+    };
+}
+
+function normalizeMoveLayerTarget(target) {
+    const object = requireObject(target, "moveLayer");
+    return {
+        index: object.index == null ? -1 : normalizeInteger(object.index, "moveLayer.index"),
+        parentId: object.parentId == null ? -1 : normalizeLayerId(object.parentId, "moveLayer.parentId"),
+    };
+}
+
 function normalizeExportJpegArg(qualityOrOptions) {
     if (typeof qualityOrOptions === "object" && qualityOrOptions !== null) {
         return normalizeInteger(qualityOrOptions.quality ?? 85, "exportJpeg.quality");
     }
 
     return normalizeInteger(qualityOrOptions ?? 85, "exportJpeg.quality");
+}
+
+function normalizeFilterConfigPatch(config, what) {
+    const object = requireObject(config, what);
+    const normalized = {};
+
+    if ("hue" in object && object.hue !== undefined) {
+        normalized.hue = normalizeFiniteNumber(object.hue, `${what}.hue`);
+    }
+    if ("hueDeg" in object && object.hueDeg !== undefined) {
+        normalized.hueDeg = normalizeFiniteNumber(object.hueDeg, `${what}.hueDeg`);
+    }
+    if ("saturation" in object && object.saturation !== undefined) {
+        normalized.saturation = normalizeFiniteNumber(object.saturation, `${what}.saturation`);
+    }
+    if ("lightness" in object && object.lightness !== undefined) {
+        normalized.lightness = normalizeFiniteNumber(object.lightness, `${what}.lightness`);
+    }
+    if ("alpha" in object && object.alpha !== undefined) {
+        normalized.alpha = normalizeFiniteNumber(object.alpha, `${what}.alpha`);
+    }
+    if ("brightness" in object && object.brightness !== undefined) {
+        normalized.brightness = normalizeFiniteNumber(object.brightness, `${what}.brightness`);
+    }
+    if ("contrast" in object && object.contrast !== undefined) {
+        normalized.contrast = normalizeFiniteNumber(object.contrast, `${what}.contrast`);
+    }
+    if ("temperature" in object && object.temperature !== undefined) {
+        normalized.temperature = normalizeFiniteNumber(object.temperature, `${what}.temperature`);
+    }
+    if ("tint" in object && object.tint !== undefined) {
+        normalized.tint = normalizeFiniteNumber(object.tint, `${what}.tint`);
+    }
+    if ("sharpen" in object && object.sharpen !== undefined) {
+        normalized.sharpen = normalizeFiniteNumber(object.sharpen, `${what}.sharpen`);
+    }
+
+    return normalized;
+}
+
+function normalizeLayerUpdatePatch(patch) {
+    const object = requireObject(patch, "updateLayer");
+    const normalized = {};
+
+    if ("name" in object && object.name !== undefined) {
+        normalized.name = normalizeString(object.name, "updateLayer.name");
+    }
+    if ("visible" in object && object.visible !== undefined) {
+        normalized.visible = Boolean(object.visible);
+    }
+    if ("opacity" in object && object.opacity !== undefined) {
+        normalized.opacity = normalizeFiniteNumber(object.opacity, "updateLayer.opacity");
+    }
+    if ("x" in object && object.x !== undefined) {
+        normalized.x = normalizeInteger(object.x, "updateLayer.x");
+    }
+    if ("y" in object && object.y !== undefined) {
+        normalized.y = normalizeInteger(object.y, "updateLayer.y");
+    }
+    if ("blendMode" in object && object.blendMode !== undefined) {
+        normalized.blendMode = normalizeString(object.blendMode, "updateLayer.blendMode");
+    }
+    if ("maskInverted" in object && object.maskInverted !== undefined) {
+        normalized.maskInverted = Boolean(object.maskInverted);
+    }
+    if ("clipToBelow" in object && object.clipToBelow !== undefined) {
+        normalized.clipToBelow = Boolean(object.clipToBelow);
+    }
+    if ("anchor" in object && object.anchor !== undefined) {
+        normalized.anchor = normalizeAnchor(object.anchor) === 1 ? "center" : "topLeft";
+    }
+    if ("flipX" in object && object.flipX !== undefined) {
+        normalized.flipX = Boolean(object.flipX);
+    }
+    if ("flipY" in object && object.flipY !== undefined) {
+        normalized.flipY = Boolean(object.flipY);
+    }
+    if ("rotation" in object && object.rotation !== undefined) {
+        normalized.rotation = normalizeFiniteNumber(object.rotation, "updateLayer.rotation");
+    }
+
+    const filterConfig = object.filterConfig ?? object.filter;
+    if (filterConfig !== undefined) {
+        normalized.filterConfig = normalizeFilterConfigPatch(filterConfig, "updateLayer.filterConfig");
+    }
+
+    return normalized;
 }
 
 function normalizeRgbArgs(rOrOptions, g, b) {
@@ -548,6 +666,33 @@ export class Composition {
             normalizeFiniteNumber(options.tint ?? 0, "setFilterLayerConfig.tint"),
             normalizeFiniteNumber(options.sharpen ?? 0, "setFilterLayerConfig.sharpen"),
         );
+    }
+
+    updateLayer(id, patch) {
+        return this._inner.update_layer(normalizeLayerId(id), normalizeLayerUpdatePatch(patch));
+    }
+
+    getLayer(id) {
+        return this._inner.get_layer(normalizeLayerId(id)) ?? null;
+    }
+
+    listLayers(options) {
+        const normalized = normalizeListLayersOptions(options);
+        return this._inner.list_layers(normalized.parentId, normalized.recursive);
+    }
+
+    removeLayer(id) {
+        return this._inner.remove_layer(normalizeLayerId(id));
+    }
+
+    moveLayer(id, target) {
+        const normalized = normalizeMoveLayerTarget(target);
+        return this._inner.move_layer(normalizeLayerId(id), normalized.parentId, normalized.index);
+    }
+
+    resizeCanvas(widthOrOptions, height) {
+        const size = normalizeSizeArg(widthOrOptions, height, "resizeCanvas");
+        return this._inner.resize_canvas(size.width, size.height);
     }
 
     flattenGroup(groupId) {

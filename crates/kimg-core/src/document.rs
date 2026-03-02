@@ -18,9 +18,21 @@ use crate::blit::{blit_transformed, BlitParams};
 use crate::buffer::ImageBuffer;
 use crate::filter::{apply_hsl_filter, HslFilterConfig};
 use crate::layer::{
-    GradientDirection, GradientLayerData, GroupLayerData, Layer, LayerKind, SolidColorLayerData,
+    FilterLayerPatch, GradientDirection, GradientLayerData, GroupLayerData, Layer, LayerKind,
+    LayerPatch, SolidColorLayerData,
 };
 use crate::pixel::Rgba;
+
+/// Location of a layer within the tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayerLocation {
+    /// Parent group ID, or `None` for top-level layers.
+    pub parent_id: Option<u32>,
+    /// Zero-based index inside the parent container.
+    pub index: usize,
+    /// Zero-based depth in the tree.
+    pub depth: usize,
+}
 
 /// A compositing document with a canvas size and a layer tree.
 #[derive(Debug, Clone)]
@@ -137,6 +149,142 @@ impl Document {
             }
             _ => false,
         }
+    }
+
+    /// Remove a layer from the tree by ID.
+    ///
+    /// Returns `true` if the layer was found and removed.
+    pub fn remove_layer(&mut self, id: u32) -> bool {
+        take_layer(&mut self.layers, id).is_some()
+    }
+
+    /// Return a layer's location within the tree.
+    pub fn layer_location(&self, id: u32) -> Option<LayerLocation> {
+        find_layer_location(&self.layers, id, None, 0)
+    }
+
+    /// Move a layer to a new parent/index.
+    ///
+    /// `target_parent_id = None` moves the layer to the top level. `target_index = None`
+    /// appends at the end of the destination container.
+    pub fn move_layer(
+        &mut self,
+        id: u32,
+        target_parent_id: Option<u32>,
+        target_index: Option<usize>,
+    ) -> bool {
+        if target_parent_id == Some(id) {
+            return false;
+        }
+
+        let source_location = match self.layer_location(id) {
+            Some(location) => location,
+            None => return false,
+        };
+
+        if let Some(parent_id) = target_parent_id {
+            let Some(parent_layer) = self.find_layer(parent_id) else {
+                return false;
+            };
+
+            if !matches!(parent_layer.kind, LayerKind::Group(_)) {
+                return false;
+            }
+
+            let Some(layer) = self.find_layer(id) else {
+                return false;
+            };
+
+            if contains_layer_id(layer, parent_id) {
+                return false;
+            }
+        }
+
+        let same_parent = source_location.parent_id == target_parent_id;
+        let mut target_index = target_index;
+        if same_parent {
+            if let Some(index) = target_index {
+                if index > source_location.index {
+                    target_index = Some(index - 1);
+                }
+            }
+        }
+
+        let Some(layer) = take_layer(&mut self.layers, id) else {
+            return false;
+        };
+
+        if insert_layer_at(&mut self.layers, target_parent_id, target_index, layer) {
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Resize the document canvas.
+    pub fn resize_canvas(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+    }
+
+    /// Apply a patch to a layer.
+    ///
+    /// Returns `false` if the layer does not exist.
+    pub fn update_layer(&mut self, id: u32, patch: &LayerPatch) -> bool {
+        let Some(layer) = self.find_layer_mut(id) else {
+            return false;
+        };
+
+        if let Some(name) = &patch.name {
+            layer.common.name = name.clone();
+        }
+        if let Some(visible) = patch.visible {
+            layer.common.visible = visible;
+        }
+        if let Some(opacity) = patch.opacity {
+            layer.common.opacity = opacity.clamp(0.0, 1.0);
+        }
+        if let Some(x) = patch.x {
+            layer.common.x = x;
+        }
+        if let Some(y) = patch.y {
+            layer.common.y = y;
+        }
+        if let Some(blend_mode) = patch.blend_mode {
+            layer.common.blend_mode = blend_mode;
+        }
+        if let Some(mask_inverted) = patch.mask_inverted {
+            layer.common.mask_inverted = mask_inverted;
+        }
+        if let Some(clip_to_below) = patch.clip_to_below {
+            layer.common.clip_to_below = clip_to_below;
+        }
+
+        if let Some(anchor) = patch.anchor {
+            match &mut layer.kind {
+                LayerKind::Image(img) => img.anchor = anchor,
+                LayerKind::Paint(paint) => paint.anchor = anchor,
+                _ => {}
+            }
+        }
+
+        if let LayerKind::Image(img) = &mut layer.kind {
+            if let Some(flip_x) = patch.flip_x {
+                img.flip_x = flip_x;
+            }
+            if let Some(flip_y) = patch.flip_y {
+                img.flip_y = flip_y;
+            }
+            if let Some(rotation) = patch.rotation {
+                img.rotation = rotation;
+            }
+        }
+
+        if let (LayerKind::Filter(filter), Some(filter_patch)) = (&mut layer.kind, &patch.filter) {
+            apply_filter_patch(&mut filter.config, filter_patch);
+        }
+
+        true
     }
 
     /// Flatten a group layer into a single image layer in-place.
@@ -261,6 +409,138 @@ fn sample_gradient(stops: &[crate::layer::GradientStop], t: f64) -> Rgba {
         (left.color.b as f64 * inv + right.color.b as f64 * f + 0.5) as u8,
         (left.color.a as f64 * inv + right.color.a as f64 * f + 0.5) as u8,
     )
+}
+
+fn apply_filter_patch(config: &mut HslFilterConfig, patch: &FilterLayerPatch) {
+    if let Some(hue_deg) = patch.hue_deg {
+        config.hue_deg = hue_deg;
+    }
+    if let Some(saturation) = patch.saturation {
+        config.saturation = saturation;
+    }
+    if let Some(lightness) = patch.lightness {
+        config.lightness = lightness;
+    }
+    if let Some(alpha) = patch.alpha {
+        config.alpha = alpha;
+    }
+    if let Some(brightness) = patch.brightness {
+        config.brightness = brightness;
+    }
+    if let Some(contrast) = patch.contrast {
+        config.contrast = contrast;
+    }
+    if let Some(temperature) = patch.temperature {
+        config.temperature = temperature;
+    }
+    if let Some(tint) = patch.tint {
+        config.tint = tint;
+    }
+    if let Some(sharpen) = patch.sharpen {
+        config.sharpen = sharpen;
+    }
+}
+
+fn contains_layer_id(layer: &Layer, id: u32) -> bool {
+    if layer.common.id == id {
+        return true;
+    }
+
+    match &layer.kind {
+        LayerKind::Group(group) => group
+            .children
+            .iter()
+            .any(|child| contains_layer_id(child, id)),
+        _ => false,
+    }
+}
+
+fn find_layer_location(
+    layers: &[Layer],
+    id: u32,
+    parent_id: Option<u32>,
+    depth: usize,
+) -> Option<LayerLocation> {
+    for (index, layer) in layers.iter().enumerate() {
+        if layer.common.id == id {
+            return Some(LayerLocation {
+                parent_id,
+                index,
+                depth,
+            });
+        }
+
+        if let LayerKind::Group(group) = &layer.kind {
+            if let Some(location) =
+                find_layer_location(&group.children, id, Some(layer.common.id), depth + 1)
+            {
+                return Some(location);
+            }
+        }
+    }
+
+    None
+}
+
+fn take_layer(layers: &mut Vec<Layer>, id: u32) -> Option<Layer> {
+    if let Some(index) = layers.iter().position(|layer| layer.common.id == id) {
+        return Some(layers.remove(index));
+    }
+
+    for layer in layers {
+        if let LayerKind::Group(group) = &mut layer.kind {
+            if let Some(found) = take_layer(&mut group.children, id) {
+                return Some(found);
+            }
+        }
+    }
+
+    None
+}
+
+fn group_children_mut(layers: &mut Vec<Layer>, group_id: u32) -> Option<&mut Vec<Layer>> {
+    for layer in layers {
+        if layer.common.id == group_id {
+            return match &mut layer.kind {
+                LayerKind::Group(group) => Some(&mut group.children),
+                _ => None,
+            };
+        }
+
+        if let LayerKind::Group(group) = &mut layer.kind {
+            if let Some(children) = group_children_mut(&mut group.children, group_id) {
+                return Some(children);
+            }
+        }
+    }
+
+    None
+}
+
+fn insert_into_container(container: &mut Vec<Layer>, index: Option<usize>, layer: Layer) {
+    let insert_index = index.unwrap_or(container.len()).min(container.len());
+    container.insert(insert_index, layer);
+}
+
+fn insert_layer_at(
+    layers: &mut Vec<Layer>,
+    target_parent_id: Option<u32>,
+    target_index: Option<usize>,
+    layer: Layer,
+) -> bool {
+    match target_parent_id {
+        Some(parent_id) => match group_children_mut(layers, parent_id) {
+            Some(children) => {
+                insert_into_container(children, target_index, layer);
+                true
+            }
+            None => false,
+        },
+        None => {
+            insert_into_container(layers, target_index, layer);
+            true
+        }
+    }
 }
 
 /// Apply a layer mask to a rendered layer buffer. The mask's luminance
@@ -617,6 +897,183 @@ mod tests {
         assert!(doc.find_layer(child_id).is_some());
         assert!(doc.remove_child_from_group(group_id, child_id));
         assert!(doc.find_layer(child_id).is_none());
+    }
+
+    #[test]
+    fn remove_layer_handles_top_level_and_nested_layers() {
+        let mut doc = Document::new(2, 2);
+        let top_id = doc.next_id();
+        let group_id = doc.next_id();
+        let child_id = doc.next_id();
+
+        doc.layers.push(img_layer(
+            top_id,
+            "top",
+            solid_buf(1, 1, Rgba::new(255, 0, 0, 255)),
+            0,
+            0,
+        ));
+        doc.layers.push(Layer {
+            common: LayerCommon::new(group_id, "group"),
+            kind: LayerKind::Group(GroupLayerData {
+                children: vec![img_layer(
+                    child_id,
+                    "child",
+                    solid_buf(1, 1, Rgba::new(0, 255, 0, 255)),
+                    0,
+                    0,
+                )],
+            }),
+        });
+
+        assert!(doc.remove_layer(top_id));
+        assert!(doc.find_layer(top_id).is_none());
+
+        assert!(doc.remove_layer(child_id));
+        assert!(doc.find_layer(child_id).is_none());
+        assert!(!doc.remove_layer(999));
+    }
+
+    #[test]
+    fn move_layer_reorders_and_reparents() {
+        let mut doc = Document::new(2, 2);
+        let a_id = doc.next_id();
+        let b_id = doc.next_id();
+        let group_id = doc.next_id();
+
+        doc.layers.push(img_layer(
+            a_id,
+            "a",
+            solid_buf(1, 1, Rgba::new(255, 0, 0, 255)),
+            0,
+            0,
+        ));
+        doc.layers.push(img_layer(
+            b_id,
+            "b",
+            solid_buf(1, 1, Rgba::new(0, 255, 0, 255)),
+            0,
+            0,
+        ));
+        doc.layers.push(Layer {
+            common: LayerCommon::new(group_id, "group"),
+            kind: LayerKind::Group(GroupLayerData::new()),
+        });
+
+        assert!(doc.move_layer(b_id, None, Some(0)));
+        assert_eq!(doc.layer_location(b_id).unwrap().index, 0);
+
+        assert!(doc.move_layer(a_id, Some(group_id), Some(0)));
+        let moved = doc.layer_location(a_id).unwrap();
+        assert_eq!(moved.parent_id, Some(group_id));
+        assert_eq!(moved.depth, 1);
+    }
+
+    #[test]
+    fn move_layer_rejects_invalid_targets() {
+        let mut doc = Document::new(2, 2);
+        let group_id = doc.next_id();
+        let child_group_id = doc.next_id();
+        let child_id = doc.next_id();
+
+        doc.layers.push(Layer {
+            common: LayerCommon::new(group_id, "group"),
+            kind: LayerKind::Group(GroupLayerData {
+                children: vec![Layer {
+                    common: LayerCommon::new(child_group_id, "child-group"),
+                    kind: LayerKind::Group(GroupLayerData {
+                        children: vec![img_layer(
+                            child_id,
+                            "child",
+                            solid_buf(1, 1, Rgba::new(255, 0, 0, 255)),
+                            0,
+                            0,
+                        )],
+                    }),
+                }],
+            }),
+        });
+
+        assert!(!doc.move_layer(group_id, Some(child_group_id), Some(0)));
+        assert!(!doc.move_layer(child_id, Some(child_id), Some(0)));
+        assert!(!doc.move_layer(child_id, Some(999), Some(0)));
+    }
+
+    #[test]
+    fn update_layer_applies_common_and_filter_fields() {
+        let mut doc = Document::new(4, 4);
+        let image_id = doc.next_id();
+        let filter_id = doc.next_id();
+        doc.layers.push(img_layer(
+            image_id,
+            "img",
+            solid_buf(1, 1, Rgba::new(255, 0, 0, 255)),
+            0,
+            0,
+        ));
+        doc.layers.push(Layer {
+            common: LayerCommon::new(filter_id, "filter"),
+            kind: LayerKind::Filter(FilterLayerData::new()),
+        });
+
+        assert!(doc.update_layer(
+            image_id,
+            &LayerPatch {
+                blend_mode: Some(BlendMode::Multiply),
+                clip_to_below: Some(true),
+                flip_x: Some(true),
+                name: Some("renamed".to_string()),
+                opacity: Some(0.5),
+                rotation: Some(Rotation::Cw90),
+                visible: Some(false),
+                x: Some(10),
+                y: Some(20),
+                ..Default::default()
+            },
+        ));
+        assert!(doc.update_layer(
+            filter_id,
+            &LayerPatch {
+                filter: Some(FilterLayerPatch {
+                    hue_deg: Some(45.0),
+                    sharpen: Some(0.7),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ));
+
+        let image_layer = doc.find_layer(image_id).unwrap();
+        assert_eq!(image_layer.common.name, "renamed");
+        assert_eq!(image_layer.common.opacity, 0.5);
+        assert!(!image_layer.common.visible);
+        assert_eq!(image_layer.common.x, 10);
+        assert_eq!(image_layer.common.y, 20);
+        assert_eq!(image_layer.common.blend_mode, BlendMode::Multiply);
+        assert!(image_layer.common.clip_to_below);
+        match &image_layer.kind {
+            LayerKind::Image(image) => {
+                assert!(image.flip_x);
+                assert_eq!(image.rotation, Rotation::Cw90);
+            }
+            _ => panic!("expected image layer"),
+        }
+
+        match &doc.find_layer(filter_id).unwrap().kind {
+            LayerKind::Filter(filter) => {
+                assert_eq!(filter.config.hue_deg, 45.0);
+                assert_eq!(filter.config.sharpen, 0.7);
+            }
+            _ => panic!("expected filter layer"),
+        }
+    }
+
+    #[test]
+    fn resize_canvas_updates_document_dimensions() {
+        let mut doc = Document::new(4, 4);
+        doc.resize_canvas(16, 9);
+        assert_eq!(doc.width, 16);
+        assert_eq!(doc.height, 9);
     }
 
     #[test]

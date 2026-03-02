@@ -167,7 +167,7 @@ The build emits two wasm binaries:
 cargo test -p kimg-core
 ```
 
-121 tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, and color utilities.
+126 tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, and color utilities.
 
 ## Benchmarks
 

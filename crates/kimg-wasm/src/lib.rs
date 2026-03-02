@@ -17,6 +17,7 @@
 
 use wasm_bindgen::prelude::*;
 
+use js_sys::{Array, Object, Reflect};
 use kimg_core::blend::BlendMode;
 use kimg_core::blit::{Anchor, Rotation};
 use kimg_core::buffer::ImageBuffer;
@@ -26,8 +27,9 @@ use kimg_core::convolution;
 use kimg_core::document::Document as CoreDocument;
 use kimg_core::filter;
 use kimg_core::layer::{
-    FilterLayerData, GradientDirection, GradientLayerData, GradientStop, GroupLayerData,
-    ImageLayerData, Layer, LayerCommon, LayerKind, PaintLayerData, SolidColorLayerData,
+    FilterLayerData, FilterLayerPatch, GradientDirection, GradientLayerData, GradientStop,
+    GroupLayerData, ImageLayerData, Layer, LayerCommon, LayerKind, LayerPatch, PaintLayerData,
+    SolidColorLayerData,
 };
 use kimg_core::pixel::Rgba;
 use kimg_core::serialize;
@@ -360,6 +362,85 @@ impl Document {
     /// Flatten a group layer into a single image layer. Returns true on success.
     pub fn flatten_group(&mut self, group_id: u32) -> bool {
         self.inner.flatten_group(group_id)
+    }
+
+    /// Remove any layer by ID, including nested layers.
+    pub fn remove_layer(&mut self, id: u32) -> bool {
+        self.inner.remove_layer(id)
+    }
+
+    /// Move a layer to a new parent/index.
+    ///
+    /// `parent_id < 0` moves the layer to the top level. `index < 0` appends it.
+    pub fn move_layer(&mut self, id: u32, parent_id: i32, index: i32) -> bool {
+        let target_parent_id = if parent_id < 0 {
+            None
+        } else {
+            Some(parent_id as u32)
+        };
+        let target_index = if index < 0 {
+            None
+        } else {
+            Some(index as usize)
+        };
+        self.inner.move_layer(id, target_parent_id, target_index)
+    }
+
+    /// Resize the document canvas.
+    pub fn resize_canvas(&mut self, width: u32, height: u32) {
+        self.inner.resize_canvas(width, height);
+    }
+
+    /// Return a metadata snapshot for one layer, or `undefined` when missing.
+    pub fn get_layer(&self, id: u32) -> JsValue {
+        let Some(location) = self.inner.layer_location(id) else {
+            return JsValue::UNDEFINED;
+        };
+        let Some(layer) = self.inner.find_layer(id) else {
+            return JsValue::UNDEFINED;
+        };
+
+        layer_snapshot(layer, location.parent_id, location.index, location.depth)
+    }
+
+    /// Return metadata snapshots for the requested layer container.
+    ///
+    /// `parent_id < 0` lists top-level layers. When `recursive` is true, descendants are
+    /// flattened into the result in tree order.
+    pub fn list_layers(&self, parent_id: i32, recursive: bool) -> Array {
+        let requested_parent_id = if parent_id < 0 {
+            None
+        } else {
+            Some(parent_id as u32)
+        };
+
+        let (layers, depth) = match requested_parent_id {
+            Some(group_id) => {
+                let Some(location) = self.inner.layer_location(group_id) else {
+                    return Array::new();
+                };
+                let Some(layer) = self.inner.find_layer(group_id) else {
+                    return Array::new();
+                };
+                match &layer.kind {
+                    LayerKind::Group(group) => (&group.children[..], location.depth + 1),
+                    _ => return Array::new(),
+                }
+            }
+            None => (&self.inner.layers[..], 0),
+        };
+
+        let output = Array::new();
+        append_layer_snapshots(&output, layers, requested_parent_id, depth, recursive);
+        output
+    }
+
+    /// Apply a patch object to a layer.
+    pub fn update_layer(&mut self, id: u32, patch: &JsValue) -> bool {
+        let Some(patch) = parse_layer_patch(patch) else {
+            return false;
+        };
+        self.inner.update_layer(id, &patch)
     }
 
     // ── PNG import/export ──
@@ -799,6 +880,290 @@ impl Document {
     }
 }
 
+fn set_prop(object: &Object, key: &str, value: JsValue) {
+    let _ = Reflect::set(object, &JsValue::from_str(key), &value);
+}
+
+fn get_prop(object: &Object, key: &str) -> Option<JsValue> {
+    let value = Reflect::get(object, &JsValue::from_str(key)).ok()?;
+    if value.is_undefined() || value.is_null() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn anchor_from_js(value: &JsValue) -> Option<Anchor> {
+    if let Some(number) = value.as_f64() {
+        return Some(if number.round() as i32 == 1 {
+            Anchor::Center
+        } else {
+            Anchor::TopLeft
+        });
+    }
+
+    match value.as_string()?.as_str() {
+        "center" => Some(Anchor::Center),
+        "topLeft" | "top_left" => Some(Anchor::TopLeft),
+        _ => None,
+    }
+}
+
+fn rotation_degrees(rotation: Rotation) -> u16 {
+    match rotation {
+        Rotation::None => 0,
+        Rotation::Cw90 => 90,
+        Rotation::Cw180 => 180,
+        Rotation::Cw270 => 270,
+        _ => 0,
+    }
+}
+
+fn anchor_name(anchor: Anchor) -> &'static str {
+    match anchor {
+        Anchor::TopLeft => "topLeft",
+        Anchor::Center => "center",
+        _ => "topLeft",
+    }
+}
+
+fn gradient_direction_name(direction: GradientDirection) -> &'static str {
+    match direction {
+        GradientDirection::Horizontal => "horizontal",
+        GradientDirection::Vertical => "vertical",
+        GradientDirection::DiagonalDown => "diagonalDown",
+        GradientDirection::DiagonalUp => "diagonalUp",
+        _ => "horizontal",
+    }
+}
+
+fn layer_snapshot(layer: &Layer, parent_id: Option<u32>, index: usize, depth: usize) -> JsValue {
+    let object = Object::new();
+    set_prop(&object, "id", JsValue::from_f64(layer.common.id as f64));
+    match parent_id {
+        Some(parent_id) => set_prop(&object, "parentId", JsValue::from_f64(parent_id as f64)),
+        None => set_prop(&object, "parentId", JsValue::NULL),
+    }
+    set_prop(&object, "index", JsValue::from_f64(index as f64));
+    set_prop(&object, "depth", JsValue::from_f64(depth as f64));
+    set_prop(&object, "name", JsValue::from_str(&layer.common.name));
+    set_prop(&object, "visible", JsValue::from_bool(layer.common.visible));
+    set_prop(&object, "opacity", JsValue::from_f64(layer.common.opacity));
+    set_prop(&object, "x", JsValue::from_f64(layer.common.x as f64));
+    set_prop(&object, "y", JsValue::from_f64(layer.common.y as f64));
+    set_prop(
+        &object,
+        "blendMode",
+        JsValue::from_str(layer.common.blend_mode.as_str()),
+    );
+    set_prop(
+        &object,
+        "hasMask",
+        JsValue::from_bool(layer.common.mask.is_some()),
+    );
+    set_prop(
+        &object,
+        "maskInverted",
+        JsValue::from_bool(layer.common.mask_inverted),
+    );
+    set_prop(
+        &object,
+        "clipToBelow",
+        JsValue::from_bool(layer.common.clip_to_below),
+    );
+
+    match &layer.kind {
+        LayerKind::Image(image) => {
+            set_prop(&object, "kind", JsValue::from_str("image"));
+            set_prop(
+                &object,
+                "width",
+                JsValue::from_f64(image.buffer.width as f64),
+            );
+            set_prop(
+                &object,
+                "height",
+                JsValue::from_f64(image.buffer.height as f64),
+            );
+            set_prop(
+                &object,
+                "anchor",
+                JsValue::from_str(anchor_name(image.anchor)),
+            );
+            set_prop(&object, "flipX", JsValue::from_bool(image.flip_x));
+            set_prop(&object, "flipY", JsValue::from_bool(image.flip_y));
+            set_prop(
+                &object,
+                "rotation",
+                JsValue::from_f64(rotation_degrees(image.rotation) as f64),
+            );
+        }
+        LayerKind::Paint(paint) => {
+            set_prop(&object, "kind", JsValue::from_str("paint"));
+            set_prop(
+                &object,
+                "width",
+                JsValue::from_f64(paint.buffer.width as f64),
+            );
+            set_prop(
+                &object,
+                "height",
+                JsValue::from_f64(paint.buffer.height as f64),
+            );
+            set_prop(
+                &object,
+                "anchor",
+                JsValue::from_str(anchor_name(paint.anchor)),
+            );
+        }
+        LayerKind::Filter(filter) => {
+            set_prop(&object, "kind", JsValue::from_str("filter"));
+            let config = Object::new();
+            set_prop(&config, "hueDeg", JsValue::from_f64(filter.config.hue_deg));
+            set_prop(
+                &config,
+                "saturation",
+                JsValue::from_f64(filter.config.saturation),
+            );
+            set_prop(
+                &config,
+                "lightness",
+                JsValue::from_f64(filter.config.lightness),
+            );
+            set_prop(&config, "alpha", JsValue::from_f64(filter.config.alpha));
+            set_prop(
+                &config,
+                "brightness",
+                JsValue::from_f64(filter.config.brightness),
+            );
+            set_prop(
+                &config,
+                "contrast",
+                JsValue::from_f64(filter.config.contrast),
+            );
+            set_prop(
+                &config,
+                "temperature",
+                JsValue::from_f64(filter.config.temperature),
+            );
+            set_prop(&config, "tint", JsValue::from_f64(filter.config.tint));
+            set_prop(&config, "sharpen", JsValue::from_f64(filter.config.sharpen));
+            set_prop(&object, "filterConfig", config.into());
+        }
+        LayerKind::Group(group) => {
+            set_prop(&object, "kind", JsValue::from_str("group"));
+            set_prop(
+                &object,
+                "childCount",
+                JsValue::from_f64(group.children.len() as f64),
+            );
+        }
+        LayerKind::SolidColor(color) => {
+            set_prop(&object, "kind", JsValue::from_str("solidColor"));
+            let rgba = Array::new();
+            rgba.push(&JsValue::from_f64(color.color.r as f64));
+            rgba.push(&JsValue::from_f64(color.color.g as f64));
+            rgba.push(&JsValue::from_f64(color.color.b as f64));
+            rgba.push(&JsValue::from_f64(color.color.a as f64));
+            set_prop(&object, "color", rgba.into());
+        }
+        LayerKind::Gradient(gradient) => {
+            set_prop(&object, "kind", JsValue::from_str("gradient"));
+            set_prop(
+                &object,
+                "direction",
+                JsValue::from_str(gradient_direction_name(gradient.direction)),
+            );
+            set_prop(
+                &object,
+                "stopCount",
+                JsValue::from_f64(gradient.stops.len() as f64),
+            );
+        }
+        _ => {
+            set_prop(&object, "kind", JsValue::from_str("unknown"));
+        }
+    }
+
+    object.into()
+}
+
+fn append_layer_snapshots(
+    output: &Array,
+    layers: &[Layer],
+    parent_id: Option<u32>,
+    depth: usize,
+    recursive: bool,
+) {
+    for (index, layer) in layers.iter().enumerate() {
+        output.push(&layer_snapshot(layer, parent_id, index, depth));
+        if recursive {
+            if let LayerKind::Group(group) = &layer.kind {
+                append_layer_snapshots(
+                    output,
+                    &group.children,
+                    Some(layer.common.id),
+                    depth + 1,
+                    true,
+                );
+            }
+        }
+    }
+}
+
+fn parse_filter_patch(value: &JsValue) -> Option<FilterLayerPatch> {
+    if !value.is_object() {
+        return None;
+    }
+
+    let object = Object::from(value.clone());
+    let mut patch = FilterLayerPatch::default();
+    patch.hue_deg = get_prop(&object, "hueDeg")
+        .and_then(|value| value.as_f64())
+        .or_else(|| get_prop(&object, "hue").and_then(|value| value.as_f64()));
+    patch.saturation = get_prop(&object, "saturation").and_then(|value| value.as_f64());
+    patch.lightness = get_prop(&object, "lightness").and_then(|value| value.as_f64());
+    patch.alpha = get_prop(&object, "alpha").and_then(|value| value.as_f64());
+    patch.brightness = get_prop(&object, "brightness").and_then(|value| value.as_f64());
+    patch.contrast = get_prop(&object, "contrast").and_then(|value| value.as_f64());
+    patch.temperature = get_prop(&object, "temperature").and_then(|value| value.as_f64());
+    patch.tint = get_prop(&object, "tint").and_then(|value| value.as_f64());
+    patch.sharpen = get_prop(&object, "sharpen").and_then(|value| value.as_f64());
+
+    Some(patch)
+}
+
+fn parse_layer_patch(value: &JsValue) -> Option<LayerPatch> {
+    if !value.is_object() {
+        return None;
+    }
+
+    let object = Object::from(value.clone());
+    let mut patch = LayerPatch::default();
+    patch.name = get_prop(&object, "name").and_then(|value| value.as_string());
+    patch.visible = get_prop(&object, "visible").and_then(|value| value.as_bool());
+    patch.opacity = get_prop(&object, "opacity").and_then(|value| value.as_f64());
+    patch.x = get_prop(&object, "x")
+        .and_then(|value| value.as_f64())
+        .map(|value| value as i32);
+    patch.y = get_prop(&object, "y")
+        .and_then(|value| value.as_f64())
+        .map(|value| value as i32);
+    patch.blend_mode = get_prop(&object, "blendMode")
+        .and_then(|value| value.as_string())
+        .map(|value| BlendMode::from_str_lossy(&value));
+    patch.mask_inverted = get_prop(&object, "maskInverted").and_then(|value| value.as_bool());
+    patch.clip_to_below = get_prop(&object, "clipToBelow").and_then(|value| value.as_bool());
+    patch.anchor = get_prop(&object, "anchor").and_then(|value| anchor_from_js(&value));
+    patch.flip_x = get_prop(&object, "flipX").and_then(|value| value.as_bool());
+    patch.flip_y = get_prop(&object, "flipY").and_then(|value| value.as_bool());
+    patch.rotation = get_prop(&object, "rotation")
+        .and_then(|value| value.as_f64())
+        .map(Rotation::from_degrees);
+    patch.filter = get_prop(&object, "filterConfig").and_then(|value| parse_filter_patch(&value));
+    Some(patch)
+}
+
 fn palette_to_flat(palette: &sprite::Palette) -> Vec<u8> {
     let mut out = Vec::with_capacity(palette.colors.len() * 4);
     for c in &palette.colors {
@@ -998,6 +1363,37 @@ mod tests {
         assert!(doc.inner.find_layer(cid).is_some());
         assert!(doc.remove_from_group(gid, cid));
         assert!(doc.inner.find_layer(cid).is_none());
+    }
+
+    #[test]
+    fn remove_layer_wasm() {
+        let mut doc = Document::new(4, 4);
+        let id = doc.add_image_layer("img", &[255; 16], 2, 2, 0, 0);
+        assert!(doc.remove_layer(id));
+        assert!(doc.inner.find_layer(id).is_none());
+    }
+
+    #[test]
+    fn move_layer_wasm() {
+        let mut doc = Document::new(4, 4);
+        let first = doc.add_image_layer("first", &[255; 16], 2, 2, 0, 0);
+        let second = doc.add_image_layer("second", &[255; 16], 2, 2, 0, 0);
+        let group = doc.add_group_layer("group");
+
+        assert!(doc.move_layer(second, -1, 0));
+        assert_eq!(doc.inner.layer_location(second).unwrap().index, 0);
+
+        assert!(doc.move_layer(first, group as i32, 0));
+        let location = doc.inner.layer_location(first).unwrap();
+        assert_eq!(location.parent_id, Some(group));
+    }
+
+    #[test]
+    fn resize_canvas_wasm() {
+        let mut doc = Document::new(4, 4);
+        doc.resize_canvas(16, 9);
+        assert_eq!(doc.width(), 16);
+        assert_eq!(doc.height(), 9);
     }
 
     #[test]
