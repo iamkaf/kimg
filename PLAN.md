@@ -286,20 +286,26 @@ and wasm builds before adoption.
 
 #### 6.2 Shape Backend Spike: `tiny-skia`
 
-- [ ] Prototype shape rendering with `tiny-skia` behind a temporary feature flag or isolated branch
-- [ ] Compare against the current custom rasterizer in `kimg-core/src/shape.rs`
-- [ ] Confirm coverage for current primitives:
+- [x] Prototype shape rendering with `tiny-skia` behind a temporary feature flag or isolated branch
+- Prototype is available behind the `tiny-skia-shapes` feature in both `kimg-core` and `kimg-wasm`.
+- [x] Compare against the current custom rasterizer in `kimg-core/src/shape.rs`
+- [x] Confirm coverage for current primitives:
   - rectangle
   - rounded rectangle
   - ellipse
   - line
   - polygon
-- [ ] Confirm fill, stroke, clipping, and transform behavior match current layer semantics closely enough
-- [ ] Re-run shape render benchmarks:
+- [x] Confirm fill, stroke, clipping, and transform behavior match current layer semantics closely enough
+- Verified with core shape/document tests and wasm shape serialization/render tests under the feature flag.
+- [x] Re-run shape render benchmarks:
   - `render/single_shape/512`
   - `render/10_shapes/512`
   - `render/10_shapes_with_filter/512`
-- [ ] Validate native and wasm builds
+- Current comparison vs. manual backend:
+  - `render/single_shape/512`: `6.08 ms` vs `6.40 ms`
+  - `render/10_shapes/512`: `52.35 ms` vs `55.66 ms`
+  - `render/10_shapes_with_filter/512`: `64.53 ms` vs `67.91 ms`
+- [x] Validate native and wasm builds
 - Success criteria:
   - less shape/rasterization code to maintain
   - comparable or better render performance

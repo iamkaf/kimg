@@ -9,6 +9,10 @@ repository = "https://github.com/iamkaf/kimg"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+tiny-skia-shapes = ["kimg-core/tiny-skia-shapes"]
+
 [dependencies]
 kimg-core = { path = "../kimg-core", version = "0.1.0" }
 wasm-bindgen = "0.2"

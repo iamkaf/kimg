@@ -6,9 +6,23 @@
 use crate::buffer::ImageBuffer;
 use crate::layer::{ShapeLayerData, ShapePoint, ShapeType};
 use crate::pixel::Rgba;
+#[cfg(feature = "tiny-skia-shapes")]
+use tiny_skia::{FillRule, Paint, Path, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
 /// Rasterize a shape layer into its local RGBA buffer.
 pub fn render_shape(shape: &ShapeLayerData) -> ImageBuffer {
+    #[cfg(feature = "tiny-skia-shapes")]
+    {
+        return render_shape_tiny_skia(shape).unwrap_or_else(|| render_shape_manual(shape));
+    }
+
+    #[cfg(not(feature = "tiny-skia-shapes"))]
+    {
+        render_shape_manual(shape)
+    }
+}
+
+fn render_shape_manual(shape: &ShapeLayerData) -> ImageBuffer {
     let width = shape.width.max(1);
     let height = shape.height.max(1);
     let mut buffer = ImageBuffer::new_transparent(width, height);
@@ -33,6 +47,188 @@ pub fn render_shape(shape: &ShapeLayerData) -> ImageBuffer {
     }
 
     buffer
+}
+
+#[cfg(feature = "tiny-skia-shapes")]
+fn render_shape_tiny_skia(shape: &ShapeLayerData) -> Option<ImageBuffer> {
+    let width = shape.width.max(1);
+    let height = shape.height.max(1);
+    let mut pixmap = Pixmap::new(width, height)?;
+
+    match shape.shape_type {
+        ShapeType::Rectangle => {
+            let rect = Rect::from_xywh(0.0, 0.0, width as f32, height as f32)?;
+            let path = PathBuilder::from_rect(rect);
+            render_path_shape(shape, &path, &mut pixmap);
+        }
+        ShapeType::RoundedRect => {
+            let path = build_rounded_rect_path(width, height, shape.radius)?;
+            render_path_shape(shape, &path, &mut pixmap);
+        }
+        ShapeType::Ellipse => {
+            let path = build_ellipse_path(width, height)?;
+            render_path_shape(shape, &path, &mut pixmap);
+        }
+        ShapeType::Line => render_line_shape(shape, width, height, &mut pixmap)?,
+        ShapeType::Polygon => {
+            let Some(path) = build_polygon_path(&shape.points) else {
+                return Some(ImageBuffer::new_transparent(width, height));
+            };
+            render_path_shape(shape, &path, &mut pixmap);
+        }
+    }
+
+    Some(pixmap_to_image_buffer(pixmap))
+}
+
+#[cfg(feature = "tiny-skia-shapes")]
+fn render_path_shape(shape: &ShapeLayerData, path: &Path, pixmap: &mut Pixmap) {
+    if let Some(fill) = shape.fill {
+        let paint = paint_from_rgba(fill);
+        pixmap.fill_path(path, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+
+    if let Some(stroke) = shape.stroke {
+        let paint = paint_from_rgba(stroke.color);
+        let stroke_style = stroke_style(stroke.width);
+        pixmap.stroke_path(path, &paint, &stroke_style, Transform::identity(), None);
+    }
+}
+
+#[cfg(feature = "tiny-skia-shapes")]
+fn render_line_shape(
+    shape: &ShapeLayerData,
+    width: u32,
+    height: u32,
+    pixmap: &mut Pixmap,
+) -> Option<()> {
+    let color = shape.stroke.map(|stroke| stroke.color).or(shape.fill)?;
+    let path = build_line_path(width, height)?;
+    let paint = paint_from_rgba(color);
+    let stroke_style = stroke_style(shape.stroke.map(|stroke| stroke.width).unwrap_or(1));
+    pixmap.stroke_path(&path, &paint, &stroke_style, Transform::identity(), None);
+    Some(())
+}
+
+#[cfg(feature = "tiny-skia-shapes")]
+fn paint_from_rgba(color: Rgba) -> Paint<'static> {
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(color.r, color.g, color.b, color.a);
+    paint.anti_alias = false;
+    paint
+}
+
+#[cfg(feature = "tiny-skia-shapes")]
+fn stroke_style(width: u32) -> Stroke {
+    let mut stroke = Stroke::default();
+    stroke.width = width.max(1) as f32;
+    stroke
+}
+
+#[cfg(feature = "tiny-skia-shapes")]
+fn build_line_path(width: u32, height: u32) -> Option<Path> {
+    let mut builder = PathBuilder::new();
+    builder.move_to(0.5, 0.5);
+    builder.line_to(
+        (width as f32 - 0.5).max(0.5),
+        (height as f32 - 0.5).max(0.5),
+    );
+    builder.finish()
+}
+
+#[cfg(feature = "tiny-skia-shapes")]
+fn build_polygon_path(points: &[ShapePoint]) -> Option<Path> {
+    if points.len() < 3 {
+        return None;
+    }
+
+    let mut builder = PathBuilder::new();
+    let first = points[0];
+    builder.move_to(first.x as f32, first.y as f32);
+    for point in &points[1..] {
+        builder.line_to(point.x as f32, point.y as f32);
+    }
+    builder.close();
+    builder.finish()
+}
+
+#[cfg(feature = "tiny-skia-shapes")]
+fn build_rounded_rect_path(width: u32, height: u32, radius: u32) -> Option<Path> {
+    let width = width.max(1) as f32;
+    let height = height.max(1) as f32;
+    let radius = radius.min(width as u32 / 2).min(height as u32 / 2) as f32;
+    if radius <= 0.0 {
+        return Rect::from_xywh(0.0, 0.0, width, height).map(PathBuilder::from_rect);
+    }
+
+    let k = radius * 0.552_284_8;
+    let right = width;
+    let bottom = height;
+    let mut builder = PathBuilder::new();
+
+    builder.move_to(radius, 0.0);
+    builder.line_to(right - radius, 0.0);
+    builder.cubic_to(right - radius + k, 0.0, right, radius - k, right, radius);
+    builder.line_to(right, bottom - radius);
+    builder.cubic_to(
+        right,
+        bottom - radius + k,
+        right - radius + k,
+        bottom,
+        right - radius,
+        bottom,
+    );
+    builder.line_to(radius, bottom);
+    builder.cubic_to(
+        radius - k,
+        bottom,
+        0.0,
+        bottom - radius + k,
+        0.0,
+        bottom - radius,
+    );
+    builder.line_to(0.0, radius);
+    builder.cubic_to(0.0, radius - k, radius - k, 0.0, radius, 0.0);
+    builder.close();
+    builder.finish()
+}
+
+#[cfg(feature = "tiny-skia-shapes")]
+fn build_ellipse_path(width: u32, height: u32) -> Option<Path> {
+    let width = width.max(1) as f32;
+    let height = height.max(1) as f32;
+    let rx = width / 2.0;
+    let ry = height / 2.0;
+    let cx = rx;
+    let cy = ry;
+    let kappa = 0.552_284_8;
+    let kx = rx * kappa;
+    let ky = ry * kappa;
+
+    let mut builder = PathBuilder::new();
+    builder.move_to(cx + rx, cy);
+    builder.cubic_to(cx + rx, cy + ky, cx + kx, cy + ry, cx, cy + ry);
+    builder.cubic_to(cx - kx, cy + ry, cx - rx, cy + ky, cx - rx, cy);
+    builder.cubic_to(cx - rx, cy - ky, cx - kx, cy - ry, cx, cy - ry);
+    builder.cubic_to(cx + kx, cy - ry, cx + rx, cy - ky, cx + rx, cy);
+    builder.close();
+    builder.finish()
+}
+
+#[cfg(feature = "tiny-skia-shapes")]
+fn pixmap_to_image_buffer(pixmap: Pixmap) -> ImageBuffer {
+    let width = pixmap.width();
+    let height = pixmap.height();
+    let mut data = Vec::with_capacity((width as usize) * (height as usize) * 4);
+    for pixel in pixmap.pixels() {
+        let demultiplied = pixel.demultiply();
+        data.push(demultiplied.red());
+        data.push(demultiplied.green());
+        data.push(demultiplied.blue());
+        data.push(demultiplied.alpha());
+    }
+
+    ImageBuffer::from_rgba(width, height, data).expect("tiny-skia pixmap length mismatch")
 }
 
 fn sample_rect(shape: &ShapeLayerData, sample_x: f64, sample_y: f64) -> Option<Rgba> {
@@ -310,6 +506,40 @@ mod tests {
         let buf = render_shape(&shape);
         assert_eq!(buf.get_pixel(0, 0), Rgba::TRANSPARENT);
         assert_eq!(buf.get_pixel(2, 2), Rgba::new(0, 255, 0, 255));
+    }
+
+    #[test]
+    fn rounded_rect_respects_corner_radius() {
+        let shape = ShapeLayerData::new(
+            ShapeType::RoundedRect,
+            6,
+            6,
+            2,
+            Some(Rgba::new(255, 0, 255, 255)),
+            None,
+            Vec::new(),
+        );
+
+        let buf = render_shape(&shape);
+        assert_eq!(buf.get_pixel(0, 0), Rgba::TRANSPARENT);
+        assert_eq!(buf.get_pixel(2, 2), Rgba::new(255, 0, 255, 255));
+    }
+
+    #[test]
+    fn line_renders_diagonal_stroke() {
+        let shape = ShapeLayerData::new(
+            ShapeType::Line,
+            5,
+            5,
+            0,
+            Some(Rgba::new(255, 255, 0, 255)),
+            None,
+            Vec::new(),
+        );
+
+        let buf = render_shape(&shape);
+        assert_eq!(buf.get_pixel(0, 0), Rgba::new(255, 255, 0, 255));
+        assert_eq!(buf.get_pixel(2, 2), Rgba::new(255, 255, 0, 255));
     }
 
     #[test]
