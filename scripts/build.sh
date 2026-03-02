@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 JS_SRC="$ROOT/js"
 DIST="$ROOT/dist"
+PACKAGE_JSON="$ROOT/package.json"
 BASELINE_OUT="$(mktemp -d)"
 SIMD_OUT="$(mktemp -d)"
 
@@ -49,18 +50,19 @@ RUSTFLAGS="-Ctarget-feature=+simd128" \
 echo "==> Preparing dist/..."
 rm -rf "$DIST"
 mkdir -p "$DIST"
-cp "$JS_SRC/README.md" "$DIST/README.md"
-cp "$JS_SRC/base64.js" "$DIST/base64.js"
-cp "$JS_SRC/base64.d.ts" "$DIST/base64.d.ts"
-cp "$JS_SRC/color-utils.js" "$DIST/color-utils.js"
-cp "$JS_SRC/color-utils.d.ts" "$DIST/color-utils.d.ts"
-cp "$JS_SRC/index.js" "$DIST/index.js"
-cp "$JS_SRC/index.d.ts" "$DIST/index.d.ts"
-cp "$JS_SRC/raw.js" "$DIST/raw.js"
-cp "$JS_SRC/raw.d.ts" "$DIST/raw.d.ts"
-cp "$JS_SRC/kimg_wasm.js" "$DIST/kimg_wasm.js"
-cp "$JS_SRC/kimg_wasm.d.ts" "$DIST/kimg_wasm.d.ts"
-cp "$JS_SRC/package.json" "$DIST/package.json"
+
+if [ ! -f "$PACKAGE_JSON" ]; then
+    echo "ERROR: package.json not found at $PACKAGE_JSON"
+    exit 1
+fi
+
+if ! command -v npx &> /dev/null; then
+    echo "ERROR: npx not found; install Node.js/npm to build the TypeScript wrapper."
+    exit 1
+fi
+
+echo "==> Compiling TypeScript wrapper into dist/..."
+npx --no-install tsc -p "$ROOT/tsconfig.json"
 
 echo "==> Copying generated bindings into dist/..."
 cp "$BASELINE_OUT/kimg_wasm_bg.wasm" "$DIST/kimg_wasm_bg.wasm"

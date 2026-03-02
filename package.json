@@ -1,0 +1,64 @@
+{
+  "name": "@iamkaf/kimg",
+  "version": "0.5.0",
+  "description": "Rust+WASM pixel engine for layer-based image compositing — blend modes, masks, filters, transforms, sprite tools, multi-format I/O",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "sideEffects": false,
+  "scripts": {
+    "build": "./scripts/build.sh",
+    "test": "npm run test:js",
+    "test:all": "cargo test --workspace && npm run test:js",
+    "test:js": "./scripts/build.sh && vitest run",
+    "test:js:watch": "./scripts/build.sh && vitest",
+    "prepack": "./scripts/build.sh"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "vitest": "^3.2.4"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./raw": {
+      "types": "./dist/raw.d.ts",
+      "import": "./dist/raw.js"
+    },
+    "./base64": {
+      "types": "./dist/base64.d.ts",
+      "import": "./dist/base64.js"
+    },
+    "./color-utils": {
+      "types": "./dist/color-utils.d.ts",
+      "import": "./dist/color-utils.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "image",
+    "compositor",
+    "wasm",
+    "webassembly",
+    "pixel",
+    "layer",
+    "blend",
+    "filter",
+    "sprite",
+    "png",
+    "jpeg",
+    "webp"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iamkaf/kimg"
+  }
+}

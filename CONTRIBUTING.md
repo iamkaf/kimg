@@ -4,6 +4,7 @@ Thanks for your interest in contributing. Here's how to get set up and what to e
 
 ## Prerequisites
 
+- Node.js and npm
 - [Rust](https://rustup.rs/) (stable)
 - `wasm32-unknown-unknown` target: `rustup target add wasm32-unknown-unknown`
 - `wasm-bindgen-cli`: `cargo install wasm-bindgen-cli`
@@ -14,6 +15,7 @@ Thanks for your interest in contributing. Here's how to get set up and what to e
 ```bash
 git clone https://github.com/iamkaf/kimg.git
 cd kimg
+npm install
 cargo test -p kimg-core
 ```
 
@@ -25,7 +27,7 @@ To build the WASM output:
 ./scripts/build.sh
 ```
 
-The tracked JS wrapper and package metadata live in `js/`, and `./scripts/build.sh` copies them into `dist/` with the generated wasm-bindgen output. The demo page at `demo/index.html` loads from `dist/`. Serve it with any static file server:
+The tracked JS/TS wrapper sources live in `js/`, the npm package metadata lives at the repo root, and `./scripts/build.sh` emits the consumable package into `dist/` alongside the generated wasm-bindgen output. The demo page at `demo/index.html` loads from `dist/`. Serve it with any static file server:
 
 ```bash
 ./scripts/demo.sh
@@ -35,7 +37,7 @@ The tracked JS wrapper and package metadata live in `js/`, and `./scripts/build.
 
 1. Fork the repo and create a branch from `main`.
 2. Make your changes. Add tests for new functionality.
-3. Run `cargo test -p kimg-core` and `cargo clippy --workspace` to check for issues.
+3. Run `npm run test:all` and `cargo clippy --workspace` to check for issues.
 4. Open a pull request.
 
 ## Code style

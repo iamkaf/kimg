@@ -22,6 +22,7 @@ npm install @iamkaf/kimg
 For local development from this repo:
 
 ```bash
+npm install
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli
 ./scripts/build.sh
@@ -137,7 +138,7 @@ kimg/
 │   │   │   └── transform.rs   # Resize, rotate, crop, trim
 │   │   └── benches/           # Criterion.rs benchmarks
 │   └── kimg-wasm/     # wasm-bindgen API surface
-├── js/                # Tracked JS/TS package sources copied into dist/
+├── js/                # Tracked JS/TS package sources compiled into dist/
 ├── dist/              # Built output (JS + WASM + TypeScript types)
 ├── demo/              # Browser demo page
 └── scripts/           # Build scripts
@@ -145,9 +146,10 @@ kimg/
 
 ## Building from source
 
-You need Rust, `wasm32-unknown-unknown` target, and `wasm-bindgen-cli`:
+You need Node.js/npm, Rust, the `wasm32-unknown-unknown` target, and `wasm-bindgen-cli`:
 
 ```bash
+npm install
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli
 
@@ -165,9 +167,15 @@ The build emits two wasm binaries:
 
 ```bash
 cargo test -p kimg-core
+npm run test:js
+npm run test:all
 ```
 
-126 tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, and color utilities.
+126 Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, and color utilities.
+
+The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
+
+`npm run test:all` is the convenience entrypoint for the full Rust + package-layer test pass.
 
 ## Benchmarks
 

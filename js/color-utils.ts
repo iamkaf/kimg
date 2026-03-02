@@ -7,10 +7,8 @@ await preload();
  * Pick a readable text color (black or white) for the given background.
  * Uses WCAG 2.x relative luminance with a 0.179 threshold.
  *
- * @param {string} bgHex - Background color as hex string (e.g. "#3b82f6")
- * @returns {string} "#000000" for light backgrounds, "#ffffff" for dark
  */
-export function readableTextColor(bgHex) {
+export function readableTextColor(bgHex: string): string {
     const lum = relative_luminance(bgHex);
     if (lum < 0) {
         return "#000000"; // fallback on invalid input

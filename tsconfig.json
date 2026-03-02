@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM", "ESNext"],
+    "rootDir": "./js",
+    "outDir": "./dist",
+    "declaration": true,
+    "emitDeclarationOnly": false,
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["js/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

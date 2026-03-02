@@ -1,5 +1,7 @@
 /target
 /dist
+/node_modules
+/*.tgz
 *.swp
 *.swo
 *.png

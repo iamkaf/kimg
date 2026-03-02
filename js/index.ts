@@ -1,5 +1,3 @@
-/* @ts-self-types="./index.d.ts" */
-
 import initRaw, {
     Composition as RawComposition,
     contrast_ratio,
@@ -14,6 +12,262 @@ import initRaw, {
     rgb_to_hex,
     simdSupported,
 } from "./raw.js";
+import type { InitInput, InitOutput } from "./raw.js";
+
+export type ByteInput = ArrayBuffer | ArrayBufferView | ArrayLike<number>;
+export type Anchor = "topLeft" | "top_left" | "center" | 0 | 1;
+export type GradientDirection =
+    | "horizontal"
+    | "vertical"
+    | "diagonalDown"
+    | "diagonalUp"
+    | "diagonal_down"
+    | "diagonal_up"
+    | 0
+    | 1
+    | 2
+    | 3;
+
+export interface CompositionOptions {
+    width: number;
+    height: number;
+}
+
+export interface ImageLayerOptions {
+    name: string;
+    rgba: ByteInput;
+    width: number;
+    height: number;
+    x?: number;
+    y?: number;
+    parentId?: number;
+}
+
+export interface PaintLayerOptions {
+    name: string;
+    width: number;
+    height: number;
+    parentId?: number;
+}
+
+export interface FilterLayerOptions {
+    name: string;
+    parentId?: number;
+}
+
+export interface GroupLayerOptions {
+    name: string;
+    parentId?: number;
+}
+
+export interface SolidColorLayerOptions {
+    name: string;
+    color: ByteInput;
+    parentId?: number;
+}
+
+export interface GradientStop {
+    position: number;
+    color: ByteInput;
+}
+
+export interface GradientLayerOptions {
+    name: string;
+    stops: GradientStop[];
+    direction?: GradientDirection;
+    parentId?: number;
+}
+
+export interface PngLayerOptions {
+    name: string;
+    png: ByteInput;
+    x?: number;
+    y?: number;
+    parentId?: number;
+}
+
+export interface ImportImageOptions {
+    name: string;
+    bytes: ByteInput;
+    x?: number;
+    y?: number;
+}
+
+export interface MaskOptions {
+    rgba: ByteInput;
+    width: number;
+    height: number;
+    inverted?: boolean;
+}
+
+export interface Position {
+    x: number;
+    y: number;
+}
+
+export interface Size {
+    width: number;
+    height: number;
+}
+
+export interface FlipOptions {
+    flipX?: boolean;
+    flipY?: boolean;
+}
+
+export interface FilterConfig {
+    hue?: number;
+    hueDeg?: number;
+    saturation?: number;
+    lightness?: number;
+    alpha?: number;
+    brightness?: number;
+    contrast?: number;
+    temperature?: number;
+    tint?: number;
+    sharpen?: number;
+}
+
+export interface FilterConfigSnapshot {
+    hueDeg: number;
+    saturation: number;
+    lightness: number;
+    alpha: number;
+    brightness: number;
+    contrast: number;
+    temperature: number;
+    tint: number;
+    sharpen: number;
+}
+
+export interface ExportJpegOptions {
+    quality?: number;
+}
+
+export interface LayerUpdate {
+    name?: string;
+    visible?: boolean;
+    opacity?: number;
+    x?: number;
+    y?: number;
+    blendMode?: string;
+    maskInverted?: boolean;
+    clipToBelow?: boolean;
+    anchor?: Anchor;
+    flipX?: boolean;
+    flipY?: boolean;
+    rotation?: number;
+    filterConfig?: FilterConfig;
+}
+
+export interface MoveLayerTarget {
+    parentId?: number | null;
+    index?: number;
+}
+
+export interface ListLayersOptions {
+    parentId?: number | null;
+    recursive?: boolean;
+}
+
+export interface RadiusOptions {
+    radius: number;
+}
+
+export interface PosterizeOptions {
+    levels: number;
+}
+
+export interface ThresholdOptions {
+    threshold: number;
+}
+
+export interface LevelsOptions {
+    shadows: number;
+    midtones: number;
+    highlights: number;
+}
+
+export interface PixelScaleOptions {
+    factor: number;
+}
+
+export interface PaletteOptions {
+    maxColors: number;
+}
+
+export interface QuantizeOptions {
+    palette: ByteInput;
+}
+
+export interface PackSpritesOptions {
+    layerIds: ArrayLike<number>;
+    maxWidth: number;
+    padding?: number;
+}
+
+export interface ContactSheetOptions {
+    layerIds: ArrayLike<number>;
+    columns: number;
+    padding?: number;
+    background?: ByteInput;
+}
+
+export interface GeometryOptions {
+    width: number;
+    height: number;
+}
+
+export interface GeometryWithPaletteOptions extends GeometryOptions {
+    palette: ByteInput;
+}
+
+export interface GeometryWithMaxColorsOptions extends GeometryOptions {
+    maxColors: number;
+}
+
+export interface RgbColor {
+    r: number;
+    g: number;
+    b: number;
+}
+
+export type LayerKind =
+    | "image"
+    | "paint"
+    | "filter"
+    | "group"
+    | "solidColor"
+    | "gradient"
+    | "unknown";
+
+export interface LayerInfo {
+    id: number;
+    parentId: number | null;
+    index: number;
+    depth: number;
+    kind: LayerKind;
+    name: string;
+    visible: boolean;
+    opacity: number;
+    x: number;
+    y: number;
+    blendMode: string;
+    hasMask: boolean;
+    maskInverted: boolean;
+    clipToBelow: boolean;
+    width?: number;
+    height?: number;
+    anchor?: "topLeft" | "center";
+    flipX?: boolean;
+    flipY?: boolean;
+    rotation?: number;
+    filterConfig?: FilterConfigSnapshot;
+    childCount?: number;
+    color?: number[];
+    direction?: Exclude<GradientDirection, 0 | 1 | 2 | 3>;
+    stopCount?: number;
+}
 
 const PRIVATE_CONSTRUCTOR_TOKEN = Symbol("kimgComposition");
 
@@ -32,15 +286,23 @@ const GRADIENT_DIRECTION_TO_RAW = {
     vertical: 1,
 };
 
-let preloadPromise = null;
+let preloadPromise: Promise<InitOutput> | null = null;
 
 function isNodeRuntime() {
+    const runtime = globalThis as typeof globalThis & {
+        process?: {
+            versions?: {
+                node?: string;
+            };
+        };
+    };
+
     return (
-        typeof process === "object" &&
-        process !== null &&
-        typeof process.versions === "object" &&
-        process.versions !== null &&
-        typeof process.versions.node === "string"
+        typeof runtime.process === "object" &&
+        runtime.process !== null &&
+        typeof runtime.process.versions === "object" &&
+        runtime.process.versions !== null &&
+        typeof runtime.process.versions.node === "string"
     );
 }
 
@@ -268,7 +530,7 @@ function normalizeExportJpegArg(qualityOrOptions) {
 
 function normalizeFilterConfigPatch(config, what) {
     const object = requireObject(config, what);
-    const normalized = {};
+    const normalized: FilterConfig = {};
 
     if ("hue" in object && object.hue !== undefined) {
         normalized.hue = normalizeFiniteNumber(object.hue, `${what}.hue`);
@@ -306,7 +568,7 @@ function normalizeFilterConfigPatch(config, what) {
 
 function normalizeLayerUpdatePatch(patch) {
     const object = requireObject(patch, "updateLayer");
-    const normalized = {};
+    const normalized: LayerUpdate = {};
 
     if ("name" in object && object.name !== undefined) {
         normalized.name = normalizeString(object.name, "updateLayer.name");
@@ -385,22 +647,26 @@ function normalizeLayerIdArray(ids, fieldName) {
     throw new TypeError(`${fieldName} must be a Uint32Array or array-like collection of layer ids.`);
 }
 
-async function getDefaultInitInput() {
+async function getDefaultInitInput(): Promise<Uint8Array | undefined> {
     if (!isNodeRuntime()) {
         return undefined;
     }
 
+    // @ts-ignore Node built-in typing is only available in Node environments.
     const { readFile } = await import("node:fs/promises");
     const wasmName = simdSupported() ? "kimg_wasm_simd_bg.wasm" : "kimg_wasm_bg.wasm";
     return readFile(new URL(`./${wasmName}`, import.meta.url));
 }
 
-async function withPreload(fn) {
+async function withPreload<T>(fn: () => T): Promise<T> {
     await preload();
     return fn();
 }
 
-export async function preload(module_or_path) {
+export function preload(
+    module_or_path?: { module_or_path: InitInput | Promise<InitInput> } | InitInput | Promise<InitInput>,
+): Promise<InitOutput>;
+export async function preload(module_or_path?: { module_or_path: InitInput | Promise<InitInput> } | InitInput | Promise<InitInput>) {
     if (preloadPromise !== null) {
         return preloadPromise;
     }
@@ -424,12 +690,80 @@ export async function preload(module_or_path) {
     return preloadPromise;
 }
 
+export interface Composition {
+    free(): void;
+    [Symbol.dispose](): void;
+    addImageLayer(options: ImageLayerOptions): number;
+    addPaintLayer(options: PaintLayerOptions): number;
+    addFilterLayer(options: FilterLayerOptions): number;
+    addGroupLayer(options: GroupLayerOptions): number;
+    addSolidColorLayer(options: SolidColorLayerOptions): number;
+    addGradientLayer(options: GradientLayerOptions): number;
+    addPngLayer(options: PngLayerOptions): number;
+    importImage(options: ImportImageOptions): number;
+    importJpeg(options: ImportImageOptions): number;
+    importWebp(options: ImportImageOptions): number;
+    importGifFrames(options: { bytes: ByteInput }): Uint32Array;
+    importPsd(options: { bytes: ByteInput }): Uint32Array;
+    setLayerOpacity(id: number, opacity: number): void;
+    setLayerVisibility(id: number, visible: boolean): void;
+    setLayerPosition(id: number, xOrPosition: number | Position, y?: number): void;
+    setLayerBlendMode(id: number, blendMode: string): void;
+    setLayerMask(id: number, options: MaskOptions): void;
+    clearLayerMask(id: number): void;
+    setLayerMaskInverted(id: number, inverted: boolean): void;
+    setLayerClipToBelow(id: number, clipToBelow: boolean): void;
+    setLayerFlip(id: number, flipXOrOptions: boolean | FlipOptions, flipY?: boolean): void;
+    setLayerRotation(id: number, rotation: number): void;
+    setLayerAnchor(id: number, anchor: Anchor): void;
+    setFilterLayerConfig(id: number, config: FilterConfig): void;
+    updateLayer(id: number, patch: LayerUpdate): boolean;
+    getLayer(id: number): LayerInfo | null;
+    listLayers(options?: ListLayersOptions): LayerInfo[];
+    removeLayer(id: number): boolean;
+    moveLayer(id: number, target: MoveLayerTarget): boolean;
+    resizeCanvas(widthOrSize: number | Size, height?: number): void;
+    flattenGroup(groupId: number): boolean;
+    removeFromGroup(groupId: number, childId: number): boolean;
+    renderRgba(): Uint8Array;
+    exportPng(): Uint8Array;
+    exportJpeg(quality?: number | ExportJpegOptions): Uint8Array;
+    exportWebp(): Uint8Array;
+    serialize(): Uint8Array;
+    getLayerRgba(id: number): Uint8Array;
+    layerCount(): number;
+    resizeLayerNearest(id: number, widthOrSize: number | Size, height?: number): void;
+    resizeLayerBilinear(id: number, widthOrSize: number | Size, height?: number): void;
+    resizeLayerLanczos3(id: number, widthOrSize: number | Size, height?: number): void;
+    cropLayer(id: number, xOrRect: number | (Position & Size), y?: number, width?: number, height?: number): void;
+    trimLayerAlpha(id: number): void;
+    rotateLayer(id: number, angleDeg: number): void;
+    boxBlurLayer(id: number, radius: number | RadiusOptions): void;
+    gaussianBlurLayer(id: number, radius: number | RadiusOptions): void;
+    sharpenLayer(id: number): void;
+    edgeDetectLayer(id: number): void;
+    embossLayer(id: number): void;
+    invertLayer(id: number): void;
+    posterizeLayer(id: number, levels: number | PosterizeOptions): void;
+    thresholdLayer(id: number, threshold: number | ThresholdOptions): void;
+    levelsLayer(id: number, shadowsOrOptions: number | LevelsOptions, midtones?: number, highlights?: number): void;
+    gradientMapLayer(id: number, stops: GradientStop[] | { stops: GradientStop[] }): void;
+    pixelScaleLayer(id: number, factor: number | PixelScaleOptions): void;
+    extractPalette(id: number, maxColors: number | PaletteOptions): Uint8Array;
+    quantizeLayer(id: number, palette: ByteInput | QuantizeOptions): void;
+    packSprites(layerIdsOrOptions: ArrayLike<number> | PackSpritesOptions, maxWidth?: number, padding?: number): Uint8Array;
+    packSpritesJson(layerIdsOrOptions: ArrayLike<number> | PackSpritesOptions, maxWidth?: number, padding?: number): string;
+    contactSheet(layerIdsOrOptions: ArrayLike<number> | ContactSheetOptions, columns?: number, padding?: number, background?: ByteInput): Uint8Array;
+}
+
 export class Composition {
-    static #fromInner(inner) {
+    readonly _inner!: RawComposition;
+
+    static #fromInner(inner: RawComposition) {
         return new Composition(inner, PRIVATE_CONSTRUCTOR_TOKEN);
     }
 
-    constructor(inner, token) {
+    private constructor(inner: RawComposition, token: symbol) {
         if (token !== PRIVATE_CONSTRUCTOR_TOKEN) {
             throw new TypeError("Use await Composition.create(...) instead of new Composition(...).");
         }
@@ -442,26 +776,28 @@ export class Composition {
         });
     }
 
-    static async create(widthOrOptions, height) {
+    static async create(width: number, height: number): Promise<Composition>;
+    static async create(options: CompositionOptions): Promise<Composition>;
+    static async create(widthOrOptions: number | CompositionOptions, height?: number): Promise<Composition> {
         const size = normalizeCreateArgs(widthOrOptions, height);
         await preload();
         return Composition.#fromInner(new RawComposition(size.width, size.height));
     }
 
-    static async deserialize(data) {
+    static async deserialize(data: ByteInput): Promise<Composition> {
         await preload();
         return Composition.#fromInner(RawComposition.deserialize(normalizeByteInput(data, "data")));
     }
 
-    get width() {
+    get width(): number {
         return this._inner.width;
     }
 
-    get height() {
+    get height(): number {
         return this._inner.height;
     }
 
-    free() {
+    free(): void {
         return this._inner.free();
     }
 
@@ -937,33 +1273,42 @@ export class Composition {
 }
 
 if (typeof Symbol.dispose === "symbol") {
-    Composition.prototype[Symbol.dispose] = function () {
+    Composition.prototype[Symbol.dispose] = function (this: Composition): void {
         return this._inner.free();
     };
 }
 
 export { simdSupported };
 
-export async function contrastRatio(a, b) {
+export async function contrastRatio(a: string, b: string): Promise<number> {
     return withPreload(() => contrast_ratio(a, b));
 }
 
-export async function decodeImage(data) {
+export async function decodeImage(data: ByteInput): Promise<Uint8Array> {
     return withPreload(() => decode_image(normalizeByteInput(data, "decodeImage.data")));
 }
 
-export async function detectFormat(data) {
+export async function detectFormat(data: ByteInput): Promise<string> {
     return withPreload(() => detect_format(normalizeByteInput(data, "detectFormat.data")));
 }
 
-export async function dominantRgbFromRgba(data, widthOrOptions, height) {
+export async function dominantRgbFromRgba(
+    data: ByteInput,
+    widthOrOptions: number | GeometryOptions,
+    height?: number,
+): Promise<Uint8Array> {
     const size = normalizeImageGeometryArg(widthOrOptions, height, "dominantRgbFromRgba");
     return withPreload(() =>
         dominant_rgb_from_rgba(normalizeByteInput(data, "dominantRgbFromRgba.data"), size.width, size.height),
     );
 }
 
-export async function extractPaletteFromRgba(data, widthOrOptions, height, maxColors) {
+export async function extractPaletteFromRgba(
+    data: ByteInput,
+    widthOrOptions: number | GeometryWithMaxColorsOptions,
+    height?: number,
+    maxColors?: number,
+): Promise<Uint8Array> {
     const size = normalizeImageGeometryArg(widthOrOptions, height, "extractPaletteFromRgba");
     const paletteSize = typeof widthOrOptions === "object" && widthOrOptions !== null
         ? widthOrOptions.maxColors
@@ -979,18 +1324,27 @@ export async function extractPaletteFromRgba(data, widthOrOptions, height, maxCo
     );
 }
 
-export async function hexToRgb(hex) {
+export async function hexToRgb(hex: string): Promise<Uint8Array> {
     return withPreload(() => hex_to_rgb(hex));
 }
 
-export async function histogramRgba(data, widthOrOptions, height) {
+export async function histogramRgba(
+    data: ByteInput,
+    widthOrOptions: number | GeometryOptions,
+    height?: number,
+): Promise<Uint32Array> {
     const size = normalizeImageGeometryArg(widthOrOptions, height, "histogramRgba");
     return withPreload(() =>
         histogram_rgba(normalizeByteInput(data, "histogramRgba.data"), size.width, size.height),
     );
 }
 
-export async function quantizeRgba(data, widthOrOptions, height, palette) {
+export async function quantizeRgba(
+    data: ByteInput,
+    widthOrOptions: number | GeometryWithPaletteOptions,
+    height?: number,
+    palette?: ByteInput,
+): Promise<Uint8Array> {
     const size = normalizeImageGeometryArg(widthOrOptions, height, "quantizeRgba");
     const paletteInput = typeof widthOrOptions === "object" && widthOrOptions !== null
         ? widthOrOptions.palette
@@ -1006,11 +1360,11 @@ export async function quantizeRgba(data, widthOrOptions, height, palette) {
     );
 }
 
-export async function relativeLuminance(hex) {
+export async function relativeLuminance(hex: string): Promise<number> {
     return withPreload(() => relative_luminance(hex));
 }
 
-export async function rgbToHex(rOrOptions, g, b) {
+export async function rgbToHex(rOrOptions: number | RgbColor, g?: number, b?: number): Promise<string> {
     const rgb = normalizeRgbArgs(rOrOptions, g, b);
     return withPreload(() => rgb_to_hex(rgb.r, rgb.g, rgb.b));
 }
