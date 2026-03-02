@@ -85,7 +85,7 @@ Shape layers are also available for rectangle, rounded rectangle, ellipse, line,
 
 **Format support** — PNG, JPEG, WebP, GIF (animated frames → layers), PSD (layer import). Auto-detection via magic bytes.
 
-**Serialization** — Save/load full documents as `.kimg` files (JSON metadata + binary pixel data).
+**Serialization** — Save/load full documents as `.kimg` files (versioned binary metadata + raw pixel data, with legacy JSON metadata still accepted on load).
 
 ### Shape layers
 
@@ -292,7 +292,7 @@ Representative medians from recent local runs on March 2, 2026. These are hardwa
 | `render/transformed_paint/512` | `11.03 ms` |
 | `render/transformed_shape/512` | `11.18 ms` |
 | `render/10_layers_with_transforms/512` | `83.31 ms` |
-| `serialize_deserialize/10_layers` | `783.33 µs` |
+| `serialize_deserialize/10_layers` | `762.54 µs` |
 | `bucket_fill/contiguous/512` | `945.14 µs` |
 | `bucket_fill/non_contiguous/512` | `808.98 µs` |
 | `bucket_fill/tolerance/512` | `1.19 ms` |

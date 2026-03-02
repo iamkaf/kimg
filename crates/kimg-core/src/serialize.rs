@@ -6,21 +6,22 @@
 //! # Format
 //!
 //! ```text
-//! [4 bytes: JSON length (big-endian u32)] [JSON metadata] [pixel buffers]
+//! [4 bytes: metadata length (big-endian u32)] [metadata blob] [pixel buffers]
 //! ```
 //!
-//! The JSON section stores all layer metadata (ids, names, blend modes, transform
-//! properties, gradient stops, etc.).  Raw pixel data (image buffers and masks)
-//! is appended as a flat byte sequence after the JSON; each buffer entry in the
-//! JSON includes `buffer_offset` and `buffer_len` fields pointing into that region.
+//! New documents use a compact binary metadata blob:
 //!
-//! A hand-written minimal JSON parser is used to avoid a `serde` dependency.
-//! It supports only the subset of JSON produced by the serializer.
+//! ```text
+//! [4 bytes: "KIMG"] [1 byte: metadata version] [postcard metadata]
+//! ```
+//!
+//! Raw pixel data (image buffers and masks) is appended as a flat byte sequence
+//! after the metadata blob; each buffer entry in the metadata includes
+//! `buffer_offset` and `buffer_len` fields pointing into that region.
 //!
 //! # Backward compatibility
 //!
-//! Optional fields (e.g. `mask_inverted`) default sensibly when absent, so
-//! documents serialized with older versions of kimg can still be loaded.
+//! Older documents with JSON metadata are still accepted on load.
 
 use crate::blend::BlendMode;
 use crate::blit::Anchor;
@@ -29,6 +30,122 @@ use crate::document::Document;
 use crate::filter::HslFilterConfig;
 use crate::layer::*;
 use crate::pixel::Rgba;
+use serde::{Deserialize, Serialize};
+
+const BINARY_METADATA_MAGIC: [u8; 4] = *b"KIMG";
+const BINARY_METADATA_VERSION: u8 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DocumentMetadata {
+    width: u32,
+    height: u32,
+    next_id: u32,
+    layers: Vec<LayerMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LayerMetadata {
+    common: LayerCommonMetadata,
+    kind: LayerKindMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LayerCommonMetadata {
+    id: u32,
+    name: String,
+    visible: bool,
+    opacity: f64,
+    x: i32,
+    y: i32,
+    blend_mode: u8,
+    mask: Option<BufferRefMetadata>,
+    mask_inverted: bool,
+    clip_to_below: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct BufferRefMetadata {
+    width: u32,
+    height: u32,
+    buffer_offset: u64,
+    buffer_len: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct LayerTransformMetadata {
+    anchor: u8,
+    flip_x: bool,
+    flip_y: bool,
+    rotation_deg: f64,
+    scale_x: f64,
+    scale_y: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct FilterMetadata {
+    hue_deg: f64,
+    saturation: f64,
+    lightness: f64,
+    alpha: f64,
+    brightness: f64,
+    contrast: f64,
+    temperature: f64,
+    tint: f64,
+    sharpen: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct GradientStopMetadata {
+    position: f64,
+    color: [u8; 4],
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct ShapePointMetadata {
+    x: i32,
+    y: i32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct ShapeStrokeMetadata {
+    color: [u8; 4],
+    width: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum LayerKindMetadata {
+    Image {
+        buffer: BufferRefMetadata,
+        transform: LayerTransformMetadata,
+    },
+    Paint {
+        buffer: BufferRefMetadata,
+        transform: LayerTransformMetadata,
+    },
+    Filter {
+        config: FilterMetadata,
+    },
+    Group {
+        children: Vec<LayerMetadata>,
+    },
+    SolidColor {
+        color: [u8; 4],
+    },
+    Gradient {
+        direction: u8,
+        stops: Vec<GradientStopMetadata>,
+    },
+    Shape {
+        shape_type: u8,
+        width: u32,
+        height: u32,
+        radius: u32,
+        fill: Option<[u8; 4]>,
+        stroke: Option<ShapeStrokeMetadata>,
+        points: Vec<ShapePointMetadata>,
+        transform: LayerTransformMetadata,
+    },
+}
 
 /// Errors that can occur during document serialization and deserialization.
 #[derive(Debug)]
@@ -55,25 +172,27 @@ impl std::error::Error for SerializeError {}
 ///
 /// # Errors
 ///
-/// Currently infallible; returns `Ok` on all well-formed inputs.
+/// Returns an error if the metadata or pixel sections exceed the supported
+/// binary format limits.
 pub fn serialize(doc: &Document) -> Result<Vec<u8>, SerializeError> {
     let mut pixel_data: Vec<u8> = Vec::new();
-    let layers_json = serialize_layers(&doc.layers, &mut pixel_data);
+    let metadata = build_document_metadata(doc, &mut pixel_data)?;
+    let postcard_bytes = postcard::to_allocvec(&metadata)
+        .map_err(|e| SerializeError::InvalidData(format!("metadata encode failed: {e}")))?;
 
-    let json = format!(
-        r#"{{"width":{},"height":{},"next_id":{},"layers":[{}]}}"#,
-        doc.width,
-        doc.height,
-        get_next_id(doc),
-        layers_json,
-    );
+    let mut metadata_bytes = Vec::with_capacity(5 + postcard_bytes.len());
+    metadata_bytes.extend_from_slice(&BINARY_METADATA_MAGIC);
+    metadata_bytes.push(BINARY_METADATA_VERSION);
+    metadata_bytes.extend_from_slice(&postcard_bytes);
 
-    let json_bytes = json.as_bytes();
-    let json_len = json_bytes.len() as u32;
+    let metadata_len: u32 = metadata_bytes
+        .len()
+        .try_into()
+        .map_err(|_| SerializeError::InvalidData("metadata too large".into()))?;
 
-    let mut output = Vec::with_capacity(4 + json_bytes.len() + pixel_data.len());
-    output.extend_from_slice(&json_len.to_be_bytes());
-    output.extend_from_slice(json_bytes);
+    let mut output = Vec::with_capacity(4 + metadata_bytes.len() + pixel_data.len());
+    output.extend_from_slice(&metadata_len.to_be_bytes());
+    output.extend_from_slice(&metadata_bytes);
     output.extend_from_slice(&pixel_data);
 
     Ok(output)
@@ -83,25 +202,59 @@ pub fn serialize(doc: &Document) -> Result<Vec<u8>, SerializeError> {
 ///
 /// # Errors
 ///
-/// Returns [`SerializeError::InvalidData`] if the input is truncated, the JSON
-/// header is malformed, or any pixel buffer reference is out of bounds.
+/// Returns [`SerializeError::InvalidData`] if the input is truncated, the
+/// metadata header is malformed, or any pixel buffer reference is out of bounds.
 pub fn deserialize(data: &[u8]) -> Result<Document, SerializeError> {
     if data.len() < 4 {
         return Err(SerializeError::InvalidData("data too short".into()));
     }
 
-    let json_len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
-    let json_end = 4usize
-        .checked_add(json_len)
-        .ok_or_else(|| SerializeError::InvalidData("JSON length overflow".into()))?;
-    if data.len() < json_end {
-        return Err(SerializeError::InvalidData("truncated JSON".into()));
+    let metadata_len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    let metadata_end = 4usize
+        .checked_add(metadata_len)
+        .ok_or_else(|| SerializeError::InvalidData("metadata length overflow".into()))?;
+    if data.len() < metadata_end {
+        return Err(SerializeError::InvalidData("truncated metadata".into()));
     }
 
-    let json_str = std::str::from_utf8(&data[4..json_end])
-        .map_err(|e| SerializeError::InvalidData(e.to_string()))?;
-    let pixel_data = &data[json_end..];
+    let metadata_bytes = &data[4..metadata_end];
+    let pixel_data = &data[metadata_end..];
 
+    if metadata_bytes.starts_with(&BINARY_METADATA_MAGIC) {
+        deserialize_binary_document(metadata_bytes, pixel_data)
+    } else {
+        deserialize_legacy_document(metadata_bytes, pixel_data)
+    }
+}
+
+fn deserialize_binary_document(
+    metadata_bytes: &[u8],
+    pixel_data: &[u8],
+) -> Result<Document, SerializeError> {
+    if metadata_bytes.len() < BINARY_METADATA_MAGIC.len() + 1 {
+        return Err(SerializeError::InvalidData(
+            "truncated binary metadata header".into(),
+        ));
+    }
+
+    let version = metadata_bytes[BINARY_METADATA_MAGIC.len()];
+    if version != BINARY_METADATA_VERSION {
+        return Err(SerializeError::InvalidData(format!(
+            "unsupported metadata version: {version}"
+        )));
+    }
+
+    let metadata: DocumentMetadata = postcard::from_bytes(&metadata_bytes[5..])
+        .map_err(|e| SerializeError::InvalidData(format!("metadata decode failed: {e}")))?;
+    document_from_metadata(metadata, pixel_data)
+}
+
+fn deserialize_legacy_document(
+    metadata_bytes: &[u8],
+    pixel_data: &[u8],
+) -> Result<Document, SerializeError> {
+    let json_str = std::str::from_utf8(metadata_bytes)
+        .map_err(|e| SerializeError::InvalidData(e.to_string()))?;
     let doc_obj = parse_json_object(json_str).map_err(SerializeError::InvalidData)?;
 
     let width = get_json_u32(&doc_obj, "width")?;
@@ -113,7 +266,6 @@ pub fn deserialize(data: &[u8]) -> Result<Document, SerializeError> {
 
     let mut doc = Document::new(width, height);
     doc.layers = layers;
-    // Advance next_id to the saved value
     while get_next_id(&doc) < next_id {
         doc.next_id();
     }
@@ -121,10 +273,7 @@ pub fn deserialize(data: &[u8]) -> Result<Document, SerializeError> {
     Ok(doc)
 }
 
-// ── JSON serialization helpers ──
-
 fn get_next_id(doc: &Document) -> u32 {
-    // The next_id is private; we can infer it by scanning all layer IDs
     fn max_id(layers: &[Layer]) -> u32 {
         let mut m = 0u32;
         for l in layers {
@@ -138,191 +287,412 @@ fn get_next_id(doc: &Document) -> u32 {
     max_id(&doc.layers) + 1
 }
 
-fn serialize_layers(layers: &[Layer], pixel_data: &mut Vec<u8>) -> String {
-    let parts: Vec<String> = layers
+fn build_document_metadata(
+    doc: &Document,
+    pixel_data: &mut Vec<u8>,
+) -> Result<DocumentMetadata, SerializeError> {
+    let layers = doc
+        .layers
         .iter()
-        .map(|l| serialize_layer(l, pixel_data))
-        .collect();
-    parts.join(",")
+        .map(|layer| build_layer_metadata(layer, pixel_data))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(DocumentMetadata {
+        width: doc.width,
+        height: doc.height,
+        next_id: get_next_id(doc),
+        layers,
+    })
 }
 
-fn serialize_layer(layer: &Layer, pixel_data: &mut Vec<u8>) -> String {
-    let c = &layer.common;
-    let mut props = format!(
-        r#""id":{},"name":"{}","visible":{},"opacity":{},"x":{},"y":{},"blend_mode":"{}","clip_to_below":{},"mask_inverted":{}"#,
-        c.id,
-        escape_json_string(&c.name),
-        c.visible,
-        c.opacity,
-        c.x,
-        c.y,
-        c.blend_mode.as_str(),
-        c.clip_to_below,
-        c.mask_inverted,
-    );
-
-    // Mask
-    if let Some(mask) = &c.mask {
-        let offset = pixel_data.len();
-        pixel_data.extend_from_slice(&mask.data);
-        props.push_str(&format!(
-            r#","mask":{{"width":{},"height":{},"buffer_offset":{},"buffer_len":{}}}"#,
-            mask.width,
-            mask.height,
-            offset,
-            mask.data.len()
-        ));
-    }
-
-    let kind_json = match &layer.kind {
-        LayerKind::Image(img) => {
-            let offset = pixel_data.len();
-            pixel_data.extend_from_slice(&img.buffer.data);
-            format!(
-                r#""kind":"image","width":{},"height":{},"buffer_offset":{},"buffer_len":{},{}"#,
-                img.buffer.width,
-                img.buffer.height,
-                offset,
-                img.buffer.data.len(),
-                serialize_transform_props(&img.transform),
-            )
-        }
-        LayerKind::Paint(paint) => {
-            let offset = pixel_data.len();
-            pixel_data.extend_from_slice(&paint.buffer.data);
-            format!(
-                r#""kind":"paint","width":{},"height":{},"buffer_offset":{},"buffer_len":{},{}"#,
-                paint.buffer.width,
-                paint.buffer.height,
-                offset,
-                paint.buffer.data.len(),
-                serialize_transform_props(&paint.transform),
-            )
-        }
-        LayerKind::Filter(f) => {
-            format!(
-                r#""kind":"filter","hue_deg":{},"saturation":{},"lightness":{},"alpha":{},"brightness":{},"contrast":{},"temperature":{},"tint":{},"sharpen":{}"#,
-                f.config.hue_deg,
-                f.config.saturation,
-                f.config.lightness,
-                f.config.alpha,
-                f.config.brightness,
-                f.config.contrast,
-                f.config.temperature,
-                f.config.tint,
-                f.config.sharpen,
-            )
-        }
-        LayerKind::Group(g) => {
-            let children = serialize_layers(&g.children, pixel_data);
-            format!(r#""kind":"group","children":[{}]"#, children)
-        }
-        LayerKind::SolidColor(sc) => {
-            format!(
-                r#""kind":"solid_color","color":[{},{},{},{}]"#,
-                sc.color.r, sc.color.g, sc.color.b, sc.color.a,
-            )
-        }
-        LayerKind::Gradient(grad) => {
-            let stops: Vec<String> = grad
+fn build_layer_metadata(
+    layer: &Layer,
+    pixel_data: &mut Vec<u8>,
+) -> Result<LayerMetadata, SerializeError> {
+    let common = build_common_metadata(&layer.common, pixel_data)?;
+    let kind = match &layer.kind {
+        LayerKind::Image(img) => LayerKindMetadata::Image {
+            buffer: append_buffer(&img.buffer, pixel_data)?,
+            transform: transform_to_metadata(img.transform),
+        },
+        LayerKind::Paint(paint) => LayerKindMetadata::Paint {
+            buffer: append_buffer(&paint.buffer, pixel_data)?,
+            transform: transform_to_metadata(paint.transform),
+        },
+        LayerKind::Filter(filter) => LayerKindMetadata::Filter {
+            config: filter_to_metadata(&filter.config),
+        },
+        LayerKind::Group(group) => LayerKindMetadata::Group {
+            children: group
+                .children
+                .iter()
+                .map(|child| build_layer_metadata(child, pixel_data))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        LayerKind::SolidColor(solid) => LayerKindMetadata::SolidColor {
+            color: rgba_to_array(solid.color),
+        },
+        LayerKind::Gradient(gradient) => LayerKindMetadata::Gradient {
+            direction: gradient_direction_to_code(gradient.direction),
+            stops: gradient
                 .stops
                 .iter()
-                .map(|s| {
-                    format!(
-                        r#"{{"position":{},"color":[{},{},{},{}]}}"#,
-                        s.position, s.color.r, s.color.g, s.color.b, s.color.a,
-                    )
+                .map(|stop| GradientStopMetadata {
+                    position: stop.position,
+                    color: rgba_to_array(stop.color),
                 })
-                .collect();
-            format!(
-                r#""kind":"gradient","direction":"{}","stops":[{}]"#,
-                gradient_dir_str(grad.direction),
-                stops.join(","),
-            )
-        }
-        LayerKind::Shape(shape) => {
-            let points: Vec<String> = shape
+                .collect(),
+        },
+        LayerKind::Shape(shape) => LayerKindMetadata::Shape {
+            shape_type: shape_type_to_code(shape.shape_type),
+            width: shape.width,
+            height: shape.height,
+            radius: shape.radius,
+            fill: shape.fill.map(rgba_to_array),
+            stroke: shape.stroke.map(|stroke| ShapeStrokeMetadata {
+                color: rgba_to_array(stroke.color),
+                width: stroke.width,
+            }),
+            points: shape
                 .points
                 .iter()
-                .map(|point| format!(r#"{{"x":{},"y":{}}}"#, point.x, point.y))
-                .collect();
-            let mut props = format!(
-                r#""kind":"shape","shape_type":"{}","width":{},"height":{},"radius":{},"points":[{}]"#,
-                shape.shape_type.as_str(),
-                shape.width,
-                shape.height,
-                shape.radius,
-                points.join(","),
+                .map(|point| ShapePointMetadata {
+                    x: point.x,
+                    y: point.y,
+                })
+                .collect(),
+            transform: transform_to_metadata(shape.transform),
+        },
+    };
+
+    Ok(LayerMetadata { common, kind })
+}
+
+fn build_common_metadata(
+    common: &LayerCommon,
+    pixel_data: &mut Vec<u8>,
+) -> Result<LayerCommonMetadata, SerializeError> {
+    Ok(LayerCommonMetadata {
+        id: common.id,
+        name: common.name.clone(),
+        visible: common.visible,
+        opacity: common.opacity,
+        x: common.x,
+        y: common.y,
+        blend_mode: blend_mode_to_code(common.blend_mode),
+        mask: common
+            .mask
+            .as_ref()
+            .map(|mask| append_buffer(mask, pixel_data))
+            .transpose()?,
+        mask_inverted: common.mask_inverted,
+        clip_to_below: common.clip_to_below,
+    })
+}
+
+fn append_buffer(
+    buffer: &ImageBuffer,
+    pixel_data: &mut Vec<u8>,
+) -> Result<BufferRefMetadata, SerializeError> {
+    let buffer_offset = u64::try_from(pixel_data.len())
+        .map_err(|_| SerializeError::InvalidData("pixel data offset overflow".into()))?;
+    let buffer_len = u64::try_from(buffer.data.len())
+        .map_err(|_| SerializeError::InvalidData("pixel data length overflow".into()))?;
+
+    pixel_data.extend_from_slice(&buffer.data);
+
+    Ok(BufferRefMetadata {
+        width: buffer.width,
+        height: buffer.height,
+        buffer_offset,
+        buffer_len,
+    })
+}
+
+fn document_from_metadata(
+    metadata: DocumentMetadata,
+    pixel_data: &[u8],
+) -> Result<Document, SerializeError> {
+    let layers = metadata
+        .layers
+        .into_iter()
+        .map(|layer| layer_from_metadata(layer, pixel_data))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut doc = Document::new(metadata.width, metadata.height);
+    doc.layers = layers;
+    while get_next_id(&doc) < metadata.next_id {
+        doc.next_id();
+    }
+    Ok(doc)
+}
+
+fn layer_from_metadata(
+    metadata: LayerMetadata,
+    pixel_data: &[u8],
+) -> Result<Layer, SerializeError> {
+    let common = common_from_metadata(metadata.common, pixel_data)?;
+    let kind = match metadata.kind {
+        LayerKindMetadata::Image { buffer, transform } => LayerKind::Image(ImageLayerData {
+            buffer: image_buffer_from_ref(buffer, pixel_data, "image pixel data")?,
+            transform: transform_from_metadata(transform),
+        }),
+        LayerKindMetadata::Paint { buffer, transform } => LayerKind::Paint(PaintLayerData {
+            buffer: image_buffer_from_ref(buffer, pixel_data, "paint pixel data")?,
+            transform: transform_from_metadata(transform),
+        }),
+        LayerKindMetadata::Filter { config } => LayerKind::Filter(FilterLayerData {
+            config: filter_from_metadata(config),
+        }),
+        LayerKindMetadata::Group { children } => LayerKind::Group(GroupLayerData {
+            children: children
+                .into_iter()
+                .map(|child| layer_from_metadata(child, pixel_data))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        LayerKindMetadata::SolidColor { color } => LayerKind::SolidColor(SolidColorLayerData {
+            color: rgba_from_array(color),
+        }),
+        LayerKindMetadata::Gradient { direction, stops } => {
+            LayerKind::Gradient(GradientLayerData {
+                direction: gradient_direction_from_code(direction),
+                stops: stops
+                    .into_iter()
+                    .map(|stop| GradientStop {
+                        position: stop.position,
+                        color: rgba_from_array(stop.color),
+                    })
+                    .collect(),
+            })
+        }
+        LayerKindMetadata::Shape {
+            shape_type,
+            width,
+            height,
+            radius,
+            fill,
+            stroke,
+            points,
+            transform,
+        } => {
+            let mut shape = ShapeLayerData::new(
+                shape_type_from_code(shape_type),
+                width,
+                height,
+                radius,
+                fill.map(rgba_from_array),
+                stroke.map(|stroke| ShapeStroke::new(rgba_from_array(stroke.color), stroke.width)),
+                points
+                    .into_iter()
+                    .map(|point| ShapePoint::new(point.x, point.y))
+                    .collect(),
             );
-            props.push_str(&format!(",{}", serialize_transform_props(&shape.transform)));
-
-            if let Some(fill) = shape.fill {
-                props.push_str(&format!(
-                    r#","fill":[{},{},{},{}]"#,
-                    fill.r, fill.g, fill.b, fill.a,
-                ));
-            }
-
-            if let Some(stroke) = shape.stroke {
-                props.push_str(&format!(
-                    r#","stroke":{{"width":{},"color":[{},{},{},{}]}}"#,
-                    stroke.width, stroke.color.r, stroke.color.g, stroke.color.b, stroke.color.a,
-                ));
-            }
-
-            props
+            shape.transform = transform_from_metadata(transform);
+            LayerKind::Shape(shape)
         }
     };
 
-    format!("{{{},{}}}", props, kind_json)
+    Ok(Layer { common, kind })
 }
 
-fn anchor_str(a: Anchor) -> &'static str {
-    match a {
-        Anchor::TopLeft => "top_left",
-        Anchor::Center => "center",
+fn common_from_metadata(
+    metadata: LayerCommonMetadata,
+    pixel_data: &[u8],
+) -> Result<LayerCommon, SerializeError> {
+    let mut common = LayerCommon::new(metadata.id, metadata.name);
+    common.visible = metadata.visible;
+    common.opacity = metadata.opacity;
+    common.x = metadata.x;
+    common.y = metadata.y;
+    common.blend_mode = blend_mode_from_code(metadata.blend_mode);
+    common.mask = metadata
+        .mask
+        .map(|mask| image_buffer_from_ref(mask, pixel_data, "mask pixel data"))
+        .transpose()?;
+    common.mask_inverted = metadata.mask_inverted;
+    common.clip_to_below = metadata.clip_to_below;
+    Ok(common)
+}
+
+fn image_buffer_from_ref(
+    buffer: BufferRefMetadata,
+    pixel_data: &[u8],
+    what: &str,
+) -> Result<ImageBuffer, SerializeError> {
+    let bytes = checked_slice_u64(pixel_data, buffer.buffer_offset, buffer.buffer_len, what)?;
+    ImageBuffer::from_rgba(buffer.width, buffer.height, bytes.to_vec())
+        .ok_or_else(|| SerializeError::InvalidData(format!("{what} size mismatch")))
+}
+
+fn checked_slice_u64<'a>(
+    data: &'a [u8],
+    offset: u64,
+    len: u64,
+    what: &str,
+) -> Result<&'a [u8], SerializeError> {
+    let offset: usize = offset
+        .try_into()
+        .map_err(|_| SerializeError::InvalidData(format!("{what} offset overflow")))?;
+    let len: usize = len
+        .try_into()
+        .map_err(|_| SerializeError::InvalidData(format!("{what} length overflow")))?;
+    checked_slice(data, offset, len, what)
+}
+
+fn filter_to_metadata(config: &HslFilterConfig) -> FilterMetadata {
+    FilterMetadata {
+        hue_deg: config.hue_deg,
+        saturation: config.saturation,
+        lightness: config.lightness,
+        alpha: config.alpha,
+        brightness: config.brightness,
+        contrast: config.contrast,
+        temperature: config.temperature,
+        tint: config.tint,
+        sharpen: config.sharpen,
     }
 }
 
-fn serialize_transform_props(transform: &LayerTransform) -> String {
-    format!(
-        r#""anchor":"{}","flip_x":{},"flip_y":{},"rotation_deg":{},"scale_x":{},"scale_y":{}"#,
-        anchor_str(transform.anchor),
-        transform.flip_x,
-        transform.flip_y,
-        transform.rotation_deg,
-        transform.scale_x,
-        transform.scale_y,
-    )
-}
-
-fn gradient_dir_str(d: GradientDirection) -> &'static str {
-    match d {
-        GradientDirection::Horizontal => "horizontal",
-        GradientDirection::Vertical => "vertical",
-        GradientDirection::DiagonalDown => "diagonal_down",
-        GradientDirection::DiagonalUp => "diagonal_up",
+fn filter_from_metadata(config: FilterMetadata) -> HslFilterConfig {
+    HslFilterConfig {
+        hue_deg: config.hue_deg,
+        saturation: config.saturation,
+        lightness: config.lightness,
+        alpha: config.alpha,
+        brightness: config.brightness,
+        contrast: config.contrast,
+        temperature: config.temperature,
+        tint: config.tint,
+        sharpen: config.sharpen,
     }
 }
 
-fn escape_json_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c < ' ' => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
+fn transform_to_metadata(transform: LayerTransform) -> LayerTransformMetadata {
+    LayerTransformMetadata {
+        anchor: anchor_to_code(transform.anchor),
+        flip_x: transform.flip_x,
+        flip_y: transform.flip_y,
+        rotation_deg: transform.rotation_deg,
+        scale_x: transform.scale_x,
+        scale_y: transform.scale_y,
     }
-    out
+}
+
+fn transform_from_metadata(transform: LayerTransformMetadata) -> LayerTransform {
+    LayerTransform {
+        anchor: anchor_from_code(transform.anchor),
+        flip_x: transform.flip_x,
+        flip_y: transform.flip_y,
+        rotation_deg: transform.rotation_deg,
+        scale_x: normalize_scale(transform.scale_x),
+        scale_y: normalize_scale(transform.scale_y),
+    }
+}
+
+fn rgba_to_array(color: Rgba) -> [u8; 4] {
+    [color.r, color.g, color.b, color.a]
+}
+
+fn rgba_from_array(color: [u8; 4]) -> Rgba {
+    Rgba::new(color[0], color[1], color[2], color[3])
+}
+
+fn blend_mode_to_code(mode: BlendMode) -> u8 {
+    match mode {
+        BlendMode::Normal => 0,
+        BlendMode::Multiply => 1,
+        BlendMode::Screen => 2,
+        BlendMode::Overlay => 3,
+        BlendMode::Darken => 4,
+        BlendMode::Lighten => 5,
+        BlendMode::ColorDodge => 6,
+        BlendMode::ColorBurn => 7,
+        BlendMode::HardLight => 8,
+        BlendMode::SoftLight => 9,
+        BlendMode::Difference => 10,
+        BlendMode::Exclusion => 11,
+        BlendMode::Hue => 12,
+        BlendMode::Saturation => 13,
+        BlendMode::Color => 14,
+        BlendMode::Luminosity => 15,
+    }
+}
+
+fn blend_mode_from_code(code: u8) -> BlendMode {
+    match code {
+        1 => BlendMode::Multiply,
+        2 => BlendMode::Screen,
+        3 => BlendMode::Overlay,
+        4 => BlendMode::Darken,
+        5 => BlendMode::Lighten,
+        6 => BlendMode::ColorDodge,
+        7 => BlendMode::ColorBurn,
+        8 => BlendMode::HardLight,
+        9 => BlendMode::SoftLight,
+        10 => BlendMode::Difference,
+        11 => BlendMode::Exclusion,
+        12 => BlendMode::Hue,
+        13 => BlendMode::Saturation,
+        14 => BlendMode::Color,
+        15 => BlendMode::Luminosity,
+        _ => BlendMode::Normal,
+    }
+}
+
+fn anchor_to_code(anchor: Anchor) -> u8 {
+    match anchor {
+        Anchor::TopLeft => 0,
+        Anchor::Center => 1,
+    }
+}
+
+fn anchor_from_code(code: u8) -> Anchor {
+    match code {
+        1 => Anchor::Center,
+        _ => Anchor::TopLeft,
+    }
+}
+
+fn gradient_direction_to_code(direction: GradientDirection) -> u8 {
+    match direction {
+        GradientDirection::Horizontal => 0,
+        GradientDirection::Vertical => 1,
+        GradientDirection::DiagonalDown => 2,
+        GradientDirection::DiagonalUp => 3,
+    }
+}
+
+fn gradient_direction_from_code(code: u8) -> GradientDirection {
+    match code {
+        1 => GradientDirection::Vertical,
+        2 => GradientDirection::DiagonalDown,
+        3 => GradientDirection::DiagonalUp,
+        _ => GradientDirection::Horizontal,
+    }
+}
+
+fn shape_type_to_code(shape_type: ShapeType) -> u8 {
+    match shape_type {
+        ShapeType::Rectangle => 0,
+        ShapeType::RoundedRect => 1,
+        ShapeType::Ellipse => 2,
+        ShapeType::Line => 3,
+        ShapeType::Polygon => 4,
+    }
+}
+
+fn shape_type_from_code(code: u8) -> ShapeType {
+    match code {
+        1 => ShapeType::RoundedRect,
+        2 => ShapeType::Ellipse,
+        3 => ShapeType::Line,
+        4 => ShapeType::Polygon,
+        _ => ShapeType::Rectangle,
+    }
 }
 
 // ── Minimal JSON parser ──
-// Hand-written to avoid serde dependency. Supports the subset we produce.
+// Hand-written and retained only for legacy document compatibility.
 
 type JsonObject = Vec<(String, String)>;
 
@@ -926,6 +1296,15 @@ mod tests {
     }
 
     #[test]
+    fn serialize_writes_binary_metadata_header() {
+        let doc = Document::new(10, 20);
+        let data = serialize(&doc).unwrap();
+
+        assert_eq!(&data[4..8], &BINARY_METADATA_MAGIC);
+        assert_eq!(data[8], BINARY_METADATA_VERSION);
+    }
+
+    #[test]
     fn serialize_with_image_layers() {
         let mut doc = Document::new(4, 4);
         let id = doc.next_id();
@@ -1164,6 +1543,15 @@ mod tests {
             }
             _ => panic!("expected image layer"),
         }
+    }
+
+    #[test]
+    fn deserialize_rejects_unknown_binary_metadata_version() {
+        let doc = Document::new(1, 1);
+        let mut data = serialize(&doc).unwrap();
+        data[8] = BINARY_METADATA_VERSION + 1;
+
+        assert!(deserialize(&data).is_err());
     }
 
     #[test]

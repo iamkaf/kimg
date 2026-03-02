@@ -270,13 +270,14 @@ and wasm builds before adoption.
 
 #### 6.1 Serialization Spike: `postcard`
 
-- [ ] Prototype replacing the handwritten metadata parser in `kimg-core/src/serialize.rs` with a typed metadata struct encoded via `postcard`
-- [ ] Preserve the current overall file shape: structured metadata + raw pixel payload
-- [ ] Decide and document the backward-compatibility story:
+- [x] Prototype replacing the handwritten metadata parser in `kimg-core/src/serialize.rs` with a typed metadata struct encoded via `postcard`
+- [x] Preserve the current overall file shape: structured metadata + raw pixel payload
+- [x] Decide and document the backward-compatibility story:
   - migrate in place with versioning
   - or keep legacy decode support for old `.kimg` payloads
-- [ ] Benchmark against the current `serialize_deserialize/10_layers` baseline
-- [ ] Validate native and wasm builds
+- Implemented with a versioned binary metadata header for new documents and legacy JSON decode fallback for older `.kimg` payloads.
+- [x] Benchmark against the current `serialize_deserialize/10_layers` baseline
+- [x] Validate native and wasm builds
 - Success criteria:
   - less custom parsing code
   - equal or better deserialize performance
