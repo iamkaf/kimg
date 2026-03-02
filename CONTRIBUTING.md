@@ -25,7 +25,7 @@ To build the WASM output:
 ./scripts/build.sh
 ```
 
-The demo page at `demo/index.html` loads from `pkg/`. Serve it with any static file server:
+The tracked JS wrapper and package metadata live in `js/`, and `./scripts/build.sh` copies them into `dist/` with the generated wasm-bindgen output. The demo page at `demo/index.html` loads from `dist/`. Serve it with any static file server:
 
 ```bash
 ./scripts/demo.sh

@@ -1,4 +1,7 @@
-use criterion::{black_box, criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, Criterion, SamplingMode};
+use criterion::{
+    black_box, criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, Criterion,
+    SamplingMode,
+};
 use kimg_core::buffer::ImageBuffer;
 use kimg_core::pixel::Rgba;
 use kimg_core::transform::{

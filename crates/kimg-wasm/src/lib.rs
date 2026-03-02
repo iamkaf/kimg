@@ -78,9 +78,10 @@ impl Document {
         let mut common = LayerCommon::new(id, name);
         common.x = x;
         common.y = y;
-        self.inner
-            .layers
-            .push(Layer::new(common, LayerKind::Image(ImageLayerData::new(buffer))));
+        self.inner.layers.push(Layer::new(
+            common,
+            LayerKind::Image(ImageLayerData::new(buffer)),
+        ));
         id
     }
 
@@ -89,7 +90,9 @@ impl Document {
         let id = self.inner.next_id();
         self.inner.layers.push(Layer::new(
             LayerCommon::new(id, name),
-            LayerKind::Paint(PaintLayerData::new(ImageBuffer::new_transparent(width, height))),
+            LayerKind::Paint(PaintLayerData::new(ImageBuffer::new_transparent(
+                width, height,
+            ))),
         ));
         id
     }
@@ -326,7 +329,10 @@ impl Document {
     /// Add a filter layer as a child of a group. Returns the child layer ID.
     pub fn add_filter_to_group(&mut self, group_id: u32, name: &str) -> u32 {
         let id = self.inner.next_id();
-        let child = Layer::new(LayerCommon::new(id, name), LayerKind::Filter(FilterLayerData::new()));
+        let child = Layer::new(
+            LayerCommon::new(id, name),
+            LayerKind::Filter(FilterLayerData::new()),
+        );
         self.inner
             .add_child_to_group(group_id, child)
             .expect("group not found");
@@ -336,7 +342,10 @@ impl Document {
     /// Add a nested group as a child of a group. Returns the child layer ID.
     pub fn add_group_to_group(&mut self, group_id: u32, name: &str) -> u32 {
         let id = self.inner.next_id();
-        let child = Layer::new(LayerCommon::new(id, name), LayerKind::Group(GroupLayerData::new()));
+        let child = Layer::new(
+            LayerCommon::new(id, name),
+            LayerKind::Group(GroupLayerData::new()),
+        );
         self.inner
             .add_child_to_group(group_id, child)
             .expect("group not found");
@@ -362,9 +371,10 @@ impl Document {
         let mut common = LayerCommon::new(id, name);
         common.x = x;
         common.y = y;
-        self.inner
-            .layers
-            .push(Layer::new(common, LayerKind::Image(ImageLayerData::new(buf))));
+        self.inner.layers.push(Layer::new(
+            common,
+            LayerKind::Image(ImageLayerData::new(buf)),
+        ));
         id
     }
 
@@ -719,9 +729,10 @@ impl Document {
             common.y = psd_layer.y;
             common.opacity = psd_layer.opacity;
             common.visible = psd_layer.visible;
-            self.inner
-                .layers
-                .push(Layer::new(common, LayerKind::Image(ImageLayerData::new(psd_layer.buffer))));
+            self.inner.layers.push(Layer::new(
+                common,
+                LayerKind::Image(ImageLayerData::new(psd_layer.buffer)),
+            ));
             ids.push(id);
         }
         ids
@@ -765,9 +776,10 @@ impl Document {
         let mut common = LayerCommon::new(id, name);
         common.x = x;
         common.y = y;
-        self.inner
-            .layers
-            .push(Layer::new(common, LayerKind::Image(ImageLayerData::new(buf))));
+        self.inner.layers.push(Layer::new(
+            common,
+            LayerKind::Image(ImageLayerData::new(buf)),
+        ));
         id
     }
 
@@ -1076,14 +1088,14 @@ mod tests {
             255, 0, 0, 255, // red opaque
             255, 0, 0, 255, // red opaque
             0, 0, 255, 255, // blue opaque
-            0, 0, 0, 0,     // transparent
+            0, 0, 0, 0, // transparent
         ];
         let hist = histogram_rgba(&data, 2, 2);
         assert_eq!(hist.len(), 1024);
         // r channel: index 255 → 2 red pixels; index 0 → 2 non-red
-        assert_eq!(hist[255], 2);  // r[255]
-        assert_eq!(hist[0], 2);    // r[0]
-        // b channel starts at offset 512: index 512+255 → 1 blue pixel
+        assert_eq!(hist[255], 2); // r[255]
+        assert_eq!(hist[0], 2); // r[0]
+                                // b channel starts at offset 512: index 512+255 → 1 blue pixel
         assert_eq!(hist[512 + 255], 1);
         // a channel starts at offset 768: 3 opaque (255) and 1 transparent (0)
         assert_eq!(hist[768 + 255], 3);

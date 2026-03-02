@@ -1,6 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use kimg_core::buffer::ImageBuffer;
-use kimg_core::codec::{decode_jpeg, decode_png, decode_webp, encode_jpeg, encode_png, encode_webp};
+use kimg_core::codec::{
+    decode_jpeg, decode_png, decode_webp, encode_jpeg, encode_png, encode_webp,
+};
 
 /// Build a deterministic textured image so codec benches don't measure
 /// unrealistic best-case compression on a flat solid fill.
@@ -14,13 +16,21 @@ fn textured_buf_512() -> ImageBuffer {
             let base_g = ((y * 255) / 511) as u8;
             let base_b = (((x ^ y) * 255) / 511) as u8;
 
-            let checker = if ((x / 16) + (y / 16)) % 2 == 0 { 28 } else { -28 };
+            let checker = if ((x / 16) + (y / 16)) % 2 == 0 {
+                28
+            } else {
+                -28
+            };
             let ripple = ((((x * x + y * 3) % 97) as i32) - 48) / 2;
 
             let r = (base_r as i32 + checker + ripple).clamp(0, 255) as u8;
             let g = (base_g as i32 - checker / 2 + ripple).clamp(0, 255) as u8;
             let b = (base_b as i32 + checker / 3 - ripple).clamp(0, 255) as u8;
-            let a = if ((x / 32) + (y / 32)) % 3 == 0 { 255 } else { 224 };
+            let a = if ((x / 32) + (y / 32)) % 3 == 0 {
+                255
+            } else {
+                224
+            };
 
             buf.data[i] = r;
             buf.data[i + 1] = g;

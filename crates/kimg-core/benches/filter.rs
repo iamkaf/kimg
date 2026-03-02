@@ -1,6 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use kimg_core::buffer::ImageBuffer;
-use kimg_core::filter::{apply_hsl_filter, gradient_map, invert, levels, posterize, HslFilterConfig};
+use kimg_core::filter::{
+    apply_hsl_filter, gradient_map, invert, levels, posterize, HslFilterConfig,
+};
 use kimg_core::pixel::Rgba;
 
 fn solid_buf(size: u32) -> ImageBuffer {

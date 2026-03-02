@@ -17,6 +17,7 @@
 //! which is lossless and faster.
 
 use crate::buffer::ImageBuffer;
+use fast_image_resize as fir;
 
 /// Resize an image using nearest-neighbor sampling.
 ///
@@ -86,6 +87,14 @@ fn sample_bilinear(src: &ImageBuffer, fx: f64, fy: f64) -> [f64; 4] {
 /// Produces smoother results than nearest-neighbor for photos and continuous-
 /// tone images.  Returns a new buffer of size `new_width × new_height`.
 pub fn resize_bilinear(src: &ImageBuffer, new_width: u32, new_height: u32) -> ImageBuffer {
+    if let Some(dst) = resize_with_fir(src, new_width, new_height, fir::FilterType::Bilinear) {
+        return dst;
+    }
+
+    resize_bilinear_fallback(src, new_width, new_height)
+}
+
+fn resize_bilinear_fallback(src: &ImageBuffer, new_width: u32, new_height: u32) -> ImageBuffer {
     let mut dst = ImageBuffer::new_transparent(new_width, new_height);
     if src.width == 0 || src.height == 0 || new_width == 0 || new_height == 0 {
         return dst;
@@ -127,6 +136,14 @@ fn lanczos3(x: f64) -> f64 {
 /// Two-pass separable (horizontal then vertical).  Highest quality for
 /// downscaling photographs; slower than bilinear.
 pub fn resize_lanczos3(src: &ImageBuffer, new_width: u32, new_height: u32) -> ImageBuffer {
+    if let Some(dst) = resize_with_fir(src, new_width, new_height, fir::FilterType::Lanczos3) {
+        return dst;
+    }
+
+    resize_lanczos3_fallback(src, new_width, new_height)
+}
+
+fn resize_lanczos3_fallback(src: &ImageBuffer, new_width: u32, new_height: u32) -> ImageBuffer {
     if src.width == 0 || src.height == 0 || new_width == 0 || new_height == 0 {
         return ImageBuffer::new_transparent(new_width, new_height);
     }
@@ -134,6 +151,30 @@ pub fn resize_lanczos3(src: &ImageBuffer, new_width: u32, new_height: u32) -> Im
     // Two-pass separable: horizontal then vertical
     let tmp = resize_lanczos3_horizontal(src, new_width);
     resize_lanczos3_vertical(&tmp, new_height)
+}
+
+fn resize_with_fir(
+    src: &ImageBuffer,
+    new_width: u32,
+    new_height: u32,
+    filter: fir::FilterType,
+) -> Option<ImageBuffer> {
+    if src.width == 0 || src.height == 0 || new_width == 0 || new_height == 0 {
+        return Some(ImageBuffer::new_transparent(new_width, new_height));
+    }
+
+    let src_image =
+        fir::images::ImageRef::new(src.width, src.height, &src.data, fir::PixelType::U8x4).ok()?;
+    let mut dst_image = fir::images::Image::new(new_width, new_height, fir::PixelType::U8x4);
+    let options = fir::ResizeOptions::new()
+        .resize_alg(fir::ResizeAlg::Convolution(filter))
+        .use_alpha(true);
+
+    fir::Resizer::new()
+        .resize(&src_image, &mut dst_image, &options)
+        .ok()?;
+
+    ImageBuffer::from_rgba(new_width, new_height, dst_image.into_vec())
 }
 
 fn resize_lanczos3_horizontal(src: &ImageBuffer, new_width: u32) -> ImageBuffer {
@@ -389,6 +430,16 @@ mod tests {
         assert_eq!(dst.width, 8);
         let p = dst.get_pixel(4, 4);
         assert!(p.r > 250, "r={}", p.r);
+    }
+
+    #[test]
+    fn resize_fir_path_preserves_transparent_edges() {
+        let mut src = ImageBuffer::new_transparent(4, 4);
+        src.set_pixel(1, 1, Rgba::new(255, 128, 64, 255));
+        let dst = resize_bilinear(&src, 8, 8);
+
+        assert_eq!(dst.get_pixel(0, 0), Rgba::TRANSPARENT);
+        assert!(dst.get_pixel(3, 3).a > 0);
     }
 
     #[test]

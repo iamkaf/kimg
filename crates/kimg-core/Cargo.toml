@@ -10,6 +10,7 @@ keywords = ["image", "compositor", "pixel", "layer", "blend"]
 categories = ["multimedia::images", "graphics", "wasm"]
 
 [dependencies]
+fast_image_resize = { version = "6.0.0", default-features = false, features = ["std", "only_u8x4"] }
 png = "0.17"
 jpeg-decoder = "0.3"
 jpeg-encoder = "0.6"

@@ -27,7 +27,7 @@ npm install kimg
 ```js
 import init, { Document } from 'kimg';
 
-await init();
+await init(); // auto-selects the SIMD wasm build when the runtime supports it
 
 const doc = new Document(128, 128);
 const layerId = doc.add_image_layer('sprite', rgbaPixels, 128, 128, 0, 0);
@@ -40,9 +40,10 @@ const png = doc.export_png();
 
 ```js
 import { readFileSync } from 'fs';
-import { initSync, Document } from 'kimg';
+import { initSync, Document, simdSupported } from 'kimg';
 
-initSync(readFileSync(new URL('kimg_wasm_bg.wasm', import.meta.resolve('kimg'))));
+const wasmName = simdSupported() ? 'kimg_wasm_simd_bg.wasm' : 'kimg_wasm_bg.wasm';
+initSync({ module: readFileSync(new URL(wasmName, import.meta.resolve('kimg'))) });
 
 const doc = new Document(64, 64);
 // same API from here on
@@ -113,7 +114,8 @@ kimg/
 │   │   │   └── transform.rs   # Resize, rotate, crop, trim
 │   │   └── benches/           # Criterion.rs benchmarks
 │   └── kimg-wasm/     # wasm-bindgen API surface
-├── pkg/               # Built output (JS + WASM + TypeScript types)
+├── js/                # Tracked JS/TS package sources copied into dist/
+├── dist/              # Built output (JS + WASM + TypeScript types)
 ├── demo/              # Browser demo page
 └── scripts/           # Build scripts
 ```
@@ -129,7 +131,12 @@ cargo install wasm-bindgen-cli
 ./scripts/build.sh
 ```
 
-Output goes to `pkg/`. The demo page at `demo/index.html` loads from there.
+Output goes to `dist/`. The demo page at `demo/index.html` loads from there.
+
+The build emits two wasm binaries:
+
+- `kimg_wasm_bg.wasm` for the baseline target
+- `kimg_wasm_simd_bg.wasm` for runtimes with `wasm32` SIMD (`simd128`)
 
 ## Running tests
 
@@ -176,6 +183,7 @@ The benchmarks cover:
 Notes on the harnesses:
 
 - Very expensive resize cases use reduced flat-sampled Criterion groups so `cargo bench -p kimg-core` stays practical while still reporting worst-case medians.
+- RGBA bilinear and Lanczos3 resize paths use `fast_image_resize`, so native builds pick up host SIMD and the browser `init()` path can load the separate `simd128` wasm artifact.
 - Codec benchmarks use a deterministic textured 512×512 image instead of a flat fill, which avoids unrealistically optimistic compression timings.
 
 Representative medians from a recent local run on March 2, 2026. These are hardware-dependent and should be treated as a baseline example, not a guarantee:
@@ -193,9 +201,9 @@ Representative medians from a recent local run on March 2, 2026. These are hardw
 | `decode_webp/512` | `2.65 ms` |
 | `extract_palette/512/16colors` | `20.45 ms` |
 | `resize_nearest/512→1024` | `1.63 ms` |
-| `resize_bilinear/512→1024` | `17.55 ms` |
-| `resize_lanczos3/512→1024` | `148.75 ms` |
-| `resize_lanczos3/2048→4096` | `2.41 s` |
+| `resize_bilinear/512→1024` | `1.01 ms` |
+| `resize_lanczos3/512→1024` | `1.59 ms` |
+| `resize_lanczos3/2048→4096` | `52.69 ms` |
 
 ## WASM binary size
 
