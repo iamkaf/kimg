@@ -135,9 +135,9 @@ Must be true before calling the API stable:
 
 ### 2. JS Facade
 
-- [ ] Add a stable JS `Composition` wrapper with object-based constructor and methods
-- [ ] Convert public API names to `camelCase`
-- [ ] Add wrapper methods for:
+- [x] Add a stable JS `Composition` wrapper with object-based constructor and methods
+- [x] Convert public API names to `camelCase`
+- [x] Add wrapper methods for:
   - `addImageLayer`
   - `addPaintLayer`
   - `addFilterLayer`
@@ -148,7 +148,7 @@ Must be true before calling the API stable:
   - `exportPng`
   - `exportJpeg`
   - `exportWebp`
-- [ ] Add JS utility wrappers for current free functions:
+- [x] Add JS utility wrappers for current free functions:
   - `decodeImage`
   - `detectFormat`
   - `hexToRgb`

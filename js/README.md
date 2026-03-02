@@ -8,8 +8,15 @@ Rust+WASM pixel engine for layer-based image compositing.
 import { Composition } from '@iamkaf/kimg';
 
 const doc = await Composition.create({ width: 128, height: 128 });
-doc.add_image_layer('bg', rgbaData, 128, 128, 0, 0);
-const png = doc.export_png();
+doc.addImageLayer({
+  name: 'bg',
+  rgba: rgbaData,
+  width: 128,
+  height: 128,
+  x: 0,
+  y: 0,
+});
+const png = doc.exportPng();
 ```
 
 ## Node.js
@@ -30,9 +37,16 @@ import { rgbaToBase64, base64ToRgba } from '@iamkaf/kimg/base64';
 // Color utilities
 import { readableTextColor } from '@iamkaf/kimg/color-utils';
 
-// Low-level wasm-bound surface
+// Low-level wasm-bound surface (browser)
 import initRaw, { Composition as RawComposition } from '@iamkaf/kimg/raw';
 
 await initRaw();
 const raw = new RawComposition(128, 128);
+
+// Low-level wasm-bound surface (Node.js)
+import { readFileSync } from 'node:fs';
+import { initSync } from '@iamkaf/kimg/raw';
+
+const wasm = readFileSync(new URL('./kimg_wasm_bg.wasm', import.meta.url));
+initSync({ module: wasm });
 ```

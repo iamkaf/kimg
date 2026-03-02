@@ -364,15 +364,45 @@
 
       // --- Build layer tree ---
 
-      const bgId = doc.add_image_layer('Background', solidRgba(128, 128, 59, 130, 246, 255), 128, 128, 0, 0);
+      const bgId = doc.addImageLayer({
+        name: 'Background',
+        rgba: solidRgba(128, 128, 59, 130, 246, 255),
+        width: 128,
+        height: 128,
+        x: 0,
+        y: 0,
+      });
 
-      const groupId = doc.add_group_layer('Tinted group');
-      const gradientId = doc.add_image_to_group(groupId, 'Red gradient', gradientRgba(128, 128, 239, 68, 68), 128, 128, 0, 0);
-      const checkerId = doc.add_image_to_group(groupId, 'Checkerboard', checkerRgba(64, 64, 34, 197, 94, 200, 8), 64, 64, 32, 32);
-      const filterId = doc.add_filter_to_group(groupId, 'Group filter');
+      const groupId = doc.addGroupLayer({ name: 'Tinted group' });
+      const gradientId = doc.addImageLayer({
+        name: 'Red gradient',
+        rgba: gradientRgba(128, 128, 239, 68, 68),
+        width: 128,
+        height: 128,
+        x: 0,
+        y: 0,
+        parentId: groupId,
+      });
+      const checkerId = doc.addImageLayer({
+        name: 'Checkerboard',
+        rgba: checkerRgba(64, 64, 34, 197, 94, 200, 8),
+        width: 64,
+        height: 64,
+        x: 32,
+        y: 32,
+        parentId: groupId,
+      });
+      const filterId = doc.addFilterLayer({ name: 'Group filter', parentId: groupId });
 
-      const squareId = doc.add_image_layer('White square', solidRgba(16, 16, 255, 255, 255, 255), 16, 16, 56, 56);
-      doc.set_anchor(squareId, 1);
+      const squareId = doc.addImageLayer({
+        name: 'White square',
+        rgba: solidRgba(16, 16, 255, 255, 255, 255),
+        width: 16,
+        height: 16,
+        x: 56,
+        y: 56,
+      });
+      doc.setLayerAnchor(squareId, 1);
 
       const layerInfo = [
         { name: 'White square',   detail: '16x16 center-anchored', swatch: '#ffffff', id: squareId },
@@ -421,18 +451,17 @@
       }
 
       function updateFilter() {
-        doc.set_filter_config(
-          filterId,
-          filterState.hue,
-          filterState.saturation / 100,
-          filterState.lightness / 100,
-          0,
-          filterState.brightness / 100,
-          filterState.contrast / 100,
-          filterState.temperature / 100,
-          filterState.tint / 100,
-          filterState.sharpen / 100,
-        );
+        doc.setFilterLayerConfig(filterId, {
+          hue: filterState.hue,
+          saturation: filterState.saturation / 100,
+          lightness: filterState.lightness / 100,
+          alpha: 0,
+          brightness: filterState.brightness / 100,
+          contrast: filterState.contrast / 100,
+          temperature: filterState.temperature / 100,
+          tint: filterState.tint / 100,
+          sharpen: filterState.sharpen / 100,
+        });
       }
 
       // --- Layer property controls ---
@@ -440,28 +469,34 @@
       document.getElementById('opacity-slider').addEventListener('input', (e) => {
         const v = Number(e.target.value) / 100;
         document.getElementById('opacity-val').textContent = v.toFixed(2);
-        doc.set_opacity(checkerId, v);
+        doc.setLayerOpacity(checkerId, v);
         rerender();
       });
 
       document.getElementById('visible-check').addEventListener('change', (e) => {
-        doc.set_visible(checkerId, e.target.checked);
+        doc.setLayerVisibility(checkerId, e.target.checked);
         rerender();
       });
 
       document.getElementById('rotation-slider').addEventListener('input', (e) => {
         const deg = Number(e.target.value) * 90;
         document.getElementById('rotation-val').textContent = `${deg}`;
-        doc.set_rotation(squareId, deg);
+        doc.setLayerRotation(squareId, deg);
         rerender();
       });
 
       document.getElementById('flip-x').addEventListener('change', () => {
-        doc.set_flip(squareId, document.getElementById('flip-x').checked, document.getElementById('flip-y').checked);
+        doc.setLayerFlip(squareId, {
+          flipX: document.getElementById('flip-x').checked,
+          flipY: document.getElementById('flip-y').checked,
+        });
         rerender();
       });
       document.getElementById('flip-y').addEventListener('change', () => {
-        doc.set_flip(squareId, document.getElementById('flip-x').checked, document.getElementById('flip-y').checked);
+        doc.setLayerFlip(squareId, {
+          flipX: document.getElementById('flip-x').checked,
+          flipY: document.getElementById('flip-y').checked,
+        });
         rerender();
       });
 
@@ -493,13 +528,13 @@
 
           try {
             if (fmt === 'gif') {
-              const ids = doc.import_gif_frames(bytes);
+              const ids = doc.importGifFrames({ bytes });
               importNote.textContent += ` — ${ids.length} frame(s) imported as layers`;
             } else if (fmt === 'psd') {
-              const ids = doc.import_psd(bytes);
+              const ids = doc.importPsd({ bytes });
               importNote.textContent += ` — ${ids.length} layer(s) imported`;
             } else {
-              doc.import_auto(file.name, bytes, 0, 0);
+              doc.importImage({ name: file.name, bytes, x: 0, y: 0 });
               importNote.textContent += ' — added as layer';
             }
             updateLayerCount();
@@ -518,18 +553,18 @@
       });
 
       document.getElementById('btn-export-png').addEventListener('click', () => {
-        const bytes = doc.export_png();
+        const bytes = doc.exportPng();
         downloadBlob(bytes, 'kimg-export.png', 'image/png');
       });
 
       document.getElementById('btn-export-jpeg').addEventListener('click', () => {
         const quality = Number(document.getElementById('jpeg-quality').value);
-        const bytes = doc.export_jpeg(quality);
+        const bytes = doc.exportJpeg({ quality });
         downloadBlob(bytes, 'kimg-export.jpg', 'image/jpeg');
       });
 
       document.getElementById('btn-export-webp').addEventListener('click', () => {
-        const bytes = doc.export_webp();
+        const bytes = doc.exportWebp();
         downloadBlob(bytes, 'kimg-export.webp', 'image/webp');
       });
 
@@ -574,10 +609,10 @@
       // --- PNG round-trip ---
 
       document.getElementById('btn-reimport').addEventListener('click', () => {
-        const pngBytes = doc.export_png();
+        const pngBytes = doc.exportPng();
         Composition.create({ width: SIZE, height: SIZE }).then((doc2) => {
-          doc2.add_png_layer('re-imported', pngBytes, 0, 0);
-          const rgba2 = doc2.render();
+          doc2.addPngLayer({ name: 're-imported', png: pngBytes, x: 0, y: 0 });
+          const rgba2 = doc2.renderRgba();
           drawToCanvas(rgba2);
           doc2.free();
           setTimeout(() => rerender(), 1500);
@@ -596,14 +631,14 @@
 
       function rerender() {
         const t1 = performance.now();
-        const rgba = doc.render();
+        const rgba = doc.renderRgba();
         const tRender = performance.now() - t1;
         drawToCanvas(rgba);
         document.getElementById('t-render').textContent = `${tRender.toFixed(2)} ms`;
       }
 
       function updateLayerCount() {
-        document.getElementById('t-layers').textContent = `${doc.layer_count()} top-level`;
+        document.getElementById('t-layers').textContent = `${doc.layerCount()} top-level`;
       }
 
       // Initial render

@@ -37,10 +37,17 @@ This builds the consumable JS/WASM package into `dist/`.
 import { Composition } from '@iamkaf/kimg';
 
 const doc = await Composition.create({ width: 128, height: 128 });
-const layerId = doc.add_image_layer('sprite', rgbaPixels, 128, 128, 0, 0);
-doc.set_opacity(layerId, 0.8);
+const layerId = doc.addImageLayer({
+  name: 'sprite',
+  rgba: rgbaPixels,
+  width: 128,
+  height: 128,
+  x: 0,
+  y: 0,
+});
+doc.setLayerOpacity(layerId, 0.8);
 
-const png = doc.export_png();
+const png = doc.exportPng();
 ```
 
 ### Node.js
@@ -58,7 +65,7 @@ const doc = await Composition.create({ width: 64, height: 64 });
 
 **16 blend modes** — Normal, Multiply, Screen, Overlay, Darken, Lighten, ColorDodge, ColorBurn, HardLight, SoftLight, Difference, Exclusion, Hue, Saturation, Color, Luminosity.
 
-**Masks** — Grayscale layer masks and clipping masks (`clip_to_below`).
+**Masks** — Grayscale layer masks and clipping masks (`setLayerClipToBelow()` in the JS facade).
 
 **Filters** — HSL adjustments, brightness/contrast, temperature/tint, sharpen. Invert, posterize, threshold, levels, gradient map. Box blur, Gaussian blur, edge detect, emboss (all as convolution kernels).
 
@@ -74,18 +81,25 @@ const doc = await Composition.create({ width: 64, height: 64 });
 
 ```js
 // Base64 RGBA helpers — pure JS, no WASM init needed
-import { rgbaToBase64, base64ToRgba } from './dist/base64.js';
+import { rgbaToBase64, base64ToRgba } from '@iamkaf/kimg/base64';
 
 // Pick readable text color for a background
 import { readableTextColor } from '@iamkaf/kimg/color-utils';
 readableTextColor('#1a1a2e'); // '#ffffff'
 readableTextColor('#f0f0f0'); // '#000000'
 
-// Low-level wasm-bound API
+// Low-level wasm-bound API (browser)
 import initRaw, { Composition as RawComposition } from '@iamkaf/kimg/raw';
 
 await initRaw();
 const raw = new RawComposition(128, 128);
+
+// Low-level wasm-bound API (Node.js)
+import { readFileSync } from 'node:fs';
+import { initSync } from '@iamkaf/kimg/raw';
+
+const wasm = readFileSync(new URL('./kimg_wasm_bg.wasm', import.meta.url));
+initSync({ module: wasm });
 ```
 
 ## Color utilities
@@ -99,7 +113,7 @@ await hexToRgb('#ff8000');                     // Uint8Array [255, 128, 0]
 await rgbToHex(255, 128, 0);                   // '#ff8000'
 await relativeLuminance('#3b82f6');            // 0.2355 (WCAG 2.x)
 await contrastRatio('#ffffff', '#000000');     // 21.0
-await dominantRgbFromRgba(pixels, 128, 128);   // Uint8Array [r, g, b]
+await dominantRgbFromRgba(pixels, { width: 128, height: 128 }); // Uint8Array [r, g, b]
 ```
 
 ## Project structure
