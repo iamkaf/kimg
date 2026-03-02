@@ -78,8 +78,8 @@ Feature-complete replacement for the JS compositor (core + WASM).
 ## Phase 6: Stable Release (v1.0)
 
 - [x] API stability guarantee
-- [ ] Comprehensive docs and examples
-- [ ] Published benchmarks
+- [x] Comprehensive docs and examples
+- [x] Published benchmarks
 - [ ] WASM-SIMD optimized builds
 - [ ] Fuzz-tested codec paths
 - [ ] Security audit

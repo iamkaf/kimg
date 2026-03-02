@@ -1,3 +1,13 @@
+//! Photoshop-compatible blend modes.
+//!
+//! The primary entry point is [`blend`], which composites a source buffer on top
+//! of a destination buffer using a given [`BlendMode`].  All 16 standard modes are
+//! implemented in floating-point on the `[0, 1]` range and then rounded back to
+//! `u8`.  The destination buffer is modified in place; its dimensions must match
+//! the source.
+//!
+//! [`blend_normal`] is a fast path for the common Porter-Duff source-over case.
+
 use crate::buffer::ImageBuffer;
 use crate::color::{hsl_to_rgb, rgb_to_hsl};
 
@@ -257,7 +267,11 @@ fn clamp_byte(n: f64) -> u8 {
 }
 
 /// Alpha-composite `src` onto `dst` using the given blend mode.
-/// Both buffers must have the same dimensions.
+///
+/// Both buffers should have the same dimensions; if they differ, only the
+/// overlapping region (min width × min height) is composited.
+///
+/// Fully transparent source pixels are skipped for efficiency.
 pub fn blend(dst: &mut ImageBuffer, src: &ImageBuffer, mode: BlendMode) {
     let w = dst.width.min(src.width) as usize;
     let h = dst.height.min(src.height) as usize;

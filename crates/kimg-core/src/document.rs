@@ -1,3 +1,18 @@
+//! The compositing document — canvas, layer tree, and render pipeline.
+//!
+//! [`Document`] is the top-level container.  It holds a canvas size and an
+//! ordered list of [`Layer`](crate::layer) values (bottom-to-top).
+//! Call [`Document::render`] to flatten the layer tree into a single
+//! [`ImageBuffer`].
+//!
+//! # Render order and scoping
+//!
+//! Layers are composited back-to-front.  A [`LayerKind::Filter`] layer applies
+//! its adjustments to the composite built so far rather than to a pixel buffer
+//! of its own.  Layers inside a [`LayerKind::Group`] are rendered to an
+//! isolated buffer first (two-pass: non-filter layers, then filter layers),
+//! mirroring Spriteform's `renderSmartVariantScoped` behaviour.
+
 use crate::blend::{blend, blend_normal};
 use crate::blit::{blit_transformed, BlitParams};
 use crate::buffer::ImageBuffer;
@@ -20,7 +35,17 @@ pub struct Document {
 }
 
 impl Document {
-    /// Create a new empty document with the given dimensions.
+    /// Create a new empty document with the given canvas dimensions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kimg_core::document::Document;
+    ///
+    /// let doc = Document::new(512, 512);
+    /// assert_eq!(doc.width, 512);
+    /// assert!(doc.layers.is_empty());
+    /// ```
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             width,
@@ -38,6 +63,8 @@ impl Document {
     }
 
     /// Find a layer by ID (immutable), searching recursively through groups.
+    ///
+    /// Returns `None` if no layer with the given ID exists in the tree.
     pub fn find_layer(&self, id: u32) -> Option<&Layer> {
         fn search(layers: &[Layer], id: u32) -> Option<&Layer> {
             for layer in layers {
@@ -56,6 +83,8 @@ impl Document {
     }
 
     /// Find a layer by ID (mutable), searching recursively through groups.
+    ///
+    /// Returns `None` if no layer with the given ID exists in the tree.
     pub fn find_layer_mut(&mut self, id: u32) -> Option<&mut Layer> {
         fn search(layers: &mut [Layer], id: u32) -> Option<&mut Layer> {
             for layer in layers {
@@ -74,6 +103,11 @@ impl Document {
     }
 
     /// Add a child layer to a group. Returns the child's ID on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err("group not found")` if `group_id` does not exist, or
+    /// `Err("layer is not a group")` if the identified layer is not a `Group`.
     pub fn add_child_to_group(&mut self, group_id: u32, child: Layer) -> Result<u32, &'static str> {
         let child_id = child.common.id;
         let layer = self.find_layer_mut(group_id).ok_or("group not found")?;
@@ -86,7 +120,10 @@ impl Document {
         }
     }
 
-    /// Remove a child from a group by child ID. Returns true if found and removed.
+    /// Remove a child from a group by child ID.
+    ///
+    /// Returns `true` if the child was found and removed, `false` if the group or
+    /// child was not found.
     pub fn remove_child_from_group(&mut self, group_id: u32, child_id: u32) -> bool {
         let layer = match self.find_layer_mut(group_id) {
             Some(l) => l,
@@ -103,8 +140,13 @@ impl Document {
     }
 
     /// Flatten a group layer into a single image layer in-place.
-    /// The group is rendered to a buffer, then replaced with an Image layer
-    /// that preserves the group's common properties.
+    ///
+    /// The group is rendered to a canvas-sized buffer, then replaced with an
+    /// `Image` layer that preserves the group's common properties (id, name,
+    /// opacity, blend mode, etc.).  The position is reset to (0, 0) because the
+    /// rendered buffer is already in canvas coordinates.
+    ///
+    /// Returns `true` on success, `false` if the layer was not found or is not a group.
     pub fn flatten_group(&mut self, group_id: u32) -> bool {
         // First render the group to a buffer
         let layer = match self.find_layer(group_id) {
@@ -134,8 +176,10 @@ impl Document {
         true
     }
 
-    /// Render the full document to a flat RGBA buffer.
-    /// Traverses layers back-to-front (last in list = topmost).
+    /// Render the full document to a flat RGBA8 buffer.
+    ///
+    /// Traverses layers bottom-to-top (last element in `layers` = topmost).
+    /// Returns a canvas-sized [`ImageBuffer`] with all visible layers composited.
     pub fn render(&self) -> ImageBuffer {
         let mut output = ImageBuffer::new_transparent(self.width, self.height);
         render_layers(&self.layers, &mut output);
@@ -221,7 +265,8 @@ fn sample_gradient(stops: &[crate::layer::GradientStop], t: f64) -> Rgba {
 
 /// Apply a layer mask to a rendered layer buffer. The mask's luminance
 /// (using only the first channel as grayscale) multiplies the alpha channel.
-fn apply_mask(buf: &mut ImageBuffer, mask: &ImageBuffer) {
+/// When `inverted` is true the mask value is flipped before application.
+fn apply_mask(buf: &mut ImageBuffer, mask: &ImageBuffer, inverted: bool) {
     let w = buf.width.min(mask.width) as usize;
     let h = buf.height.min(mask.height) as usize;
     let buf_stride = buf.width as usize;
@@ -231,8 +276,10 @@ fn apply_mask(buf: &mut ImageBuffer, mask: &ImageBuffer) {
         for x in 0..w {
             let bi = (y * buf_stride + x) * 4;
             let mi = (y * mask_stride + x) * 4;
-            // Use the mask's first channel (grayscale) as the mask value
-            let mask_val = mask.data[mi] as f64 / 255.0;
+            let mut mask_val = mask.data[mi] as f64 / 255.0;
+            if inverted {
+                mask_val = 1.0 - mask_val;
+            }
             let a = buf.data[bi + 3] as f64;
             buf.data[bi + 3] = (a * mask_val + 0.5) as u8;
         }
@@ -330,7 +377,7 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
 
     // Apply layer mask if present
     if let Some(mask) = &layer.common.mask {
-        apply_mask(&mut buf, mask);
+        apply_mask(&mut buf, mask, layer.common.mask_inverted);
     }
 
     buf
@@ -675,6 +722,25 @@ mod tests {
         let result = doc.render();
         assert_eq!(result.get_pixel(0, 0), Rgba::new(255, 0, 0, 255));
         assert_eq!(result.get_pixel(1, 0), Rgba::TRANSPARENT);
+    }
+
+    #[test]
+    fn layer_mask_inverted_reverses_visibility() {
+        let mut doc = Document::new(2, 1);
+        let id = doc.next_id();
+        let mut layer = img_layer(id, "red", solid_buf(2, 1, Rgba::new(255, 0, 0, 255)), 0, 0);
+        // Same mask as layer_mask_hides_pixels: white left, black right
+        let mut mask = ImageBuffer::new_transparent(2, 1);
+        mask.set_pixel(0, 0, Rgba::new(255, 255, 255, 255));
+        mask.set_pixel(1, 0, Rgba::new(0, 0, 0, 255));
+        layer.common.mask = Some(mask);
+        layer.common.mask_inverted = true; // invert: black becomes visible, white hidden
+        doc.layers.push(layer);
+
+        let result = doc.render();
+        // With inversion: white mask → hidden, black mask → visible
+        assert_eq!(result.get_pixel(0, 0), Rgba::TRANSPARENT);
+        assert_eq!(result.get_pixel(1, 0), Rgba::new(255, 0, 0, 255));
     }
 
     #[test]

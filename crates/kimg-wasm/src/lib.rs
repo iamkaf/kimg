@@ -1,3 +1,20 @@
+//! WebAssembly bindings for kimg — the image compositing engine.
+//!
+//! Exposes a [`Document`] class to JavaScript/TypeScript via `wasm-bindgen`.
+//! The API mirrors the kimg-core document model: create layers, set properties,
+//! and call `render()` to get a flat RGBA byte array.
+//!
+//! # JavaScript usage
+//!
+//! ```js
+//! import init, { Document } from "kimg_wasm";
+//!
+//! await init();
+//! const doc = new Document(512, 512);
+//! const layerId = doc.add_solid_color_layer("bg", 255, 0, 0, 255);
+//! const rgba = doc.render(); // Uint8Array, length = width * height * 4
+//! ```
+
 use wasm_bindgen::prelude::*;
 
 use kimg_core::blend::BlendMode;
@@ -7,7 +24,7 @@ use kimg_core::codec;
 use kimg_core::color;
 use kimg_core::convolution;
 use kimg_core::document::Document as CoreDocument;
-use kimg_core::filter::{self, HslFilterConfig};
+use kimg_core::filter;
 use kimg_core::layer::{
     FilterLayerData, GradientDirection, GradientLayerData, GradientStop, GroupLayerData,
     ImageLayerData, Layer, LayerCommon, LayerKind, PaintLayerData, SolidColorLayerData,
@@ -58,76 +75,61 @@ impl Document {
         let buffer = ImageBuffer::from_rgba(img_width, img_height, rgba_data.to_vec())
             .expect("RGBA data length must match width * height * 4");
         let id = self.inner.next_id();
-        self.inner.layers.push(Layer {
-            common: LayerCommon {
-                x,
-                y,
-                ..LayerCommon::new(id, name)
-            },
-            kind: LayerKind::Image(ImageLayerData {
-                buffer,
-                anchor: Anchor::TopLeft,
-                flip_x: false,
-                flip_y: false,
-                rotation: Rotation::None,
-            }),
-        });
+        let mut common = LayerCommon::new(id, name);
+        common.x = x;
+        common.y = y;
+        self.inner
+            .layers
+            .push(Layer::new(common, LayerKind::Image(ImageLayerData::new(buffer))));
         id
     }
 
     /// Add a paint layer (empty editable RGBA buffer). Returns the layer ID.
     pub fn add_paint_layer(&mut self, name: &str, width: u32, height: u32) -> u32 {
         let id = self.inner.next_id();
-        self.inner.layers.push(Layer {
-            common: LayerCommon::new(id, name),
-            kind: LayerKind::Paint(PaintLayerData {
-                buffer: ImageBuffer::new_transparent(width, height),
-                anchor: Anchor::TopLeft,
-            }),
-        });
+        self.inner.layers.push(Layer::new(
+            LayerCommon::new(id, name),
+            LayerKind::Paint(PaintLayerData::new(ImageBuffer::new_transparent(width, height))),
+        ));
         id
     }
 
     /// Add an HSL filter layer. Returns the layer ID.
     pub fn add_filter_layer(&mut self, name: &str) -> u32 {
         let id = self.inner.next_id();
-        self.inner.layers.push(Layer {
-            common: LayerCommon::new(id, name),
-            kind: LayerKind::Filter(FilterLayerData {
-                config: HslFilterConfig::default(),
-            }),
-        });
+        self.inner.layers.push(Layer::new(
+            LayerCommon::new(id, name),
+            LayerKind::Filter(FilterLayerData::new()),
+        ));
         id
     }
 
     /// Add a group layer. Returns the layer ID.
     pub fn add_group_layer(&mut self, name: &str) -> u32 {
         let id = self.inner.next_id();
-        self.inner.layers.push(Layer {
-            common: LayerCommon::new(id, name),
-            kind: LayerKind::Group(GroupLayerData {
-                children: Vec::new(),
-            }),
-        });
+        self.inner.layers.push(Layer::new(
+            LayerCommon::new(id, name),
+            LayerKind::Group(GroupLayerData::new()),
+        ));
         id
     }
 
     /// Add a solid color fill layer. Returns the layer ID.
     pub fn add_solid_color_layer(&mut self, name: &str, r: u8, g: u8, b: u8, a: u8) -> u32 {
         let id = self.inner.next_id();
-        self.inner.layers.push(Layer {
-            common: LayerCommon::new(id, name),
-            kind: LayerKind::SolidColor(SolidColorLayerData {
-                color: Rgba::new(r, g, b, a),
-            }),
-        });
+        self.inner.layers.push(Layer::new(
+            LayerCommon::new(id, name),
+            LayerKind::SolidColor(SolidColorLayerData::new(Rgba::new(r, g, b, a))),
+        ));
         id
     }
 
-    /// Add a gradient layer. `stops` is a flat array of [pos_f32, r, g, b, a, ...].
-    /// Each stop is 5 values: position (0-1 as f32 bits in a u8 pair? No — we use f64).
-    /// Actually: stops_data is [r, g, b, a, r, g, b, a, ...] and stops_positions is [f64, f64, ...].
-    /// Direction: 0=horizontal, 1=vertical, 2=diagonal-down, 3=diagonal-up.
+    /// Add a gradient layer. Returns the layer ID.
+    ///
+    /// - `stops_colors`: flat RGBA bytes for each stop, 4 bytes per stop
+    ///   (e.g. `[r0, g0, b0, a0, r1, g1, b1, a1, ...]`).
+    /// - `stops_positions`: gradient position for each stop, in `[0.0, 1.0]`.
+    /// - `direction`: `0` = horizontal, `1` = vertical, `2` = diagonal-down, `3` = diagonal-up.
     pub fn add_gradient_layer(
         &mut self,
         name: &str,
@@ -140,15 +142,15 @@ impl Document {
         for (i, &pos) in stops_positions.iter().enumerate().take(count) {
             let ci = i * 4;
             if ci + 3 < stops_colors.len() {
-                stops.push(GradientStop {
-                    position: pos,
-                    color: Rgba::new(
+                stops.push(GradientStop::new(
+                    pos,
+                    Rgba::new(
                         stops_colors[ci],
                         stops_colors[ci + 1],
                         stops_colors[ci + 2],
                         stops_colors[ci + 3],
                     ),
-                });
+                ));
             }
         }
         let dir = match direction {
@@ -158,13 +160,10 @@ impl Document {
             _ => GradientDirection::Horizontal,
         };
         let id = self.inner.next_id();
-        self.inner.layers.push(Layer {
-            common: LayerCommon::new(id, name),
-            kind: LayerKind::Gradient(GradientLayerData {
-                stops,
-                direction: dir,
-            }),
-        });
+        self.inner.layers.push(Layer::new(
+            LayerCommon::new(id, name),
+            LayerKind::Gradient(GradientLayerData::new(stops, dir)),
+        ));
         id
     }
 
@@ -212,6 +211,13 @@ impl Document {
     pub fn remove_layer_mask(&mut self, id: u32) {
         if let Some(layer) = self.inner.find_layer_mut(id) {
             layer.common.mask = None;
+        }
+    }
+
+    /// Set whether the layer mask is inverted (black = visible, white = hidden).
+    pub fn set_mask_inverted(&mut self, id: u32, inverted: bool) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            layer.common.mask_inverted = inverted;
         }
     }
 
@@ -277,17 +283,15 @@ impl Document {
     ) {
         if let Some(layer) = self.inner.find_layer_mut(id) {
             if let LayerKind::Filter(f) = &mut layer.kind {
-                f.config = HslFilterConfig {
-                    hue_deg,
-                    saturation,
-                    lightness,
-                    alpha,
-                    brightness,
-                    contrast,
-                    temperature,
-                    tint,
-                    sharpen,
-                };
+                f.config.hue_deg = hue_deg;
+                f.config.saturation = saturation;
+                f.config.lightness = lightness;
+                f.config.alpha = alpha;
+                f.config.brightness = brightness;
+                f.config.contrast = contrast;
+                f.config.temperature = temperature;
+                f.config.tint = tint;
+                f.config.sharpen = sharpen;
             }
         }
     }
@@ -309,20 +313,10 @@ impl Document {
         let buffer = ImageBuffer::from_rgba(img_width, img_height, rgba_data.to_vec())
             .expect("RGBA data length must match width * height * 4");
         let id = self.inner.next_id();
-        let child = Layer {
-            common: LayerCommon {
-                x,
-                y,
-                ..LayerCommon::new(id, name)
-            },
-            kind: LayerKind::Image(ImageLayerData {
-                buffer,
-                anchor: Anchor::TopLeft,
-                flip_x: false,
-                flip_y: false,
-                rotation: Rotation::None,
-            }),
-        };
+        let mut common = LayerCommon::new(id, name);
+        common.x = x;
+        common.y = y;
+        let child = Layer::new(common, LayerKind::Image(ImageLayerData::new(buffer)));
         self.inner
             .add_child_to_group(group_id, child)
             .expect("group not found");
@@ -332,12 +326,7 @@ impl Document {
     /// Add a filter layer as a child of a group. Returns the child layer ID.
     pub fn add_filter_to_group(&mut self, group_id: u32, name: &str) -> u32 {
         let id = self.inner.next_id();
-        let child = Layer {
-            common: LayerCommon::new(id, name),
-            kind: LayerKind::Filter(FilterLayerData {
-                config: HslFilterConfig::default(),
-            }),
-        };
+        let child = Layer::new(LayerCommon::new(id, name), LayerKind::Filter(FilterLayerData::new()));
         self.inner
             .add_child_to_group(group_id, child)
             .expect("group not found");
@@ -347,12 +336,7 @@ impl Document {
     /// Add a nested group as a child of a group. Returns the child layer ID.
     pub fn add_group_to_group(&mut self, group_id: u32, name: &str) -> u32 {
         let id = self.inner.next_id();
-        let child = Layer {
-            common: LayerCommon::new(id, name),
-            kind: LayerKind::Group(GroupLayerData {
-                children: Vec::new(),
-            }),
-        };
+        let child = Layer::new(LayerCommon::new(id, name), LayerKind::Group(GroupLayerData::new()));
         self.inner
             .add_child_to_group(group_id, child)
             .expect("group not found");
@@ -375,20 +359,12 @@ impl Document {
     pub fn add_png_layer(&mut self, name: &str, png_bytes: &[u8], x: i32, y: i32) -> u32 {
         let buf = codec::decode_png(png_bytes).expect("failed to decode PNG");
         let id = self.inner.next_id();
-        self.inner.layers.push(Layer {
-            common: LayerCommon {
-                x,
-                y,
-                ..LayerCommon::new(id, name)
-            },
-            kind: LayerKind::Image(ImageLayerData {
-                buffer: buf,
-                anchor: Anchor::TopLeft,
-                flip_x: false,
-                flip_y: false,
-                rotation: Rotation::None,
-            }),
-        });
+        let mut common = LayerCommon::new(id, name);
+        common.x = x;
+        common.y = y;
+        self.inner
+            .layers
+            .push(Layer::new(common, LayerKind::Image(ImageLayerData::new(buf))));
         id
     }
 
@@ -665,13 +641,7 @@ impl Document {
         let refs: Vec<&ImageBuffer> = buffers.iter().collect();
         let result = sprite::contact_sheet(
             &refs,
-            &sprite::ContactSheetOptions {
-                columns,
-                cell_width: cell_w,
-                cell_height: cell_h,
-                padding,
-                background: Rgba::TRANSPARENT,
-            },
+            &sprite::ContactSheetOptions::new(columns, cell_w, cell_h, padding, Rgba::TRANSPARENT),
         );
         result.data
     }
@@ -749,16 +719,9 @@ impl Document {
             common.y = psd_layer.y;
             common.opacity = psd_layer.opacity;
             common.visible = psd_layer.visible;
-            self.inner.layers.push(Layer {
-                common,
-                kind: LayerKind::Image(ImageLayerData {
-                    buffer: psd_layer.buffer,
-                    anchor: Anchor::TopLeft,
-                    flip_x: false,
-                    flip_y: false,
-                    rotation: Rotation::None,
-                }),
-            });
+            self.inner
+                .layers
+                .push(Layer::new(common, LayerKind::Image(ImageLayerData::new(psd_layer.buffer))));
             ids.push(id);
         }
         ids
@@ -799,20 +762,12 @@ impl Document {
 
     fn add_decoded_layer(&mut self, name: &str, buf: ImageBuffer, x: i32, y: i32) -> u32 {
         let id = self.inner.next_id();
-        self.inner.layers.push(Layer {
-            common: LayerCommon {
-                x,
-                y,
-                ..LayerCommon::new(id, name)
-            },
-            kind: LayerKind::Image(ImageLayerData {
-                buffer: buf,
-                anchor: Anchor::TopLeft,
-                flip_x: false,
-                flip_y: false,
-                rotation: Rotation::None,
-            }),
-        });
+        let mut common = LayerCommon::new(id, name);
+        common.x = x;
+        common.y = y;
+        self.inner
+            .layers
+            .push(Layer::new(common, LayerKind::Image(ImageLayerData::new(buf))));
         id
     }
 
@@ -855,7 +810,7 @@ fn flat_to_palette(data: &[u8]) -> sprite::Palette {
             data[idx + 3],
         ));
     }
-    sprite::Palette { colors }
+    sprite::Palette::new(colors)
 }
 
 // ── Free functions: color utilities ──
@@ -872,7 +827,7 @@ pub fn hex_to_rgb(hex: &str) -> Vec<u8> {
 /// Format RGB as hex string.
 #[wasm_bindgen]
 pub fn rgb_to_hex(r: u8, g: u8, b: u8) -> String {
-    color::rgb_to_hex(color::Rgb { r, g, b })
+    color::rgb_to_hex(color::Rgb::new(r, g, b))
 }
 
 /// WCAG 2.x relative luminance. Returns -1.0 on failure.
@@ -926,6 +881,19 @@ pub fn extract_palette_from_rgba(data: &[u8], w: u32, h: u32, max_colors: u32) -
     } else {
         Vec::new()
     }
+}
+
+/// Compute a per-channel histogram for raw RGBA data.
+/// Returns a flat array of 1024 u32 values: r[0..256], g[256..512], b[512..768], a[768..1024].
+#[wasm_bindgen]
+pub fn histogram_rgba(data: &[u8], w: u32, h: u32) -> Vec<u32> {
+    let hist = color::histogram(data, w, h);
+    let mut out = Vec::with_capacity(1024);
+    out.extend_from_slice(&hist.r);
+    out.extend_from_slice(&hist.g);
+    out.extend_from_slice(&hist.b);
+    out.extend_from_slice(&hist.a);
+    out
 }
 
 /// Quantize raw RGBA data to the given palette. Returns RGBA buffer.
@@ -1099,6 +1067,46 @@ mod tests {
         let result = doc.render();
         assert_eq!(result[3], 255);
         assert_eq!(result[7], 255); // now visible again
+    }
+
+    #[test]
+    fn histogram_rgba_flat_layout() {
+        // 2 red pixels, 1 blue pixel, 1 transparent
+        let data: Vec<u8> = vec![
+            255, 0, 0, 255, // red opaque
+            255, 0, 0, 255, // red opaque
+            0, 0, 255, 255, // blue opaque
+            0, 0, 0, 0,     // transparent
+        ];
+        let hist = histogram_rgba(&data, 2, 2);
+        assert_eq!(hist.len(), 1024);
+        // r channel: index 255 → 2 red pixels; index 0 → 2 non-red
+        assert_eq!(hist[255], 2);  // r[255]
+        assert_eq!(hist[0], 2);    // r[0]
+        // b channel starts at offset 512: index 512+255 → 1 blue pixel
+        assert_eq!(hist[512 + 255], 1);
+        // a channel starts at offset 768: 3 opaque (255) and 1 transparent (0)
+        assert_eq!(hist[768 + 255], 3);
+        assert_eq!(hist[768], 1);
+    }
+
+    #[test]
+    fn mask_inverted_setter() {
+        let mut doc = Document::new(2, 1);
+        let id = doc.add_image_layer("img", &[255, 0, 0, 255, 255, 0, 0, 255], 2, 1, 0, 0);
+        // White = left visible, black = right hidden
+        doc.set_layer_mask(id, &[255, 255, 255, 255, 0, 0, 0, 255], 2, 1);
+
+        // Without inversion: left visible, right hidden
+        let result = doc.render();
+        assert_eq!(result[3], 255);
+        assert_eq!(result[7], 0);
+
+        // Invert: left hidden, right visible
+        doc.set_mask_inverted(id, true);
+        let result = doc.render();
+        assert_eq!(result[3], 0);
+        assert_eq!(result[7], 255);
     }
 
     #[test]

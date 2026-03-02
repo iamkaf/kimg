@@ -1,7 +1,17 @@
+//! Matrix convolution filters.
+//!
+//! [`Kernel`] defines an NxN (odd dimensions) weight matrix.  A set of
+//! ready-made presets is provided (Gaussian blur, sharpen, edge detect, emboss).
+//! Apply a kernel to an [`ImageBuffer`] with [`convolve`], [`box_blur`], or
+//! [`gaussian_blur`].
+//!
+//! Only RGB channels are modified; alpha is copied unchanged.
+
 use crate::buffer::ImageBuffer;
 
 /// A convolution kernel (NxN, odd dimensions).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Kernel {
     /// Dimension of the kernel (e.g. 3 for 3x3).
     pub size: usize,
@@ -10,7 +20,11 @@ pub struct Kernel {
 }
 
 impl Kernel {
-    /// Create a kernel from a flat row-major array. Size must be odd.
+    /// Create a kernel from a flat row-major array.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `size` is even or if `data.len() != size * size`.
     pub fn new(size: usize, data: Vec<f64>) -> Self {
         assert!(size % 2 == 1, "kernel size must be odd");
         assert_eq!(data.len(), size * size, "data length must be size*size");
@@ -126,7 +140,9 @@ pub fn convolve(buf: &ImageBuffer, kernel: &Kernel) -> ImageBuffer {
     dst
 }
 
-/// Apply a box blur with the given radius (kernel size = 2*radius+1).
+/// Apply a box blur with the given radius.
+///
+/// Kernel size is `2 * radius + 1`.  Radius 0 returns a clone unchanged.
 pub fn box_blur(buf: &ImageBuffer, radius: u32) -> ImageBuffer {
     if radius == 0 {
         return buf.clone();
@@ -137,7 +153,10 @@ pub fn box_blur(buf: &ImageBuffer, radius: u32) -> ImageBuffer {
     convolve(buf, &kernel)
 }
 
-/// Apply a Gaussian blur. Radius 1 = 3x3, radius 2 = 5x5.
+/// Apply a Gaussian blur.
+///
+/// Radius 1 uses a 3×3 kernel; radius 2 uses a 5×5 kernel.  Larger radii are
+/// approximated by repeated 3×3 passes.  Radius 0 returns a clone unchanged.
 pub fn gaussian_blur(buf: &ImageBuffer, radius: u32) -> ImageBuffer {
     match radius {
         0 => buf.clone(),

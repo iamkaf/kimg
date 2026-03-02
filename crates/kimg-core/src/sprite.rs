@@ -1,3 +1,17 @@
+//! Sprite sheet packing, contact sheets, pixel-art scaling, and color quantization.
+//!
+//! This module provides several utilities for working with collections of images:
+//!
+//! - **[`pack_sprites`]** — packs multiple images into a single texture atlas using
+//!   shelf next-fit bin packing. Optionally expands atlas dimensions to the next
+//!   power of two for GPU compatibility.
+//! - **[`contact_sheet`]** — arranges images in a uniform grid with configurable
+//!   cell size and padding, resizing each image to fit its cell.
+//! - **[`pixel_scale`]** — integer nearest-neighbor upscale, ideal for pixel art.
+//! - **[`extract_palette`]** / **[`quantize`]** — median-cut color quantization:
+//!   extract a representative palette and remap pixels to it.
+//! - **[`batch_render`]** — render a list of [`Document`]s sequentially.
+
 use crate::buffer::ImageBuffer;
 use crate::document::Document;
 use crate::pixel::Rgba;
@@ -7,6 +21,7 @@ use crate::transform::resize_nearest;
 
 /// Represents a single sprite packed within a larger texture atlas.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PackedSprite {
     /// Original index of the sprite in the input slice.
     pub index: usize,
@@ -22,6 +37,7 @@ pub struct PackedSprite {
 
 /// A packed sprite sheet atlas.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SpriteSheet {
     /// The final merged atlas image.
     pub buffer: ImageBuffer,
@@ -33,7 +49,18 @@ pub struct SpriteSheet {
     pub height: u32,
 }
 
-/// Pack multiple sprites into a single atlas using shelf next-fit.
+/// Pack multiple sprites into a single texture atlas.
+///
+/// Uses shelf next-fit bin packing, sorting sprites by height descending.
+///
+/// - `padding`: gap in pixels between adjacent sprites.
+/// - `max_size`: maximum atlas width/height (sprites are clipped if they
+///   overflow — keep `max_size` large enough for your input).
+/// - `power_of_two`: if `true`, rounds the atlas dimensions up to the next
+///   power of two (required by many GPU texture formats).
+///
+/// The returned [`SpriteSheet`] contains the merged atlas buffer and a
+/// [`PackedSprite`] for each input sprite (in original index order).
 pub fn pack_sprites(
     sprites: &[&ImageBuffer],
     padding: u32,
@@ -146,7 +173,31 @@ pub struct ContactSheetOptions {
     pub background: Rgba,
 }
 
-/// Arrange images in a uniform grid.
+impl ContactSheetOptions {
+    /// Create contact sheet options.
+    pub fn new(
+        columns: u32,
+        cell_width: u32,
+        cell_height: u32,
+        padding: u32,
+        background: Rgba,
+    ) -> Self {
+        Self {
+            columns,
+            cell_width,
+            cell_height,
+            padding,
+            background,
+        }
+    }
+}
+
+/// Arrange images in a uniform grid (contact sheet).
+///
+/// Each image is scaled down (nearest-neighbor, no upscaling) to fit within
+/// `opts.cell_width × opts.cell_height` while preserving its aspect ratio,
+/// then centered within the cell.  `opts.columns == 0` auto-selects `⌈√n⌉`
+/// columns for `n` images.
 pub fn contact_sheet(images: &[&ImageBuffer], opts: &ContactSheetOptions) -> ImageBuffer {
     if images.is_empty() {
         return ImageBuffer::new_transparent(0, 0);
@@ -238,7 +289,10 @@ fn fit_dimensions(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u32) 
 
 // ── Pixel-art upscale ──
 
-/// Integer-scale upscale using nearest-neighbor. Factor must be >= 1.
+/// Integer-scale upscale using nearest-neighbor sampling.
+///
+/// Each source pixel becomes a `factor × factor` block in the output.
+/// `factor` is clamped to a minimum of 1 (no-op).
 pub fn pixel_scale(src: &ImageBuffer, factor: u32) -> ImageBuffer {
     let factor = factor.max(1);
     resize_nearest(src, src.width * factor, src.height * factor)
@@ -248,13 +302,24 @@ pub fn pixel_scale(src: &ImageBuffer, factor: u32) -> ImageBuffer {
 
 /// A color palette extracted from an image.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Palette {
     /// The unique colors in the palette.
     pub colors: Vec<Rgba>,
 }
 
-/// Extract a palette of up to `max_colors` from the image using median-cut.
-/// Ignores fully transparent pixels.
+impl Palette {
+    /// Create a palette from a list of colors.
+    pub fn new(colors: Vec<Rgba>) -> Self {
+        Self { colors }
+    }
+}
+
+/// Extract a representative color palette using median-cut quantization.
+///
+/// Samples up to `max_colors` distinct colors from the non-transparent pixels.
+/// Fully transparent pixels (alpha = 0) are ignored.  The returned palette is
+/// sorted by luminance (dark to light).
 pub fn extract_palette(src: &ImageBuffer, max_colors: u32) -> Palette {
     let max_colors = max_colors.max(1) as usize;
 
@@ -308,8 +373,10 @@ pub fn extract_palette(src: &ImageBuffer, max_colors: u32) -> Palette {
     Palette { colors }
 }
 
-/// Quantize the image to only use colors from the given palette.
-/// Each non-transparent pixel is mapped to its nearest palette color.
+/// Remap every non-transparent pixel to its nearest color in the palette.
+///
+/// Uses Euclidean distance in RGB space.  Alpha values are preserved unchanged.
+/// Returns `src` cloned if the palette is empty.
 pub fn quantize(src: &ImageBuffer, palette: &Palette) -> ImageBuffer {
     if palette.colors.is_empty() {
         return src.clone();
@@ -436,6 +503,7 @@ impl ColorBox {
 // ── Batch rendering ──
 
 /// A single document to be rendered in a batch process.
+#[non_exhaustive]
 pub struct BatchItem {
     /// The document to render.
     pub document: Document,
@@ -444,6 +512,7 @@ pub struct BatchItem {
 }
 
 /// Result of a batch render operation.
+#[non_exhaustive]
 pub struct BatchResult {
     /// The name/identifier of the rendered output.
     pub name: String,
@@ -451,7 +520,7 @@ pub struct BatchResult {
     pub buffer: ImageBuffer,
 }
 
-/// Render multiple documents sequentially.
+/// Render multiple documents sequentially, returning one [`BatchResult`] per input.
 pub fn batch_render(items: &[BatchItem]) -> Vec<BatchResult> {
     items
         .iter()

@@ -750,7 +750,7 @@ Priority: Ship the core that can replace Spriteform's JS compositor.
 - [x] All 16 blend modes (darken, multiply, screen, overlay, etc.)
 - [x] Layer masks (grayscale alpha mask per layer)
 - [x] Clipping masks
-- [ ] Mask inversion
+- [x] Mask inversion
 - [x] Flatten group to single layer
 - [x] SolidColorLayer, GradientLayer
 
@@ -770,7 +770,7 @@ Priority: Ship the core that can replace Spriteform's JS compositor.
 - [x] Contact sheet / grid layout generator
 - [x] Pixel-art upscale (nearest-neighbor with integer scales)
 - [x] Color quantization and palette generation
-- [ ] Histogram and image statistics
+- [x] Histogram and image statistics
 - [x] Batch rendering pipeline
 
 ### v0.5 — Format Support & Serialization
@@ -784,7 +784,7 @@ Priority: Ship the core that can replace Spriteform's JS compositor.
 ### v1.0 — Stable Release
 
 - [x] API stability guarantee
-- [ ] Comprehensive documentation and examples
+- [x] Comprehensive documentation and examples
 - [ ] Performance benchmarks published
 - [ ] WASM-SIMD optimized builds
 - [ ] Fuzz-tested codec paths

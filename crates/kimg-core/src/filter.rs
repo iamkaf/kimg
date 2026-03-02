@@ -1,3 +1,16 @@
+//! Non-destructive pixel filters.
+//!
+//! Two categories of filters are provided:
+//!
+//! **HSL/tone pipeline** — [`apply_hsl_filter`] applies a chain of adjustments
+//! (hue, saturation, lightness, brightness, contrast, temperature, tint,
+//! sharpen, alpha) configured via [`HslFilterConfig`].  All values default to
+//! zero / no-op.
+//!
+//! **Pixel-level filters** — standalone functions that operate directly on an
+//! [`ImageBuffer`] in place: [`invert`], [`posterize`], [`threshold`],
+//! [`levels`], and [`gradient_map`].
+
 use crate::buffer::ImageBuffer;
 use crate::color::{hsl_to_rgb, rgb_to_hsl};
 
@@ -295,8 +308,13 @@ pub fn levels(
     }
 }
 
-/// Map grayscale luminance to a color gradient. `stops` is a sorted list of
-/// (position 0.0–1.0, Rgba color). Minimum 2 stops required.
+/// Map pixel luminance to colors sampled from a gradient.
+///
+/// `stops` is a sorted list of `(position, color)` pairs where `position` is
+/// in `[0.0, 1.0]`.  Each non-transparent pixel's luminance (BT.601) selects a
+/// color by interpolating between the two surrounding stops.  Alpha is preserved.
+///
+/// Does nothing if fewer than 2 stops are provided.
 pub fn gradient_map(buf: &mut ImageBuffer, stops: &[(f64, crate::pixel::Rgba)]) {
     if stops.len() < 2 {
         return;

@@ -1,3 +1,11 @@
+//! Transformed blitting — composite one image onto another with position,
+//! anchor, flip, rotation, and opacity.
+//!
+//! The main function is [`blit_transformed`], which accepts a [`BlitParams`]
+//! struct describing the transformation.  Rotation is restricted to 90-degree
+//! increments ([`Rotation`]); arbitrary-angle rotation is in
+//! [`crate::transform`].
+
 use crate::buffer::ImageBuffer;
 
 /// Anchor point for positioning a layer.
@@ -61,6 +69,10 @@ fn clamp_byte(n: f64) -> u8 {
 }
 
 /// Blit `src` onto `dst` with position, anchor, flip, rotation, and opacity.
+///
+/// Pixels that map outside `dst`'s bounds are silently clipped.
+/// Source pixels with `alpha == 0` are skipped.  Non-zero alpha uses
+/// Porter-Duff source-over, scaled by `params.opacity`.
 ///
 /// Ported from Spriteform compositorRenderMath.ts `blitTransformed`.
 pub fn blit_transformed(dst: &mut ImageBuffer, src: &ImageBuffer, params: &BlitParams) {

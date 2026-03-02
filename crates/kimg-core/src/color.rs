@@ -1,5 +1,16 @@
+//! Color space conversions and image analysis utilities.
+//!
+//! **Conversions** — [`rgb_to_hsl`] / [`hsl_to_rgb`], [`hex_to_rgb`] / [`rgb_to_hex`],
+//! [`srgb_to_linear`].
+//!
+//! **WCAG accessibility** — [`relative_luminance`], [`contrast_ratio`].
+//!
+//! **Image analysis** — [`dominant_rgb_from_rgba`] for quick dominant-color
+//! extraction; [`histogram`] for per-channel 256-bucket frequency counts.
+
 /// Simple RGB color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Rgb {
     /// Red channel (0-255).
     pub r: u8,
@@ -9,8 +20,16 @@ pub struct Rgb {
     pub b: u8,
 }
 
+impl Rgb {
+    /// Create an RGB color.
+    pub fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+}
+
 /// HSL color with h in degrees [0, 360), s and l in [0, 1].
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct Hsl {
     /// Hue in degrees [0, 360).
     pub h: f64,
@@ -82,7 +101,20 @@ pub fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
     )
 }
 
-/// Parse `#rrggbb` or `#rgb` hex string to Rgb.
+/// Parse a CSS hex color string (`#rrggbb` or `#rgb`) to [`Rgb`].
+///
+/// Returns `None` for invalid input (wrong length, non-hex characters).
+/// Leading `#` is optional.
+///
+/// # Examples
+///
+/// ```
+/// use kimg_core::color::{hex_to_rgb, Rgb};
+///
+/// assert_eq!(hex_to_rgb("#ff8000"), Some(Rgb::new(255, 128, 0)));
+/// assert_eq!(hex_to_rgb("f80"), Some(Rgb::new(255, 136, 0))); // 3-digit expands
+/// assert_eq!(hex_to_rgb("nope"), None);
+/// ```
 pub fn hex_to_rgb(hex: &str) -> Option<Rgb> {
     let s = hex.trim().trim_start_matches('#');
     match s.len() {
@@ -124,7 +156,9 @@ pub fn srgb_to_linear(u8_val: u8) -> f64 {
     }
 }
 
-/// WCAG 2.x relative luminance from a hex color string.
+/// WCAG 2.x relative luminance of a hex color, in `[0.0, 1.0]`.
+///
+/// Returns `None` if `hex` cannot be parsed.  Black → `0.0`, white → `1.0`.
 pub fn relative_luminance(hex: &str) -> Option<f64> {
     let rgb = hex_to_rgb(hex)?;
     let r = srgb_to_linear(rgb.r);
@@ -134,6 +168,9 @@ pub fn relative_luminance(hex: &str) -> Option<f64> {
 }
 
 /// WCAG 2.x contrast ratio between two hex colors.
+///
+/// Returns `None` if either color cannot be parsed.  Range is `[1.0, 21.0]`.
+/// WCAG AA requires ≥ 4.5 for normal text.
 pub fn contrast_ratio(a_hex: &str, b_hex: &str) -> Option<f64> {
     let la = relative_luminance(a_hex)?;
     let lb = relative_luminance(b_hex)?;
@@ -142,7 +179,49 @@ pub fn contrast_ratio(a_hex: &str, b_hex: &str) -> Option<f64> {
     Some((l1 + 0.05) / (l2 + 0.05))
 }
 
-/// Find the dominant color in an RGBA pixel buffer using a 5-bit histogram.
+/// Per-channel 256-bucket histogram of an RGBA image.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct Histogram {
+    /// Frequency of each red value (0-255).
+    pub r: [u32; 256],
+    /// Frequency of each green value (0-255).
+    pub g: [u32; 256],
+    /// Frequency of each blue value (0-255).
+    pub b: [u32; 256],
+    /// Frequency of each alpha value (0-255).
+    pub a: [u32; 256],
+}
+
+/// Compute a per-channel 256-bucket histogram for an RGBA pixel buffer.
+/// All pixels are counted, including fully transparent ones.
+pub fn histogram(data: &[u8], width: u32, height: u32) -> Histogram {
+    let mut r = [0u32; 256];
+    let mut g = [0u32; 256];
+    let mut b = [0u32; 256];
+    let mut a = [0u32; 256];
+
+    let pixel_count = (width as usize) * (height as usize);
+    let len = pixel_count * 4;
+    let data = &data[..data.len().min(len)];
+
+    for chunk in data.chunks_exact(4) {
+        r[chunk[0] as usize] += 1;
+        g[chunk[1] as usize] += 1;
+        b[chunk[2] as usize] += 1;
+        a[chunk[3] as usize] += 1;
+    }
+
+    Histogram { r, g, b, a }
+}
+
+/// Find the dominant color in an RGBA pixel buffer.
+///
+/// Uses a 5-bit (32-bucket) histogram per channel to identify the most
+/// frequent non-transparent color.  `max_samples` controls how many pixels
+/// are examined; pass `u32::MAX` to sample every pixel.
+///
+/// Returns `None` if the buffer contains no non-transparent pixels.
 pub fn dominant_rgb_from_rgba(
     data: &[u8],
     width: u32,
@@ -310,6 +389,38 @@ mod tests {
     fn contrast_ratio_black_white() {
         let cr = contrast_ratio("#000000", "#ffffff").unwrap();
         assert!((cr - 21.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn histogram_solid_red() {
+        // 4 red pixels
+        let data: Vec<u8> = (0..4).flat_map(|_| [255u8, 0, 0, 255]).collect();
+        let h = histogram(&data, 2, 2);
+        assert_eq!(h.r[255], 4);
+        assert_eq!(h.r[0], 0);
+        assert_eq!(h.g[0], 4);
+        assert_eq!(h.b[0], 4);
+        assert_eq!(h.a[255], 4);
+    }
+
+    #[test]
+    fn histogram_counts_all_channels() {
+        // One pixel per distinct value
+        let data: Vec<u8> = vec![10, 20, 30, 128];
+        let h = histogram(&data, 1, 1);
+        assert_eq!(h.r[10], 1);
+        assert_eq!(h.g[20], 1);
+        assert_eq!(h.b[30], 1);
+        assert_eq!(h.a[128], 1);
+        // All other buckets zero
+        assert_eq!(h.r.iter().sum::<u32>(), 1);
+        assert_eq!(h.g.iter().sum::<u32>(), 1);
+    }
+
+    #[test]
+    fn histogram_empty() {
+        let h = histogram(&[], 0, 0);
+        assert_eq!(h.r.iter().sum::<u32>(), 0);
     }
 
     #[test]

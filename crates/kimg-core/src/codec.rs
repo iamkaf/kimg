@@ -1,3 +1,21 @@
+//! Image encoding and decoding for multiple formats.
+//!
+//! Supports PNG, JPEG, WebP, GIF, and PSD (Adobe Photoshop).
+//!
+//! All decoders produce an RGBA8 [`ImageBuffer`].  All encoders accept one.
+//!
+//! | Function | Direction | Format |
+//! |----------|-----------|--------|
+//! | [`decode_png`] / [`encode_png`] | both | PNG (lossless) |
+//! | [`decode_jpeg`] / [`encode_jpeg`] | both | JPEG (lossy) |
+//! | [`decode_webp`] / [`encode_webp`] | both | WebP (lossless) |
+//! | [`decode_gif`] | decode only | Animated GIF → frames |
+//! | [`import_psd`] | decode only | PSD → per-layer buffers |
+//! | [`decode_auto`] | decode only | Detect format from magic bytes |
+//! | [`detect_format`] | — | Inspect magic bytes → [`ImageFormat`] |
+//!
+//! JPEG encoding strips the alpha channel (JPEG has no transparency support).
+
 use crate::buffer::ImageBuffer;
 use std::io::Cursor;
 
@@ -54,7 +72,9 @@ impl ImageFormat {
     }
 }
 
-/// Detect image format by inspecting magic bytes.
+/// Detect the image format by inspecting the first few bytes (magic bytes).
+///
+/// Returns [`ImageFormat::Unknown`] if the header doesn't match any known format.
 pub fn detect_format(data: &[u8]) -> ImageFormat {
     if data.len() >= 8 && data[0..4] == [0x89, 0x50, 0x4E, 0x47] {
         ImageFormat::Png
@@ -71,7 +91,15 @@ pub fn detect_format(data: &[u8]) -> ImageFormat {
     }
 }
 
-/// Auto-detect format and decode to an RGBA ImageBuffer.
+/// Detect the image format automatically and decode to an RGBA8 [`ImageBuffer`].
+///
+/// For animated GIFs only the first frame is returned.
+/// For PSDs only the first layer is returned.
+///
+/// # Errors
+///
+/// Returns [`CodecError::DecodingError`] if the format is unknown or the data
+/// is malformed.
 pub fn decode_auto(data: &[u8]) -> Result<ImageBuffer, CodecError> {
     match detect_format(data) {
         ImageFormat::Png => decode_png(data),
@@ -163,7 +191,7 @@ pub fn decode_png(data: &[u8]) -> Result<ImageBuffer, CodecError> {
         .ok_or_else(|| CodecError::DecodingError("buffer size mismatch".into()))
 }
 
-/// Encode an ImageBuffer as a PNG.
+/// Encode an [`ImageBuffer`] as a lossless PNG with full alpha.
 pub fn encode_png(buf: &ImageBuffer) -> Result<Vec<u8>, CodecError> {
     let mut output = Vec::new();
     {
@@ -228,7 +256,9 @@ pub fn decode_jpeg(data: &[u8]) -> Result<ImageBuffer, CodecError> {
         .ok_or_else(|| CodecError::DecodingError("buffer size mismatch".into()))
 }
 
-/// Encode an ImageBuffer as JPEG with the given quality (1-100).
+/// Encode an [`ImageBuffer`] as JPEG with the given quality (1–100).
+///
+/// Alpha is stripped (JPEG has no transparency support).
 pub fn encode_jpeg(buf: &ImageBuffer, quality: u8) -> Result<Vec<u8>, CodecError> {
     let pixel_count = (buf.width as usize) * (buf.height as usize);
     let mut rgb = vec![0u8; pixel_count * 3];
@@ -287,7 +317,7 @@ pub fn decode_webp(data: &[u8]) -> Result<ImageBuffer, CodecError> {
     }
 }
 
-/// Encode an ImageBuffer as lossless WebP.
+/// Encode an [`ImageBuffer`] as lossless WebP with full alpha.
 pub fn encode_webp(buf: &ImageBuffer) -> Result<Vec<u8>, CodecError> {
     use image_webp::WebPEncoder;
 
@@ -308,6 +338,7 @@ pub fn encode_webp(buf: &ImageBuffer) -> Result<Vec<u8>, CodecError> {
 
 /// An individual animation frame.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct GifFrame {
     /// The image buffer for the frame.
     pub buffer: ImageBuffer,
@@ -315,8 +346,11 @@ pub struct GifFrame {
     pub delay_ms: u32,
 }
 
-/// Decode a GIF into individual frames. Each frame is composited onto a canvas
-/// respecting disposal methods for correct animation.
+/// Decode a GIF into individual animation frames.
+///
+/// Each frame is composited onto a running canvas using the GIF disposal method
+/// (`Background`, `Previous`, or `Keep`), producing the correct image for that
+/// point in the animation.
 pub fn decode_gif(data: &[u8]) -> Result<Vec<GifFrame>, CodecError> {
     use gif::{ColorOutput, DecodeOptions, DisposalMethod};
 
@@ -403,6 +437,7 @@ pub fn decode_gif(data: &[u8]) -> Result<Vec<GifFrame>, CodecError> {
 // ── PSD ──
 
 /// Parsed layer from PSD.
+#[non_exhaustive]
 pub struct PsdLayer {
     /// Layer name extracted from the PSD.
     pub name: String,
@@ -418,7 +453,11 @@ pub struct PsdLayer {
     pub visible: bool,
 }
 
-/// Import layers from a PSD file. Returns (canvas_width, canvas_height, layers).
+/// Import layers from an Adobe Photoshop (PSD) file.
+///
+/// Returns `(canvas_width, canvas_height, layers)`.  Each [`PsdLayer`] contains
+/// the layer's name, pixel buffer, position, opacity, and visibility.
+/// Layers with zero width or height are skipped.
 pub fn import_psd(data: &[u8]) -> Result<(u32, u32, Vec<PsdLayer>), CodecError> {
     let psd = psd::Psd::from_bytes(data).map_err(|e| CodecError::DecodingError(e.to_string()))?;
     let canvas_w = psd.width();

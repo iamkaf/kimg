@@ -16,3 +16,34 @@ jpeg-encoder = "0.6"
 image-webp = "0.2"
 gif = "0.13"
 psd = "0.3"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "blend"
+harness = false
+
+[[bench]]
+name = "transform"
+harness = false
+
+[[bench]]
+name = "convolution"
+harness = false
+
+[[bench]]
+name = "filter"
+harness = false
+
+[[bench]]
+name = "document"
+harness = false
+
+[[bench]]
+name = "codec"
+harness = false
+
+[[bench]]
+name = "sprite"
+harness = false

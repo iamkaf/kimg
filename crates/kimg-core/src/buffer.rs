@@ -1,8 +1,18 @@
+//! Owned RGBA image buffer.
+//!
+//! [`ImageBuffer`] holds a flat `Vec<u8>` of pixel data in `RGBA8` order
+//! (four bytes per pixel: red, green, blue, alpha). It is the primary data
+//! container passed between all kimg operations — blend, blit, filter, encode.
+//!
+//! Pixel data is stored in row-major order: pixel `(x, y)` starts at byte
+//! index `(y * width + x) * 4`.
+
 use crate::pixel::Rgba;
 
 /// Owned RGBA image buffer stored as contiguous `Vec<u8>` in RGBA8 order.
 /// 2D image buffer containing raw RGBA pixel data.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ImageBuffer {
     /// Width of the image in pixels.
     pub width: u32,
@@ -23,7 +33,22 @@ impl ImageBuffer {
         }
     }
 
-    /// Create a buffer from existing RGBA data. Returns `None` if length doesn't match.
+    /// Create a buffer from existing RGBA data.
+    ///
+    /// Returns `None` if `data.len() != width * height * 4`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kimg_core::buffer::ImageBuffer;
+    ///
+    /// // 1×1 opaque red pixel
+    /// let buf = ImageBuffer::from_rgba(1, 1, vec![255, 0, 0, 255]).unwrap();
+    /// assert_eq!(buf.width, 1);
+    ///
+    /// // Length mismatch → None
+    /// assert!(ImageBuffer::from_rgba(2, 2, vec![0u8; 4]).is_none());
+    /// ```
     pub fn from_rgba(width: u32, height: u32, data: Vec<u8>) -> Option<Self> {
         let expected = (width as usize) * (height as usize) * 4;
         if data.len() != expected {
@@ -36,7 +61,11 @@ impl ImageBuffer {
         })
     }
 
-    /// Get the pixel at (x, y). Panics if out of bounds.
+    /// Get the pixel at `(x, y)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if `x >= self.width` or `y >= self.height`.
     pub fn get_pixel(&self, x: u32, y: u32) -> Rgba {
         let i = self.pixel_index(x, y);
         Rgba {
@@ -47,7 +76,11 @@ impl ImageBuffer {
         }
     }
 
-    /// Set the pixel at (x, y). Panics if out of bounds.
+    /// Set the pixel at `(x, y)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if `x >= self.width` or `y >= self.height`.
     pub fn set_pixel(&mut self, x: u32, y: u32, px: Rgba) {
         let i = self.pixel_index(x, y);
         self.data[i] = px.r;

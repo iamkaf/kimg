@@ -1,6 +1,28 @@
+//! Geometric transforms: resize, crop, trim, and arbitrary-angle rotation.
+//!
+//! Three resize algorithms are provided at different quality/speed trade-offs:
+//!
+//! | Function | Algorithm | Best for |
+//! |----------|-----------|----------|
+//! | [`resize_nearest`] | Nearest-neighbor | Pixel art, fast previews |
+//! | [`resize_bilinear`] | Bilinear interpolation | Photos, smooth upscaling |
+//! | [`resize_lanczos3`] | Lanczos3 (separable) | High-quality photo downscaling |
+//!
+//! [`crop`] extracts a rectangular sub-region.  [`trim_alpha`] auto-crops to the
+//! bounding box of non-transparent pixels.
+//!
+//! [`rotate_bilinear`] rotates by an arbitrary angle (degrees) with bilinear
+//! interpolation; the output buffer is sized to contain the full rotated image.
+//! For 90-degree-increment rotations prefer [`blit::Rotation`](crate::blit::Rotation)
+//! which is lossless and faster.
+
 use crate::buffer::ImageBuffer;
 
-/// Resize using nearest-neighbor sampling. Best for pixel art.
+/// Resize an image using nearest-neighbor sampling.
+///
+/// Fast and lossless for pixel art.  Returns a new buffer of size
+/// `new_width × new_height`.  Returns a transparent buffer if either
+/// source or destination dimension is zero.
 pub fn resize_nearest(src: &ImageBuffer, new_width: u32, new_height: u32) -> ImageBuffer {
     let mut dst = ImageBuffer::new_transparent(new_width, new_height);
     if src.width == 0 || src.height == 0 || new_width == 0 || new_height == 0 {
@@ -59,7 +81,10 @@ fn sample_bilinear(src: &ImageBuffer, fx: f64, fy: f64) -> [f64; 4] {
     result
 }
 
-/// Resize using bilinear interpolation.
+/// Resize an image using bilinear interpolation.
+///
+/// Produces smoother results than nearest-neighbor for photos and continuous-
+/// tone images.  Returns a new buffer of size `new_width × new_height`.
 pub fn resize_bilinear(src: &ImageBuffer, new_width: u32, new_height: u32) -> ImageBuffer {
     let mut dst = ImageBuffer::new_transparent(new_width, new_height);
     if src.width == 0 || src.height == 0 || new_width == 0 || new_height == 0 {
@@ -97,7 +122,10 @@ fn lanczos3(x: f64) -> f64 {
     (pi_x.sin() / pi_x) * (pi_x3.sin() / pi_x3)
 }
 
-/// Resize using Lanczos3 interpolation. High quality for downscaling photos.
+/// Resize an image using Lanczos3 interpolation.
+///
+/// Two-pass separable (horizontal then vertical).  Highest quality for
+/// downscaling photographs; slower than bilinear.
 pub fn resize_lanczos3(src: &ImageBuffer, new_width: u32, new_height: u32) -> ImageBuffer {
     if src.width == 0 || src.height == 0 || new_width == 0 || new_height == 0 {
         return ImageBuffer::new_transparent(new_width, new_height);
@@ -182,7 +210,10 @@ fn resize_lanczos3_vertical(src: &ImageBuffer, new_height: u32) -> ImageBuffer {
     dst
 }
 
-/// Crop a rectangular region from the buffer.
+/// Crop a rectangular region from an image.
+///
+/// The region is clamped to the source bounds — rows and columns that fall
+/// outside the source are left transparent.
 pub fn crop(src: &ImageBuffer, x: u32, y: u32, width: u32, height: u32) -> ImageBuffer {
     let mut dst = ImageBuffer::new_transparent(width, height);
     let sw = src.width as usize;
@@ -206,8 +237,9 @@ pub fn crop(src: &ImageBuffer, x: u32, y: u32, width: u32, height: u32) -> Image
     dst
 }
 
-/// Find the bounding box of non-transparent pixels and crop to it.
-/// Returns the original buffer if all pixels are transparent or all are opaque.
+/// Crop to the tight bounding box of non-transparent (alpha > 0) pixels.
+///
+/// Returns an empty 0×0 buffer if all pixels are fully transparent.
 pub fn trim_alpha(src: &ImageBuffer) -> ImageBuffer {
     let w = src.width as usize;
     let h = src.height as usize;
@@ -242,8 +274,11 @@ pub fn trim_alpha(src: &ImageBuffer) -> ImageBuffer {
     crop(src, min_x as u32, min_y as u32, tw as u32, th as u32)
 }
 
-/// Rotate an image by an arbitrary angle (in degrees) with bilinear interpolation.
-/// The output buffer is sized to contain the full rotated image.
+/// Rotate an image by an arbitrary angle (clockwise, in degrees) with bilinear
+/// interpolation.
+///
+/// The output buffer is sized to contain the complete rotated image with no
+/// clipping.  Areas outside the source image are left transparent.
 pub fn rotate_bilinear(src: &ImageBuffer, angle_deg: f64) -> ImageBuffer {
     if src.width == 0 || src.height == 0 {
         return src.clone();

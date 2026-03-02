@@ -98,19 +98,20 @@ dominant_rgb_from_rgba(pixels, 128, 128); // Uint8Array [r, g, b]
 kimg/
 ├── crates/
 │   ├── kimg-core/     # Pure Rust pixel engine (no WASM deps)
-│   │   └── src/
-│   │       ├── blend.rs       # 16 blend modes
-│   │       ├── blit.rs        # Transformed blit (position, flip, rotation, opacity)
-│   │       ├── buffer.rs      # ImageBuffer with RGBA pixel data
-│   │       ├── codec.rs       # PNG, JPEG, WebP, GIF, PSD decode/encode
-│   │       ├── color.rs       # RGB/HSL conversion, luminance, contrast
-│   │       ├── convolution.rs # Blur, sharpen, edge detect, emboss kernels
-│   │       ├── document.rs    # Document struct, layer tree, render pipeline
-│   │       ├── filter.rs      # HSL filters, invert, posterize, threshold, levels
-│   │       ├── layer.rs       # Layer types and common properties
-│   │       ├── serialize.rs   # Document save/load
-│   │       ├── sprite.rs      # Sprite sheet packing, contact sheets, quantization
-│   │       └── transform.rs   # Resize, rotate, crop, trim
+│   │   ├── src/
+│   │   │   ├── blend.rs       # 16 blend modes
+│   │   │   ├── blit.rs        # Transformed blit (position, flip, rotation, opacity)
+│   │   │   ├── buffer.rs      # ImageBuffer with RGBA pixel data
+│   │   │   ├── codec.rs       # PNG, JPEG, WebP, GIF, PSD decode/encode
+│   │   │   ├── color.rs       # RGB/HSL conversion, luminance, contrast
+│   │   │   ├── convolution.rs # Blur, sharpen, edge detect, emboss kernels
+│   │   │   ├── document.rs    # Document struct, layer tree, render pipeline
+│   │   │   ├── filter.rs      # HSL filters, invert, posterize, threshold, levels
+│   │   │   ├── layer.rs       # Layer types and common properties
+│   │   │   ├── serialize.rs   # Document save/load
+│   │   │   ├── sprite.rs      # Sprite sheet packing, contact sheets, quantization
+│   │   │   └── transform.rs   # Resize, rotate, crop, trim
+│   │   └── benches/           # Criterion.rs benchmarks
 │   └── kimg-wasm/     # wasm-bindgen API surface
 ├── pkg/               # Built output (JS + WASM + TypeScript types)
 ├── demo/              # Browser demo page
@@ -136,7 +137,41 @@ Output goes to `pkg/`. The demo page at `demo/index.html` loads from there.
 cargo test -p kimg-core
 ```
 
-113 tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, and color utilities.
+117 tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, and color utilities.
+
+## Benchmarks
+
+Criterion.rs benchmarks cover all performance-sensitive operations. Run the full suite:
+
+```bash
+cargo bench -p kimg-core
+```
+
+Run a single bench file:
+
+```bash
+cargo bench -p kimg-core --bench transform
+```
+
+Smoke-test compilation without collecting statistics:
+
+```bash
+cargo bench -p kimg-core -- --test
+```
+
+HTML reports with timing history are written to `target/criterion/` after a full run.
+
+The benchmarks cover:
+
+| File | What's measured |
+|------|----------------|
+| `blend` | Porter-Duff source-over and 3 blend modes at 64×64 / 512×512 / 2048×2048 |
+| `transform` | Nearest, bilinear, and Lanczos3 resize; crop; trim; arbitrary rotation |
+| `convolution` | 3×3 and 5×5 kernels; box blur; Gaussian blur |
+| `filter` | HSL pipeline, invert, levels, posterize, gradient map |
+| `document` | Full render pipeline at 1–10 layers with and without filter layers |
+| `codec` | PNG / JPEG / WebP encode and decode of a 512×512 buffer |
+| `sprite` | Sprite sheet packing, palette extraction, quantization, pixel-art scale |
 
 ## WASM binary size
 

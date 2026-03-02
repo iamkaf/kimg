@@ -1,3 +1,27 @@
+//! Document serialization and deserialization.
+//!
+//! Encodes a [`Document`] into a compact binary format suitable for persistence
+//! and wire transfer, and decodes it back.
+//!
+//! # Format
+//!
+//! ```text
+//! [4 bytes: JSON length (big-endian u32)] [JSON metadata] [pixel buffers]
+//! ```
+//!
+//! The JSON section stores all layer metadata (ids, names, blend modes, transform
+//! properties, gradient stops, etc.).  Raw pixel data (image buffers and masks)
+//! is appended as a flat byte sequence after the JSON; each buffer entry in the
+//! JSON includes `buffer_offset` and `buffer_len` fields pointing into that region.
+//!
+//! A hand-written minimal JSON parser is used to avoid a `serde` dependency.
+//! It supports only the subset of JSON produced by the serializer.
+//!
+//! # Backward compatibility
+//!
+//! Optional fields (e.g. `mask_inverted`) default sensibly when absent, so
+//! documents serialized with older versions of kimg can still be loaded.
+
 use crate::blend::BlendMode;
 use crate::blit::{Anchor, Rotation};
 use crate::buffer::ImageBuffer;
@@ -24,8 +48,14 @@ impl std::fmt::Display for SerializeError {
 
 impl std::error::Error for SerializeError {}
 
-/// Serialize a Document to a binary format:
-/// [4 bytes: JSON length (big-endian u32)] [JSON metadata] [pixel buffers]
+/// Serialize a [`Document`] to the kimg binary format.
+///
+/// The returned bytes can be stored on disk or transmitted over a network and
+/// later restored with [`deserialize`].
+///
+/// # Errors
+///
+/// Currently infallible; returns `Ok` on all well-formed inputs.
 pub fn serialize(doc: &Document) -> Result<Vec<u8>, SerializeError> {
     let mut pixel_data: Vec<u8> = Vec::new();
     let layers_json = serialize_layers(&doc.layers, &mut pixel_data);
@@ -49,7 +79,12 @@ pub fn serialize(doc: &Document) -> Result<Vec<u8>, SerializeError> {
     Ok(output)
 }
 
-/// Deserialize a Document from the binary format.
+/// Deserialize a [`Document`] from the kimg binary format.
+///
+/// # Errors
+///
+/// Returns [`SerializeError::InvalidData`] if the input is truncated, the JSON
+/// header is malformed, or any pixel buffer reference is out of bounds.
 pub fn deserialize(data: &[u8]) -> Result<Document, SerializeError> {
     if data.len() < 4 {
         return Err(SerializeError::InvalidData("data too short".into()));
@@ -111,7 +146,7 @@ fn serialize_layers(layers: &[Layer], pixel_data: &mut Vec<u8>) -> String {
 fn serialize_layer(layer: &Layer, pixel_data: &mut Vec<u8>) -> String {
     let c = &layer.common;
     let mut props = format!(
-        r#""id":{},"name":"{}","visible":{},"opacity":{},"x":{},"y":{},"blend_mode":"{}","clip_to_below":{}"#,
+        r#""id":{},"name":"{}","visible":{},"opacity":{},"x":{},"y":{},"blend_mode":"{}","clip_to_below":{},"mask_inverted":{}"#,
         c.id,
         escape_json_string(&c.name),
         c.visible,
@@ -120,6 +155,7 @@ fn serialize_layer(layer: &Layer, pixel_data: &mut Vec<u8>) -> String {
         c.y,
         c.blend_mode.as_str(),
         c.clip_to_below,
+        c.mask_inverted,
     );
 
     // Mask
@@ -563,6 +599,8 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
     let blend_mode_str = get_json_str(&obj, "blend_mode").map_err(e)?;
     let blend_mode = BlendMode::from_str_lossy(blend_mode_str);
     let clip_to_below = get_json_bool(&obj, "clip_to_below").map_err(e)?;
+    // mask_inverted is optional for backward compatibility with older serialized documents
+    let mask_inverted = get_json_bool(&obj, "mask_inverted").unwrap_or(false);
 
     let mask = if let Ok(mask_str) = get_json_str(&obj, "mask") {
         let mask_wrapped = ensure_object_wrapped(mask_str);
@@ -594,6 +632,7 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
     common.y = y;
     common.blend_mode = blend_mode;
     common.clip_to_below = clip_to_below;
+    common.mask_inverted = mask_inverted;
     common.mask = mask;
 
     let kind_str = get_json_str(&obj, "kind").map_err(e)?;

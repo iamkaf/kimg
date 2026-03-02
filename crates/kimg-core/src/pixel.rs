@@ -1,5 +1,12 @@
+//! Core pixel type.
+//!
+//! [`Rgba`] is the fundamental color unit throughout kimg — every pixel in every
+//! [`ImageBuffer`](crate::buffer::ImageBuffer) is one `Rgba` value stored as four
+//! contiguous `u8` bytes in RGBA order.
+
 /// A 32-bit RGBA color pixel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Rgba {
     /// Red channel (0-255).
     pub r: u8,
@@ -27,6 +34,15 @@ impl Rgba {
     };
 
     /// Create a new RGBA pixel.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kimg_core::pixel::Rgba;
+    ///
+    /// let red = Rgba::new(255, 0, 0, 255);
+    /// let semi = Rgba::new(0, 128, 255, 128); // 50% transparent blue
+    /// ```
     pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
     }
