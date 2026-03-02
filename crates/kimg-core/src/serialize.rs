@@ -91,13 +91,16 @@ pub fn deserialize(data: &[u8]) -> Result<Document, SerializeError> {
     }
 
     let json_len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
-    if data.len() < 4 + json_len {
+    let json_end = 4usize
+        .checked_add(json_len)
+        .ok_or_else(|| SerializeError::InvalidData("JSON length overflow".into()))?;
+    if data.len() < json_end {
         return Err(SerializeError::InvalidData("truncated JSON".into()));
     }
 
-    let json_str = std::str::from_utf8(&data[4..4 + json_len])
+    let json_str = std::str::from_utf8(&data[4..json_end])
         .map_err(|e| SerializeError::InvalidData(e.to_string()))?;
-    let pixel_data = &data[4 + json_len..];
+    let pixel_data = &data[json_end..];
 
     let doc_obj = parse_json_object(json_str).map_err(SerializeError::InvalidData)?;
 
@@ -379,54 +382,52 @@ fn parse_json_object(s: &str) -> Result<JsonObject, String> {
 
 /// Parse a JSON string starting at `pos`, return (unescaped string, end position after closing quote)
 fn parse_json_string_at(s: &str, pos: usize) -> Result<(String, usize), String> {
-    let bytes = s.as_bytes();
-    if bytes[pos] != b'"' {
+    let tail = s
+        .get(pos..)
+        .ok_or_else(|| format!("invalid string start at {pos}"))?;
+    if !tail.starts_with('"') {
         return Err(format!("expected '\"' at {pos}"));
     }
-    let mut i = pos + 1;
+
+    let mut chars = tail.char_indices();
+    chars.next();
     let mut result = String::new();
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            match bytes[i + 1] {
-                b'"' => {
-                    result.push('"');
-                    i += 2;
-                }
-                b'\\' => {
-                    result.push('\\');
-                    i += 2;
-                }
-                b'n' => {
-                    result.push('\n');
-                    i += 2;
-                }
-                b'r' => {
-                    result.push('\r');
-                    i += 2;
-                }
-                b't' => {
-                    result.push('\t');
-                    i += 2;
-                }
-                b'u' if i + 5 < bytes.len() => {
-                    let hex = &s[i + 2..i + 6];
-                    if let Ok(cp) = u32::from_str_radix(hex, 16) {
-                        if let Some(c) = char::from_u32(cp) {
-                            result.push(c);
+
+    while let Some((rel_idx, ch)) = chars.next() {
+        match ch {
+            '\\' => {
+                let Some((_, escaped)) = chars.next() else {
+                    return Err("unterminated escape".into());
+                };
+
+                match escaped {
+                    '"' => result.push('"'),
+                    '\\' => result.push('\\'),
+                    'n' => result.push('\n'),
+                    'r' => result.push('\r'),
+                    't' => result.push('\t'),
+                    'u' => {
+                        let mut hex = String::with_capacity(4);
+                        for _ in 0..4 {
+                            let Some((_, digit)) = chars.next() else {
+                                return Err("incomplete unicode escape".into());
+                            };
+                            if !digit.is_ascii_hexdigit() {
+                                return Err(format!("invalid unicode escape digit: {digit}"));
+                            }
+                            hex.push(digit);
                         }
+                        let cp = u32::from_str_radix(&hex, 16)
+                            .map_err(|_| format!("invalid unicode escape: {hex}"))?;
+                        let decoded = char::from_u32(cp)
+                            .ok_or_else(|| format!("invalid unicode codepoint: {hex}"))?;
+                        result.push(decoded);
                     }
-                    i += 6;
-                }
-                _ => {
-                    result.push(bytes[i + 1] as char);
-                    i += 2;
+                    other => result.push(other),
                 }
             }
-        } else if bytes[i] == b'"' {
-            return Ok((result, i + 1));
-        } else {
-            result.push(bytes[i] as char);
-            i += 1;
+            '"' => return Ok((result, pos + rel_idx + 1)),
+            _ => result.push(ch),
         }
     }
     Err("unterminated string".into())
@@ -563,6 +564,20 @@ fn ensure_object_wrapped(s: &str) -> String {
     }
 }
 
+fn checked_slice<'a>(
+    data: &'a [u8],
+    offset: usize,
+    len: usize,
+    what: &str,
+) -> Result<&'a [u8], SerializeError> {
+    let end = offset
+        .checked_add(len)
+        .ok_or_else(|| SerializeError::InvalidData(format!("{what} range overflow")))?;
+
+    data.get(offset..end)
+        .ok_or_else(|| SerializeError::InvalidData(format!("{what} out of bounds")))
+}
+
 fn deserialize_layers(s: &str, pixel_data: &[u8]) -> Result<Vec<Layer>, SerializeError> {
     let wrapped = ensure_array_wrapped(s);
     let raw_items = parse_json_array(&wrapped).map_err(SerializeError::InvalidData)?;
@@ -615,12 +630,8 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             .map_err(SerializeError::InvalidData)?
             .parse()
             .map_err(|_| SerializeError::InvalidData("invalid mask len".into()))?;
-        if moff + mlen > pixel_data.len() {
-            return Err(SerializeError::InvalidData(
-                "mask pixel data out of bounds".into(),
-            ));
-        }
-        ImageBuffer::from_rgba(mw, mh, pixel_data[moff..moff + mlen].to_vec())
+        let mask_bytes = checked_slice(pixel_data, moff, mlen, "mask pixel data")?;
+        ImageBuffer::from_rgba(mw, mh, mask_bytes.to_vec())
     } else {
         None
     };
@@ -642,12 +653,8 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             let h = get_json_u32(&obj, "height")?;
             let offset = parse_usize(&obj, "buffer_offset")?;
             let len = parse_usize(&obj, "buffer_len")?;
-            if offset + len > pixel_data.len() {
-                return Err(SerializeError::InvalidData(
-                    "pixel data out of bounds".into(),
-                ));
-            }
-            let buffer = ImageBuffer::from_rgba(w, h, pixel_data[offset..offset + len].to_vec())
+            let buffer_bytes = checked_slice(pixel_data, offset, len, "pixel data")?;
+            let buffer = ImageBuffer::from_rgba(w, h, buffer_bytes.to_vec())
                 .ok_or_else(|| SerializeError::InvalidData("buffer size mismatch".into()))?;
             let anchor = parse_anchor(get_json_str(&obj, "anchor").unwrap_or("top_left"));
             let flip_x = get_json_bool(&obj, "flip_x").unwrap_or(false);
@@ -666,12 +673,8 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             let h = get_json_u32(&obj, "height")?;
             let offset = parse_usize(&obj, "buffer_offset")?;
             let len = parse_usize(&obj, "buffer_len")?;
-            if offset + len > pixel_data.len() {
-                return Err(SerializeError::InvalidData(
-                    "pixel data out of bounds".into(),
-                ));
-            }
-            let buffer = ImageBuffer::from_rgba(w, h, pixel_data[offset..offset + len].to_vec())
+            let buffer_bytes = checked_slice(pixel_data, offset, len, "pixel data")?;
+            let buffer = ImageBuffer::from_rgba(w, h, buffer_bytes.to_vec())
                 .ok_or_else(|| SerializeError::InvalidData("buffer size mismatch".into()))?;
             let anchor = parse_anchor(get_json_str(&obj, "anchor").unwrap_or("top_left"));
             LayerKind::Paint(PaintLayerData { buffer, anchor })
@@ -962,5 +965,15 @@ mod tests {
             assert!(img.flip_y);
             assert_eq!(img.rotation, Rotation::Cw90);
         }
+    }
+
+    #[test]
+    fn deserialize_rejects_invalid_utf8_boundaries_in_strings() {
+        let data = [
+            0, 0, 0, 32, 32, 123, 34, 92, 117, 70, 65, 123, 34, 32, 49, 92, 117, 65, 49, 49, 49,
+            32, 49, 92, 117, 65, 49, 49, 212, 138, 32, 125, 125, 125, 13, 125, 13,
+        ];
+
+        assert!(deserialize(&data).is_err());
     }
 }

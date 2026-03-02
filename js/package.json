@@ -1,5 +1,5 @@
 {
-  "name": "kimg",
+  "name": "@iamkaf/kimg",
   "version": "0.5.0",
   "description": "Rust+WASM pixel engine for layer-based image compositing — blend modes, masks, filters, transforms, sprite tools, multi-format I/O",
   "type": "module",

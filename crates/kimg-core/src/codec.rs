@@ -18,6 +18,20 @@
 
 use crate::buffer::ImageBuffer;
 use std::io::Cursor;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
+// Cap decoder-driven allocations for untrusted input. Larger images are not
+// practical for the current WASM/JS targets and turn malformed headers into
+// allocator aborts instead of ordinary decode errors.
+const MAX_DECODED_IMAGE_BYTES: usize = 512 * 1024 * 1024;
+const PSD_FILE_HEADER_LEN: usize = 26;
+
+#[derive(Clone, Copy)]
+struct PsdHeaderInfo {
+    channel_count: usize,
+    height: usize,
+    width: usize,
+}
 
 /// Errors that can occur during image encoding/decoding.
 #[derive(Debug)]
@@ -39,6 +53,195 @@ impl std::fmt::Display for CodecError {
 }
 
 impl std::error::Error for CodecError {}
+
+fn checked_allocation_len(len: usize, what: &str) -> Result<usize, CodecError> {
+    if len > MAX_DECODED_IMAGE_BYTES {
+        return Err(CodecError::DecodingError(format!(
+            "{what} is too large ({len} bytes > {MAX_DECODED_IMAGE_BYTES} byte limit)"
+        )));
+    }
+
+    Ok(len)
+}
+
+fn checked_rgba_geometry(
+    width: u32,
+    height: u32,
+    what: &str,
+) -> Result<(usize, usize), CodecError> {
+    let pixel_count = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| CodecError::DecodingError(format!("{what} dimensions overflow")))?;
+    let rgba_len = pixel_count
+        .checked_mul(4)
+        .ok_or_else(|| CodecError::DecodingError(format!("{what} RGBA buffer size overflow")))?;
+
+    checked_allocation_len(rgba_len, what)?;
+    Ok((pixel_count, rgba_len))
+}
+
+fn checked_section_end(
+    start: usize,
+    len: usize,
+    total_len: usize,
+    what: &str,
+) -> Result<usize, CodecError> {
+    let end = start
+        .checked_add(len)
+        .ok_or_else(|| CodecError::DecodingError(format!("{what} length overflow")))?;
+    if end > total_len {
+        return Err(CodecError::DecodingError(format!(
+            "{what} exceeds input size"
+        )));
+    }
+
+    Ok(end)
+}
+
+fn read_psd_u16(data: &[u8], offset: usize, what: &str) -> Result<u16, CodecError> {
+    let bytes = data
+        .get(offset..offset + 2)
+        .ok_or_else(|| CodecError::DecodingError(format!("missing PSD {what}")))?;
+    Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
+}
+
+fn read_psd_u32(data: &[u8], offset: usize, what: &str) -> Result<u32, CodecError> {
+    let bytes = data
+        .get(offset..offset + 4)
+        .ok_or_else(|| CodecError::DecodingError(format!("missing PSD {what}")))?;
+    Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn parse_psd_header(data: &[u8]) -> Result<PsdHeaderInfo, CodecError> {
+    if data.len() < PSD_FILE_HEADER_LEN {
+        return Err(CodecError::DecodingError("PSD data is too short".into()));
+    }
+    if &data[..4] != b"8BPS" {
+        return Err(CodecError::DecodingError("invalid PSD signature".into()));
+    }
+    if read_psd_u16(data, 4, "version")? != 1 {
+        return Err(CodecError::DecodingError("unsupported PSD version".into()));
+    }
+    if data[6..12].iter().any(|&byte| byte != 0) {
+        return Err(CodecError::DecodingError(
+            "invalid PSD reserved header bytes".into(),
+        ));
+    }
+
+    let channel_count = read_psd_u16(data, 12, "channel count")? as usize;
+    if !(1..=56).contains(&channel_count) {
+        return Err(CodecError::DecodingError(
+            "PSD channel count out of range".into(),
+        ));
+    }
+
+    let height = read_psd_u32(data, 14, "height")? as usize;
+    let width = read_psd_u32(data, 18, "width")? as usize;
+    if height == 0 || width == 0 {
+        return Err(CodecError::DecodingError(
+            "PSD dimensions must be non-zero".into(),
+        ));
+    }
+
+    let depth = read_psd_u16(data, 22, "depth")?;
+    if depth != 8 && depth != 16 {
+        return Err(CodecError::DecodingError(format!(
+            "unsupported PSD depth: {depth}"
+        )));
+    }
+
+    Ok(PsdHeaderInfo {
+        channel_count,
+        height,
+        width,
+    })
+}
+
+fn validate_psd_image_data(bytes: &[u8], header: PsdHeaderInfo) -> Result<(), CodecError> {
+    let compression = read_psd_u16(bytes, 0, "image data compression")?;
+
+    match compression {
+        0 => Ok(()),
+        1 => {
+            let row_count = header
+                .channel_count
+                .checked_mul(header.height)
+                .ok_or_else(|| CodecError::DecodingError("PSD RLE row count overflow".into()))?;
+            let row_table_len = row_count.checked_mul(2).ok_or_else(|| {
+                CodecError::DecodingError("PSD RLE row table length overflow".into())
+            })?;
+            let channel_data_start = 2usize.checked_add(row_table_len).ok_or_else(|| {
+                CodecError::DecodingError("PSD RLE channel data offset overflow".into())
+            })?;
+            if bytes.len() < channel_data_start {
+                return Err(CodecError::DecodingError(
+                    "PSD RLE row table is truncated".into(),
+                ));
+            }
+
+            let mut offset = 2usize;
+            let mut compressed_len = 0usize;
+            for row_index in 0..row_count {
+                let row_len = read_psd_u16(bytes, offset, "RLE row length")? as usize;
+                offset += 2;
+                compressed_len = compressed_len.checked_add(row_len).ok_or_else(|| {
+                    CodecError::DecodingError(format!(
+                        "PSD RLE compressed length overflow at row {row_index}"
+                    ))
+                })?;
+            }
+
+            let required_len = channel_data_start
+                .checked_add(compressed_len)
+                .ok_or_else(|| CodecError::DecodingError("PSD RLE data size overflow".into()))?;
+            if bytes.len() < required_len {
+                return Err(CodecError::DecodingError(
+                    "PSD RLE image data is truncated".into(),
+                ));
+            }
+
+            Ok(())
+        }
+        2 | 3 => Err(CodecError::DecodingError(
+            "unsupported PSD ZIP compression".into(),
+        )),
+        other => Err(CodecError::DecodingError(format!(
+            "invalid PSD compression mode: {other}"
+        ))),
+    }
+}
+
+fn validate_psd_layout(data: &[u8]) -> Result<(), CodecError> {
+    let header = parse_psd_header(data)?;
+    let _ = header
+        .width
+        .checked_mul(header.height)
+        .ok_or_else(|| CodecError::DecodingError("PSD dimensions overflow".into()))?;
+
+    let mut offset = PSD_FILE_HEADER_LEN;
+    for (index, label) in ["color mode data", "image resources", "layer and mask"]
+        .into_iter()
+        .enumerate()
+    {
+        let len_bytes = data
+            .get(offset..offset + 4)
+            .ok_or_else(|| CodecError::DecodingError(format!("missing PSD {label} length")))?;
+        let section_len =
+            u32::from_be_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]) as usize;
+        let start = offset;
+        offset = checked_section_end(
+            start + 4,
+            section_len,
+            data.len(),
+            &format!("PSD section {} ({label})", index + 1),
+        )?;
+    }
+
+    let image_data = &data[offset..];
+    validate_psd_image_data(image_data, header)?;
+
+    Ok(())
+}
 
 /// Detected image format based on magic bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,7 +336,14 @@ pub fn decode_png(data: &[u8]) -> Result<ImageBuffer, CodecError> {
         .read_info()
         .map_err(|e| CodecError::DecodingError(e.to_string()))?;
 
-    let mut raw = vec![0u8; reader.output_buffer_size()];
+    let header = reader.info();
+    let raw_len = reader
+        .output_line_size(header.width)
+        .checked_mul(header.height as usize)
+        .ok_or_else(|| CodecError::DecodingError("PNG decode buffer size overflow".into()))
+        .and_then(|len| checked_allocation_len(len, "PNG decode buffer"))?;
+
+    let mut raw = vec![0u8; raw_len];
     let info = reader
         .next_frame(&mut raw)
         .map_err(|e| CodecError::DecodingError(e.to_string()))?;
@@ -145,8 +355,8 @@ pub fn decode_png(data: &[u8]) -> Result<ImageBuffer, CodecError> {
     let rgba = match info.color_type {
         png::ColorType::Rgba => raw,
         png::ColorType::Rgb => {
-            let pixel_count = (width as usize) * (height as usize);
-            let mut out = vec![0u8; pixel_count * 4];
+            let (pixel_count, rgba_len) = checked_rgba_geometry(width, height, "PNG image")?;
+            let mut out = vec![0u8; rgba_len];
             for i in 0..pixel_count {
                 out[i * 4] = raw[i * 3];
                 out[i * 4 + 1] = raw[i * 3 + 1];
@@ -156,8 +366,8 @@ pub fn decode_png(data: &[u8]) -> Result<ImageBuffer, CodecError> {
             out
         }
         png::ColorType::GrayscaleAlpha => {
-            let pixel_count = (width as usize) * (height as usize);
-            let mut out = vec![0u8; pixel_count * 4];
+            let (pixel_count, rgba_len) = checked_rgba_geometry(width, height, "PNG image")?;
+            let mut out = vec![0u8; rgba_len];
             for i in 0..pixel_count {
                 let g = raw[i * 2];
                 let a = raw[i * 2 + 1];
@@ -169,8 +379,8 @@ pub fn decode_png(data: &[u8]) -> Result<ImageBuffer, CodecError> {
             out
         }
         png::ColorType::Grayscale => {
-            let pixel_count = (width as usize) * (height as usize);
-            let mut out = vec![0u8; pixel_count * 4];
+            let (pixel_count, rgba_len) = checked_rgba_geometry(width, height, "PNG image")?;
+            let mut out = vec![0u8; rgba_len];
             for i in 0..pixel_count {
                 let g = raw[i];
                 out[i * 4] = g;
@@ -221,11 +431,11 @@ pub fn decode_jpeg(data: &[u8]) -> Result<ImageBuffer, CodecError> {
         .ok_or_else(|| CodecError::DecodingError("missing JPEG info".into()))?;
     let width = info.width as u32;
     let height = info.height as u32;
-    let pixel_count = (width as usize) * (height as usize);
+    let (pixel_count, rgba_len) = checked_rgba_geometry(width, height, "JPEG image")?;
 
     let rgba = match info.pixel_format {
         jpeg_decoder::PixelFormat::RGB24 => {
-            let mut out = vec![0u8; pixel_count * 4];
+            let mut out = vec![0u8; rgba_len];
             for i in 0..pixel_count {
                 out[i * 4] = pixels[i * 3];
                 out[i * 4 + 1] = pixels[i * 3 + 1];
@@ -235,7 +445,7 @@ pub fn decode_jpeg(data: &[u8]) -> Result<ImageBuffer, CodecError> {
             out
         }
         jpeg_decoder::PixelFormat::L8 => {
-            let mut out = vec![0u8; pixel_count * 4];
+            let mut out = vec![0u8; rgba_len];
             for i in 0..pixel_count {
                 let g = pixels[i];
                 out[i * 4] = g;
@@ -291,21 +501,27 @@ pub fn decode_webp(data: &[u8]) -> Result<ImageBuffer, CodecError> {
         .map_err(|e| CodecError::DecodingError(e.to_string()))?;
     let (width, height) = decoder.dimensions();
     let has_alpha = decoder.has_alpha();
-    let pixel_count = (width as usize) * (height as usize);
+    let (pixel_count, rgba_len) = checked_rgba_geometry(width, height, "WebP image")?;
 
     if has_alpha {
-        let mut rgba = vec![0u8; pixel_count * 4];
+        let mut rgba = vec![0u8; rgba_len];
         decoder
             .read_image(&mut rgba)
             .map_err(|e| CodecError::DecodingError(e.to_string()))?;
         ImageBuffer::from_rgba(width, height, rgba)
             .ok_or_else(|| CodecError::DecodingError("buffer size mismatch".into()))
     } else {
-        let mut rgb = vec![0u8; pixel_count * 3];
+        let rgb_len = checked_allocation_len(
+            pixel_count
+                .checked_mul(3)
+                .ok_or_else(|| CodecError::DecodingError("WebP RGB buffer size overflow".into()))?,
+            "WebP decode buffer",
+        )?;
+        let mut rgb = vec![0u8; rgb_len];
         decoder
             .read_image(&mut rgb)
             .map_err(|e| CodecError::DecodingError(e.to_string()))?;
-        let mut rgba = vec![0u8; pixel_count * 4];
+        let mut rgba = vec![0u8; rgba_len];
         for i in 0..pixel_count {
             rgba[i * 4] = rgb[i * 3];
             rgba[i * 4 + 1] = rgb[i * 3 + 1];
@@ -362,6 +578,7 @@ pub fn decode_gif(data: &[u8]) -> Result<Vec<GifFrame>, CodecError> {
 
     let canvas_w = decoder.width() as u32;
     let canvas_h = decoder.height() as u32;
+    checked_rgba_geometry(canvas_w, canvas_h, "GIF canvas")?;
     let mut canvas = ImageBuffer::new_transparent(canvas_w, canvas_h);
     let mut frames = Vec::new();
 
@@ -459,37 +676,44 @@ pub struct PsdLayer {
 /// the layer's name, pixel buffer, position, opacity, and visibility.
 /// Layers with zero width or height are skipped.
 pub fn import_psd(data: &[u8]) -> Result<(u32, u32, Vec<PsdLayer>), CodecError> {
-    let psd = psd::Psd::from_bytes(data).map_err(|e| CodecError::DecodingError(e.to_string()))?;
-    let canvas_w = psd.width();
-    let canvas_h = psd.height();
+    validate_psd_layout(data)?;
 
-    let mut layers = Vec::new();
-    for layer in psd.layers() {
-        let w = layer.width() as u32;
-        let h = layer.height() as u32;
-        if w == 0 || h == 0 {
-            continue;
-        }
-        let rgba = layer.rgba();
-        let expected = (w as usize) * (h as usize) * 4;
-        if rgba.len() != expected {
-            continue;
-        }
-        let buffer = match ImageBuffer::from_rgba(w, h, rgba) {
-            Some(b) => b,
-            None => continue,
-        };
-        layers.push(PsdLayer {
-            name: layer.name().to_string(),
-            buffer,
-            x: layer.layer_left(),
-            y: layer.layer_top(),
-            opacity: layer.opacity() as f64 / 255.0,
-            visible: layer.visible(),
-        });
-    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let psd =
+            psd::Psd::from_bytes(data).map_err(|e| CodecError::DecodingError(e.to_string()))?;
+        let canvas_w = psd.width();
+        let canvas_h = psd.height();
 
-    Ok((canvas_w, canvas_h, layers))
+        let mut layers = Vec::new();
+        for layer in psd.layers() {
+            let w = layer.width() as u32;
+            let h = layer.height() as u32;
+            if w == 0 || h == 0 {
+                continue;
+            }
+            checked_rgba_geometry(w, h, "PSD layer")?;
+            let rgba = layer.rgba();
+            let expected = (w as usize) * (h as usize) * 4;
+            if rgba.len() != expected {
+                continue;
+            }
+            let buffer = match ImageBuffer::from_rgba(w, h, rgba) {
+                Some(b) => b,
+                None => continue,
+            };
+            layers.push(PsdLayer {
+                name: layer.name().to_string(),
+                buffer,
+                x: layer.layer_left(),
+                y: layer.layer_top(),
+                opacity: layer.opacity() as f64 / 255.0,
+                visible: layer.visible(),
+            });
+        }
+
+        Ok((canvas_w, canvas_h, layers))
+    }))
+    .map_err(|_| CodecError::DecodingError("PSD parser panicked".into()))?
 }
 
 #[cfg(test)]
@@ -515,6 +739,31 @@ mod tests {
     #[test]
     fn decode_invalid_data() {
         assert!(decode_png(&[0, 1, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn decode_png_rejects_oversized_allocation() {
+        let data = [
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x27, 0x49, 0x48,
+            0x44, 0x52, 0x10, 0x19, 0xE6, 0xE6, 0xE6, 0xE6, 0x2B, 0xE6, 0x01, 0x00, 0x00, 0x00,
+            0x01, 0x25, 0x00, 0x00, 0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x51, 0x44, 0x48,
+            0x49, 0x00, 0x00, 0x04, 0xA8, 0x00, 0x00, 0x44, 0x19, 0x09, 0x19, 0x19, 0x0C, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x49, 0x44, 0x41, 0x54, 0x00, 0x54, 0xFF,
+        ];
+
+        assert!(decode_png(&data).is_err());
+    }
+
+    #[test]
+    fn import_psd_rejects_invalid_section_lengths() {
+        let data = [
+            0x38, 0x42, 0x50, 0x53, 0x60, 0x11, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4,
+            0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4,
+            0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4,
+            0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4,
+        ];
+
+        assert!(import_psd(&data).is_err());
     }
 
     // ── Format detection ──

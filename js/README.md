@@ -5,11 +5,9 @@ Rust+WASM pixel engine for layer-based image compositing.
 ## Browser
 
 ```js
-import init, { Composition } from 'kimg';
+import { Composition } from '@iamkaf/kimg';
 
-await init(); // auto-selects the SIMD wasm build when supported
-
-const doc = new Composition(128, 128);
+const doc = await Composition.create({ width: 128, height: 128 });
 doc.add_image_layer('bg', rgbaData, 128, 128, 0, 0);
 const png = doc.export_png();
 ```
@@ -17,14 +15,9 @@ const png = doc.export_png();
 ## Node.js
 
 ```js
-import { readFileSync } from 'fs';
-import { initSync, Composition, simdSupported } from 'kimg';
+import { Composition } from '@iamkaf/kimg';
 
-const wasmName = simdSupported() ? 'kimg_wasm_simd_bg.wasm' : 'kimg_wasm_bg.wasm';
-const wasm = readFileSync(new URL(wasmName, import.meta.resolve('kimg')));
-initSync({ module: wasm });
-
-const doc = new Composition(128, 128);
+const doc = await Composition.create({ width: 128, height: 128 });
 // ...
 ```
 
@@ -32,11 +25,14 @@ const doc = new Composition(128, 128);
 
 ```js
 // Base64 RGBA helpers (pure JS, no WASM needed)
-import { rgbaToBase64, base64ToRgba } from 'kimg/base64';
+import { rgbaToBase64, base64ToRgba } from '@iamkaf/kimg/base64';
 
-// Color utilities (requires WASM init first)
-import { readableTextColor } from 'kimg/color-utils';
+// Color utilities
+import { readableTextColor } from '@iamkaf/kimg/color-utils';
 
 // Low-level wasm-bound surface
-import initRaw, { Composition as RawComposition } from 'kimg/raw';
+import initRaw, { Composition as RawComposition } from '@iamkaf/kimg/raw';
+
+await initRaw();
+const raw = new RawComposition(128, 128);
 ```

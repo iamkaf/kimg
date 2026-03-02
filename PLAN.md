@@ -20,7 +20,6 @@ Current weakness:
 - The shipped JS API is still mostly a direct wasm-bound surface
 - Method naming is Rust-style `snake_case`
 - Layer manipulation is functional but not ergonomic from JS
-- npm publication is not finalized
 
 ## Product Direction
 
@@ -40,17 +39,16 @@ Design rules:
 Main package entrypoint:
 
 ```js
-import { init, initSync, simdSupported, Composition } from "kimg";
+import { Composition, preload, simdSupported } from "@iamkaf/kimg";
 
-await init();
-
-const comp = new Composition({ width: 128, height: 128 });
+await preload(); // optional eager warm-up
+const comp = await Composition.create({ width: 128, height: 128 });
 ```
 
 Composition creation and common operations:
 
 ```js
-const comp = new Composition({ width: 256, height: 256 });
+const comp = await Composition.create({ width: 256, height: 256 });
 
 const groupId = comp.addGroupLayer({ name: "Character" });
 
@@ -97,13 +95,18 @@ import {
   relativeLuminance,
   contrastRatio,
   dominantRgbFromRgba,
-} from "kimg";
+} from "@iamkaf/kimg";
+
+const format = await detectFormat(bytes);
 ```
 
 Raw compatibility surface:
 
 ```js
-import init, { RawComposition } from "kimg/raw";
+import init, { Composition as RawComposition } from "@iamkaf/kimg/raw";
+
+await init();
+const comp = new RawComposition(128, 128);
 ```
 
 ## Stable v1 Scope
@@ -112,6 +115,7 @@ Must be true before calling the API stable:
 
 - `kimg` main entrypoint hides wasm filenames and internal glue naming
 - `kimg/raw` exposes the existing low-level wasm-bound surface
+- `@iamkaf/kimg` is the published package name
 - Main entrypoint uses `camelCase` names and object arguments
 - `Composition` supports creation, render/export, import/decode, and common layer creation
 - Common layer updates go through one stable patch method instead of many narrow setters in JS
@@ -124,10 +128,10 @@ Must be true before calling the API stable:
 ### 1. Package Surface
 
 - [x] Rename the main package entrypoint to `js/index.js` / `dist/index.js`
-- [x] Export `init`, `initSync`, `simdSupported`, `Composition`, and utility functions from the main entrypoint
+- [x] Replace main-package explicit init with lazy async entrypoints (`Composition.create`, async utilities, optional `preload`)
 - [x] Move the current direct wasm wrapper behind `kimg/raw`
 - [x] Stop exposing `kimg_wasm` filenames as the primary user-facing API
-- [ ] Decide the final npm package name and publication path
+- [x] Decide the final npm package name and publication path (`@iamkaf/kimg`)
 
 ### 2. JS Facade
 

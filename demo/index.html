@@ -303,14 +303,14 @@
   </div>
 
   <script type="module">
-    import init, {
+    import {
       Composition,
-      hex_to_rgb,
-      rgb_to_hex,
-      relative_luminance,
-      contrast_ratio,
-      dominant_rgb_from_rgba,
-      detect_format,
+      hexToRgb,
+      rgbToHex,
+      relativeLuminance,
+      contrastRatio,
+      dominantRgbFromRgba,
+      detectFormat,
     } from '../dist/index.js';
 
     // --- Pixel data generators ---
@@ -358,11 +358,9 @@
 
     try {
       const t0 = performance.now();
-      await init();
-      const tInit = performance.now() - t0;
-
       const SIZE = 128;
-      let doc = new Composition(SIZE, SIZE);
+      let doc = await Composition.create({ width: SIZE, height: SIZE });
+      const tInit = performance.now() - t0;
 
       // --- Build layer tree ---
 
@@ -488,9 +486,9 @@
 
       function handleImportFile(file) {
         const reader = new FileReader();
-        reader.onload = () => {
+        reader.onload = async () => {
           const bytes = new Uint8Array(reader.result);
-          const fmt = detect_format(bytes);
+          const fmt = await detectFormat(bytes);
           importNote.textContent = `Detected: ${fmt} (${file.name}, ${bytes.length} bytes)`;
 
           try {
@@ -557,11 +555,11 @@
       loadInput.addEventListener('change', () => {
         if (!loadInput.files.length) return;
         const reader = new FileReader();
-        reader.onload = () => {
+        reader.onload = async () => {
           const bytes = new Uint8Array(reader.result);
           try {
             doc.free();
-            doc = Composition.deserialize(bytes);
+            doc = await Composition.deserialize(bytes);
             updateLayerCount();
             rerender();
             importNote.textContent = `Document loaded (${bytes.length} bytes)`;
@@ -577,12 +575,13 @@
 
       document.getElementById('btn-reimport').addEventListener('click', () => {
         const pngBytes = doc.export_png();
-        const doc2 = new Composition(SIZE, SIZE);
-        doc2.add_png_layer('re-imported', pngBytes, 0, 0);
-        const rgba2 = doc2.render();
-        drawToCanvas(rgba2);
-        doc2.free();
-        setTimeout(() => rerender(), 1500);
+        Composition.create({ width: SIZE, height: SIZE }).then((doc2) => {
+          doc2.add_png_layer('re-imported', pngBytes, 0, 0);
+          const rgba2 = doc2.render();
+          drawToCanvas(rgba2);
+          doc2.free();
+          setTimeout(() => rerender(), 1500);
+        });
       });
 
       // --- Render loop ---
@@ -616,23 +615,24 @@
       const whiteHex = '#ffffff';
       const blackHex = '#000000';
 
-      const bgRgb = hex_to_rgb(bgHex);
-      const bgLum = relative_luminance(bgHex);
-      const crWhite = contrast_ratio(bgHex, whiteHex);
-      const crBlack = contrast_ratio(bgHex, blackHex);
-
       const bgData = solidRgba(128, 128, 59, 130, 246, 255);
-      const dominant = dominant_rgb_from_rgba(bgData, 128, 128);
-      const dominantHex = dominant.length === 3 ? rgb_to_hex(dominant[0], dominant[1], dominant[2]) : '?';
+      const [bgRgb, bgLum, crWhite, crBlack, dominant] = await Promise.all([
+        hexToRgb(bgHex),
+        relativeLuminance(bgHex),
+        contrastRatio(bgHex, whiteHex),
+        contrastRatio(bgHex, blackHex),
+        dominantRgbFromRgba(bgData, 128, 128),
+      ]);
+      const dominantHex = dominant.length === 3 ? await rgbToHex(dominant[0], dominant[1], dominant[2]) : '?';
 
       const colorResults = document.getElementById('color-results');
       const colorEntries = [
-        { swatch: bgHex, label: `hex_to_rgb("${bgHex}")`, detail: `rgb(${bgRgb[0]}, ${bgRgb[1]}, ${bgRgb[2]})` },
-        { swatch: bgHex, label: `relative_luminance("${bgHex}")`, detail: bgLum.toFixed(4) },
-        { swatch: bgHex, label: `contrast_ratio vs white`, detail: `${crWhite.toFixed(2)}:1` },
-        { swatch: bgHex, label: `contrast_ratio vs black`, detail: `${crBlack.toFixed(2)}:1` },
-        { swatch: dominantHex, label: `dominant_rgb_from_rgba (bg)`, detail: `${dominantHex}` },
-        { swatch: dominantHex, label: `rgb_to_hex(${dominant[0]}, ${dominant[1]}, ${dominant[2]})`, detail: dominantHex },
+        { swatch: bgHex, label: `hexToRgb("${bgHex}")`, detail: `rgb(${bgRgb[0]}, ${bgRgb[1]}, ${bgRgb[2]})` },
+        { swatch: bgHex, label: `relativeLuminance("${bgHex}")`, detail: bgLum.toFixed(4) },
+        { swatch: bgHex, label: `contrastRatio vs white`, detail: `${crWhite.toFixed(2)}:1` },
+        { swatch: bgHex, label: `contrastRatio vs black`, detail: `${crBlack.toFixed(2)}:1` },
+        { swatch: dominantHex, label: `dominantRgbFromRgba (bg)`, detail: `${dominantHex}` },
+        { swatch: dominantHex, label: `rgbToHex(${dominant[0]}, ${dominant[1]}, ${dominant[2]})`, detail: dominantHex },
       ];
 
       for (const c of colorEntries) {

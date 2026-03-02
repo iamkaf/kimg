@@ -55,3 +55,6 @@ doc = false
 
 [workspace]
 members = ["."]
+
+[profile.release]
+panic = "unwind"

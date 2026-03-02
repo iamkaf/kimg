@@ -1,10 +1,11 @@
+import { preload } from "./index.js";
 import { relative_luminance } from "./raw.js";
+
+await preload();
 
 /**
  * Pick a readable text color (black or white) for the given background.
  * Uses WCAG 2.x relative luminance with a 0.179 threshold.
- *
- * Requires WASM to be initialized before calling.
  *
  * @param {string} bgHex - Background color as hex string (e.g. "#3b82f6")
  * @returns {string} "#000000" for light backgrounds, "#ffffff" for dark

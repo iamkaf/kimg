@@ -16,6 +16,12 @@ kimg fills that gap. Originally extracted from the [Spriteform](https://spritefo
 ## Install
 
 ```bash
+npm install @iamkaf/kimg
+```
+
+For local development from this repo:
+
+```bash
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli
 ./scripts/build.sh
@@ -28,11 +34,9 @@ This builds the consumable JS/WASM package into `dist/`.
 ### Browser
 
 ```js
-import init, { Composition } from './dist/index.js';
+import { Composition } from '@iamkaf/kimg';
 
-await init(); // auto-selects the SIMD wasm build when the runtime supports it
-
-const doc = new Composition(128, 128);
+const doc = await Composition.create({ width: 128, height: 128 });
 const layerId = doc.add_image_layer('sprite', rgbaPixels, 128, 128, 0, 0);
 doc.set_opacity(layerId, 0.8);
 
@@ -42,13 +46,9 @@ const png = doc.export_png();
 ### Node.js
 
 ```js
-import { readFileSync } from 'fs';
-import { initSync, Composition, simdSupported } from './dist/index.js';
+import { Composition } from '@iamkaf/kimg';
 
-const wasmName = simdSupported() ? 'kimg_wasm_simd_bg.wasm' : 'kimg_wasm_bg.wasm';
-initSync({ module: readFileSync(new URL(`./dist/${wasmName}`, import.meta.url)) });
-
-const doc = new Composition(64, 64);
+const doc = await Composition.create({ width: 64, height: 64 });
 // same API from here on
 ```
 
@@ -76,13 +76,16 @@ const doc = new Composition(64, 64);
 // Base64 RGBA helpers — pure JS, no WASM init needed
 import { rgbaToBase64, base64ToRgba } from './dist/base64.js';
 
-// Pick readable text color for a background (needs WASM init first)
-import { readableTextColor } from './dist/color-utils.js';
+// Pick readable text color for a background
+import { readableTextColor } from '@iamkaf/kimg/color-utils';
 readableTextColor('#1a1a2e'); // '#ffffff'
 readableTextColor('#f0f0f0'); // '#000000'
 
 // Low-level wasm-bound API
-import initRaw, { Composition as RawComposition } from './dist/raw.js';
+import initRaw, { Composition as RawComposition } from '@iamkaf/kimg/raw';
+
+await initRaw();
+const raw = new RawComposition(128, 128);
 ```
 
 ## Color utilities
@@ -90,13 +93,13 @@ import initRaw, { Composition as RawComposition } from './dist/raw.js';
 These are free functions, not tied to a document:
 
 ```js
-import { hex_to_rgb, rgb_to_hex, relative_luminance, contrast_ratio, dominant_rgb_from_rgba } from './dist/index.js';
+import { hexToRgb, rgbToHex, relativeLuminance, contrastRatio, dominantRgbFromRgba } from '@iamkaf/kimg';
 
-hex_to_rgb('#ff8000');                    // Uint8Array [255, 128, 0]
-rgb_to_hex(255, 128, 0);                  // '#ff8000'
-relative_luminance('#3b82f6');            // 0.2355 (WCAG 2.x)
-contrast_ratio('#ffffff', '#000000');     // 21.0
-dominant_rgb_from_rgba(pixels, 128, 128); // Uint8Array [r, g, b]
+await hexToRgb('#ff8000');                     // Uint8Array [255, 128, 0]
+await rgbToHex(255, 128, 0);                   // '#ff8000'
+await relativeLuminance('#3b82f6');            // 0.2355 (WCAG 2.x)
+await contrastRatio('#ffffff', '#000000');     // 21.0
+await dominantRgbFromRgba(pixels, 128, 128);   // Uint8Array [r, g, b]
 ```
 
 ## Project structure
@@ -150,7 +153,7 @@ The build emits two wasm binaries:
 cargo test -p kimg-core
 ```
 
-118 tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, and color utilities.
+121 tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, and color utilities.
 
 ## Benchmarks
 
@@ -189,7 +192,7 @@ The benchmarks cover:
 Notes on the harnesses:
 
 - Very expensive resize cases use reduced flat-sampled Criterion groups so `cargo bench -p kimg-core` stays practical while still reporting worst-case medians.
-- RGBA bilinear and Lanczos3 resize paths use `fast_image_resize`, so native builds pick up host SIMD and the browser `init()` path can load the separate `simd128` wasm artifact.
+- RGBA bilinear and Lanczos3 resize paths use `fast_image_resize`, so native builds pick up host SIMD and the browser `Composition.create()` path can load the separate `simd128` wasm artifact.
 - Codec benchmarks use a deterministic textured 512×512 image instead of a flat fill, which avoids unrealistically optimistic compression timings.
 
 Representative medians from a recent local run on March 2, 2026. These are hardware-dependent and should be treated as a baseline example, not a guarantee:
