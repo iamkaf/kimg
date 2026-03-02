@@ -9,6 +9,8 @@
   "sideEffects": false,
   "scripts": {
     "build": "./scripts/build.sh",
+    "fmt:js": "oxfmt js tests vitest.config.ts",
+    "fmt:js:check": "oxfmt --check js tests vitest.config.ts",
     "test": "npm run test:js",
     "test:all": "cargo test --workspace && npm run test:js",
     "test:js": "./scripts/build.sh && vitest run",
@@ -16,7 +18,8 @@
     "prepack": "./scripts/build.sh"
   },
   "devDependencies": {
-    "typescript": "^5.8.2",
+    "@typescript/native-preview": "^7.0.0-dev.20260302.1",
+    "oxfmt": "^0.36.0",
     "vitest": "^3.2.4"
   },
   "exports": {

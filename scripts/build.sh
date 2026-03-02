@@ -61,8 +61,8 @@ if ! command -v npx &> /dev/null; then
     exit 1
 fi
 
-echo "==> Compiling TypeScript wrapper into dist/..."
-npx --no-install tsc -p "$ROOT/tsconfig.json"
+echo "==> Compiling TypeScript wrapper into dist/ with tsgo..."
+npx --no-install tsgo -p "$ROOT/tsconfig.json"
 
 echo "==> Copying generated bindings into dist/..."
 cp "$BASELINE_OUT/kimg_wasm_bg.wasm" "$DIST/kimg_wasm_bg.wasm"

@@ -43,6 +43,7 @@ The tracked JS/TS wrapper sources live in `js/`, the npm package metadata lives 
 ## Code style
 
 - Run `cargo fmt` before committing.
+- Run `npm run fmt:js` before committing if you touched the TS wrapper or tests.
 - Keep dependencies minimal. The WASM binary size matters.
 - Tests go in `#[cfg(test)] mod tests` blocks within each source file.
 - Prefer concrete assertions over fuzzy ranges in tests when possible.

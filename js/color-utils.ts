@@ -9,9 +9,9 @@ await preload();
  *
  */
 export function readableTextColor(bgHex: string): string {
-    const lum = relative_luminance(bgHex);
-    if (lum < 0) {
-        return "#000000"; // fallback on invalid input
-    }
-    return lum > 0.179 ? "#000000" : "#ffffff";
+  const lum = relative_luminance(bgHex);
+  if (lum < 0) {
+    return "#000000"; // fallback on invalid input
+  }
+  return lum > 0.179 ? "#000000" : "#ffffff";
 }

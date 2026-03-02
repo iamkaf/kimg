@@ -5,11 +5,11 @@ Rust+WASM pixel engine for layer-based image compositing.
 ## Browser
 
 ```js
-import { Composition } from '@iamkaf/kimg';
+import { Composition } from "@iamkaf/kimg";
 
 const doc = await Composition.create({ width: 128, height: 128 });
 doc.addImageLayer({
-  name: 'bg',
+  name: "bg",
   rgba: rgbaData,
   width: 128,
   height: 128,
@@ -22,7 +22,7 @@ const png = doc.exportPng();
 ## Node.js
 
 ```js
-import { Composition } from '@iamkaf/kimg';
+import { Composition } from "@iamkaf/kimg";
 
 const doc = await Composition.create({ width: 128, height: 128 });
 // ...
@@ -32,21 +32,21 @@ const doc = await Composition.create({ width: 128, height: 128 });
 
 ```js
 // Base64 RGBA helpers (pure JS, no WASM needed)
-import { rgbaToBase64, base64ToRgba } from '@iamkaf/kimg/base64';
+import { rgbaToBase64, base64ToRgba } from "@iamkaf/kimg/base64";
 
 // Color utilities
-import { readableTextColor } from '@iamkaf/kimg/color-utils';
+import { readableTextColor } from "@iamkaf/kimg/color-utils";
 
 // Low-level wasm-bound surface (browser)
-import initRaw, { Composition as RawComposition } from '@iamkaf/kimg/raw';
+import initRaw, { Composition as RawComposition } from "@iamkaf/kimg/raw";
 
 await initRaw();
 const raw = new RawComposition(128, 128);
 
 // Low-level wasm-bound surface (Node.js)
-import { readFileSync } from 'node:fs';
-import { initSync } from '@iamkaf/kimg/raw';
+import { readFileSync } from "node:fs";
+import { initSync } from "@iamkaf/kimg/raw";
 
-const wasm = readFileSync(new URL('./kimg_wasm_bg.wasm', import.meta.url));
+const wasm = readFileSync(new URL("./kimg_wasm_bg.wasm", import.meta.url));
 initSync({ module: wasm });
 ```

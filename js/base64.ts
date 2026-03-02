@@ -2,7 +2,13 @@
  * Encode raw RGBA bytes to a Base64 string.
  */
 export function rgbaToBase64(data: Uint8Array): string {
-  const BufferCtor = (globalThis as { Buffer?: { from(input: Uint8Array | string, encoding?: string): { toString(encoding: string): string } } }).Buffer;
+  const BufferCtor = (
+    globalThis as {
+      Buffer?: {
+        from(input: Uint8Array | string, encoding?: string): { toString(encoding: string): string };
+      };
+    }
+  ).Buffer;
   if (BufferCtor !== undefined) {
     return BufferCtor.from(data).toString("base64");
   }
@@ -17,7 +23,9 @@ export function rgbaToBase64(data: Uint8Array): string {
  * Decode a Base64 string back to raw RGBA bytes.
  */
 export function base64ToRgba(str: string): Uint8Array {
-  const BufferCtor = (globalThis as { Buffer?: { from(input: Uint8Array | string, encoding?: string): Uint8Array } }).Buffer;
+  const BufferCtor = (
+    globalThis as { Buffer?: { from(input: Uint8Array | string, encoding?: string): Uint8Array } }
+  ).Buffer;
   if (BufferCtor !== undefined) {
     const buf = BufferCtor.from(str, "base64");
     return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);

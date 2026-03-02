@@ -28,7 +28,7 @@ cargo install wasm-bindgen-cli
 ./scripts/build.sh
 ```
 
-This builds the consumable JS/WASM package into `dist/`.
+This builds the consumable JS/WASM package into `dist/` using `tsgo` for the tracked TypeScript wrapper layer.
 
 ## Quick start
 
@@ -167,6 +167,7 @@ The build emits two wasm binaries:
 
 ```bash
 cargo test -p kimg-core
+npm run fmt:js:check
 npm run test:js
 npm run test:all
 ```
@@ -176,6 +177,8 @@ npm run test:all
 The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
 
 `npm run test:all` is the convenience entrypoint for the full Rust + package-layer test pass.
+
+`npm run fmt:js` and `npm run fmt:js:check` use `oxfmt` for the tracked TypeScript sources and tests.
 
 ## Benchmarks
 
