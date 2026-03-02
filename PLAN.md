@@ -262,6 +262,105 @@ comp.bucketFillLayer(layerId, {
   - `cargo audit`
   - `cargo deny check`
 
+### 6. Architecture and Dependency Evaluation
+
+These are targeted spikes to improve runtime performance, reduce custom code, and
+trim long-term maintenance cost. Each spike must be evaluated against both native
+and wasm builds before adoption.
+
+#### 6.1 Serialization Spike: `postcard`
+
+- [ ] Prototype replacing the handwritten metadata parser in `kimg-core/src/serialize.rs` with a typed metadata struct encoded via `postcard`
+- [ ] Preserve the current overall file shape: structured metadata + raw pixel payload
+- [ ] Decide and document the backward-compatibility story:
+  - migrate in place with versioning
+  - or keep legacy decode support for old `.kimg` payloads
+- [ ] Benchmark against the current `serialize_deserialize/10_layers` baseline
+- [ ] Validate native and wasm builds
+- Success criteria:
+  - less custom parsing code
+  - equal or better deserialize performance
+  - no regression in wasm package size or startup behavior
+- Wasm status: supported and expected to be a good fit
+
+#### 6.2 Shape Backend Spike: `tiny-skia`
+
+- [ ] Prototype shape rendering with `tiny-skia` behind a temporary feature flag or isolated branch
+- [ ] Compare against the current custom rasterizer in `kimg-core/src/shape.rs`
+- [ ] Confirm coverage for current primitives:
+  - rectangle
+  - rounded rectangle
+  - ellipse
+  - line
+  - polygon
+- [ ] Confirm fill, stroke, clipping, and transform behavior match current layer semantics closely enough
+- [ ] Re-run shape render benchmarks:
+  - `render/single_shape/512`
+  - `render/10_shapes/512`
+  - `render/10_shapes_with_filter/512`
+- [ ] Validate native and wasm builds
+- Success criteria:
+  - less shape/rasterization code to maintain
+  - comparable or better render performance
+  - clearer path to future shape features
+- Wasm status: likely supported; verify in practice before adopting
+
+#### 6.3 Quantization Spike: `imagequant`
+
+- [ ] A/B benchmark `imagequant` against the current sprite/palette path in `kimg-core/src/sprite.rs`
+- [ ] Compare output quality, runtime, and memory behavior on representative inputs:
+  - flat UI art
+  - textured images
+  - pixel art / sprite sheets
+- [ ] Re-run palette/quantization benchmarks:
+  - `extract_palette/512/16colors`
+  - `quantize/512/16colors`
+- [ ] Validate native and wasm builds
+- Success criteria:
+  - clearly better palette/output quality, or meaningfully simpler code at similar quality
+  - acceptable performance and memory cost
+- Wasm status: supported, but disable threaded defaults for wasm targets
+
+#### 6.4 Codec Spike: `zune-jpeg` and `zune-png`
+
+- [ ] Prototype `zune-jpeg` as an alternative to `jpeg-decoder`
+- [ ] Prototype `zune-png` as an alternative to `png`
+- [ ] Re-run codec benchmarks with the current textured-image harness
+- [ ] Compare native decode speed, wasm behavior, code complexity, and output compatibility
+- [ ] Keep current encode paths unless a replacement clearly improves the package
+- Success criteria:
+  - materially better decode performance, or simpler maintenance at comparable performance
+  - no packaging or wasm integration regressions
+- Wasm status: supported; SIMD acceleration should gracefully fall back to portable paths on wasm
+
+#### 6.5 Buffer Ergonomics Pass: `bytemuck` and optional `rgb`
+
+- [ ] Audit RGBA byte/pixel conversion code in buffer, codec, and wasm glue layers
+- [ ] Use `bytemuck` where it reduces manual casting or indexing noise without obscuring layout assumptions
+- [ ] Evaluate `rgb` only if it makes pixel manipulation clearer without spreading new wrapper types everywhere
+- [ ] Keep this pass incremental; do not block higher-value spikes on it
+- Success criteria:
+  - leaner byte/pixel glue code
+  - no behavior changes
+  - no measurable performance regressions
+- Wasm status: supported
+
+#### 6.6 Deferred / Only If Reprioritized
+
+- [ ] PSD parser replacement spike with `rawpsd` only if PSD import becomes important again
+- [ ] Text engine evaluation with `cosmic-text` only when the text roadmap item becomes active
+- Notes:
+  - `rawpsd` looks plausible for wasm, but should be treated as unverified until tested
+  - `cosmic-text` is not a near-term wasm choice for this project; treat it as future work with extra integration risk
+
+#### 6.7 Recommended Order
+
+- [ ] 1. `postcard`
+- [ ] 2. `tiny-skia`
+- [ ] 3. `imagequant`
+- [ ] 4. `zune-jpeg` / `zune-png`
+- [ ] 5. `bytemuck`
+
 ## Roadmap
 
 Tracked for later, not part of the current delivery target:
