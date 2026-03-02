@@ -23,7 +23,7 @@
 //! documents serialized with older versions of kimg can still be loaded.
 
 use crate::blend::BlendMode;
-use crate::blit::{Anchor, Rotation};
+use crate::blit::Anchor;
 use crate::buffer::ImageBuffer;
 use crate::document::Document;
 use crate::filter::HslFilterConfig;
@@ -179,27 +179,24 @@ fn serialize_layer(layer: &Layer, pixel_data: &mut Vec<u8>) -> String {
             let offset = pixel_data.len();
             pixel_data.extend_from_slice(&img.buffer.data);
             format!(
-                r#""kind":"image","width":{},"height":{},"buffer_offset":{},"buffer_len":{},"anchor":"{}","flip_x":{},"flip_y":{},"rotation":"{}""#,
+                r#""kind":"image","width":{},"height":{},"buffer_offset":{},"buffer_len":{},{}"#,
                 img.buffer.width,
                 img.buffer.height,
                 offset,
                 img.buffer.data.len(),
-                anchor_str(img.anchor),
-                img.flip_x,
-                img.flip_y,
-                rotation_str(img.rotation),
+                serialize_transform_props(&img.transform),
             )
         }
         LayerKind::Paint(paint) => {
             let offset = pixel_data.len();
             pixel_data.extend_from_slice(&paint.buffer.data);
             format!(
-                r#""kind":"paint","width":{},"height":{},"buffer_offset":{},"buffer_len":{},"anchor":"{}""#,
+                r#""kind":"paint","width":{},"height":{},"buffer_offset":{},"buffer_len":{},{}"#,
                 paint.buffer.width,
                 paint.buffer.height,
                 offset,
                 paint.buffer.data.len(),
-                anchor_str(paint.anchor),
+                serialize_transform_props(&paint.transform),
             )
         }
         LayerKind::Filter(f) => {
@@ -257,6 +254,7 @@ fn serialize_layer(layer: &Layer, pixel_data: &mut Vec<u8>) -> String {
                 shape.radius,
                 points.join(","),
             );
+            props.push_str(&format!(",{}", serialize_transform_props(&shape.transform)));
 
             if let Some(fill) = shape.fill {
                 props.push_str(&format!(
@@ -286,13 +284,16 @@ fn anchor_str(a: Anchor) -> &'static str {
     }
 }
 
-fn rotation_str(r: Rotation) -> &'static str {
-    match r {
-        Rotation::None => "none",
-        Rotation::Cw90 => "cw90",
-        Rotation::Cw180 => "cw180",
-        Rotation::Cw270 => "cw270",
-    }
+fn serialize_transform_props(transform: &LayerTransform) -> String {
+    format!(
+        r#""anchor":"{}","flip_x":{},"flip_y":{},"rotation_deg":{},"scale_x":{},"scale_y":{}"#,
+        anchor_str(transform.anchor),
+        transform.flip_x,
+        transform.flip_y,
+        transform.rotation_deg,
+        transform.scale_x,
+        transform.scale_y,
+    )
 }
 
 fn gradient_dir_str(d: GradientDirection) -> &'static str {
@@ -687,16 +688,9 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             let buffer_bytes = checked_slice(pixel_data, offset, len, "pixel data")?;
             let buffer = ImageBuffer::from_rgba(w, h, buffer_bytes.to_vec())
                 .ok_or_else(|| SerializeError::InvalidData("buffer size mismatch".into()))?;
-            let anchor = parse_anchor(get_json_str(&obj, "anchor").unwrap_or("top_left"));
-            let flip_x = get_json_bool(&obj, "flip_x").unwrap_or(false);
-            let flip_y = get_json_bool(&obj, "flip_y").unwrap_or(false);
-            let rotation = parse_rotation(get_json_str(&obj, "rotation").unwrap_or("none"));
             LayerKind::Image(ImageLayerData {
                 buffer,
-                anchor,
-                flip_x,
-                flip_y,
-                rotation,
+                transform: parse_transform(&obj),
             })
         }
         "paint" => {
@@ -707,8 +701,10 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             let buffer_bytes = checked_slice(pixel_data, offset, len, "pixel data")?;
             let buffer = ImageBuffer::from_rgba(w, h, buffer_bytes.to_vec())
                 .ok_or_else(|| SerializeError::InvalidData("buffer size mismatch".into()))?;
-            let anchor = parse_anchor(get_json_str(&obj, "anchor").unwrap_or("top_left"));
-            LayerKind::Paint(PaintLayerData { buffer, anchor })
+            LayerKind::Paint(PaintLayerData {
+                buffer,
+                transform: parse_transform(&obj),
+            })
         }
         "filter" => {
             let config = HslFilterConfig {
@@ -846,9 +842,10 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
                 Vec::new()
             };
 
-            LayerKind::Shape(ShapeLayerData::new(
-                shape_type, width, height, radius, fill, stroke, points,
-            ))
+            let mut shape =
+                ShapeLayerData::new(shape_type, width, height, radius, fill, stroke, points);
+            shape.transform = parse_transform(&obj);
+            LayerKind::Shape(shape)
         }
         other => {
             return Err(SerializeError::InvalidData(format!(
@@ -873,18 +870,40 @@ fn parse_anchor(s: &str) -> Anchor {
     }
 }
 
-fn parse_rotation(s: &str) -> Rotation {
+fn parse_rotation_degrees(s: &str) -> f64 {
     match s {
-        "cw90" => Rotation::Cw90,
-        "cw180" => Rotation::Cw180,
-        "cw270" => Rotation::Cw270,
-        _ => Rotation::None,
+        "cw90" => 90.0,
+        "cw180" => 180.0,
+        "cw270" => 270.0,
+        "none" => 0.0,
+        other => other.parse().unwrap_or(0.0),
+    }
+}
+
+fn normalize_scale(value: f64) -> f64 {
+    value.abs().max(f64::EPSILON)
+}
+
+fn parse_transform(obj: &JsonObject) -> LayerTransform {
+    let rotation_deg = get_json_f64(obj, "rotation_deg").unwrap_or_else(|_| {
+        get_json_str(obj, "rotation")
+            .map(parse_rotation_degrees)
+            .unwrap_or(0.0)
+    });
+
+    LayerTransform {
+        anchor: parse_anchor(get_json_str(obj, "anchor").unwrap_or("top_left")),
+        flip_x: get_json_bool(obj, "flip_x").unwrap_or(false),
+        flip_y: get_json_bool(obj, "flip_y").unwrap_or(false),
+        rotation_deg,
+        scale_x: normalize_scale(get_json_f64(obj, "scale_x").unwrap_or(1.0)),
+        scale_y: normalize_scale(get_json_f64(obj, "scale_y").unwrap_or(1.0)),
     }
 }
 
 fn parse_shape_type(s: &str) -> ShapeType {
     match s {
-        "rounded_rect" => ShapeType::RoundedRect,
+        "rounded_rect" | "roundedRect" => ShapeType::RoundedRect,
         "ellipse" => ShapeType::Ellipse,
         "line" => ShapeType::Line,
         "polygon" => ShapeType::Polygon,
@@ -921,10 +940,7 @@ mod tests {
             },
             kind: LayerKind::Image(ImageLayerData {
                 buffer: buf,
-                anchor: Anchor::TopLeft,
-                flip_x: false,
-                flip_y: false,
-                rotation: Rotation::None,
+                transform: LayerTransform::new(),
             }),
         });
 
@@ -1082,14 +1098,18 @@ mod tests {
         let mut doc = Document::new(4, 4);
         let id = doc.next_id();
         let buf = ImageBuffer::new_transparent(2, 2);
+        let mut transform = LayerTransform::new();
+        transform.anchor = Anchor::Center;
+        transform.flip_x = true;
+        transform.flip_y = true;
+        transform.rotation_deg = 90.0;
+        transform.scale_x = 1.5;
+        transform.scale_y = 0.5;
         let mut layer = Layer {
             common: LayerCommon::new(id, "props"),
             kind: LayerKind::Image(ImageLayerData {
                 buffer: buf,
-                anchor: Anchor::Center,
-                flip_x: true,
-                flip_y: true,
-                rotation: Rotation::Cw90,
+                transform,
             }),
         };
         layer.common.opacity = 0.75;
@@ -1111,10 +1131,38 @@ mod tests {
         assert_eq!(l.common.blend_mode, BlendMode::Multiply);
         assert!(l.common.clip_to_below);
         if let LayerKind::Image(img) = &l.kind {
-            assert_eq!(img.anchor, Anchor::Center);
-            assert!(img.flip_x);
-            assert!(img.flip_y);
-            assert_eq!(img.rotation, Rotation::Cw90);
+            assert_eq!(img.transform.anchor, Anchor::Center);
+            assert!(img.transform.flip_x);
+            assert!(img.transform.flip_y);
+            assert_eq!(img.transform.rotation_deg, 90.0);
+            assert_eq!(img.transform.scale_x, 1.5);
+            assert_eq!(img.transform.scale_y, 0.5);
+        }
+    }
+
+    #[test]
+    fn deserialize_accepts_legacy_image_rotation_field() {
+        let json = concat!(
+            r#"{"width":4,"height":4,"next_id":2,"layers":["#,
+            r#"{"id":1,"name":"legacy","visible":true,"opacity":1,"x":0,"y":0,"blend_mode":"normal","clip_to_below":false,"mask_inverted":false,"kind":"image","width":1,"height":1,"buffer_offset":0,"buffer_len":4,"anchor":"center","flip_x":true,"flip_y":false,"rotation":"cw90"}"#,
+            r#"]}"#
+        );
+        let mut data = Vec::new();
+        data.extend_from_slice(&(json.len() as u32).to_be_bytes());
+        data.extend_from_slice(json.as_bytes());
+        data.extend_from_slice(&[255, 0, 0, 255]);
+
+        let restored = deserialize(&data).unwrap();
+        match &restored.layers[0].kind {
+            LayerKind::Image(img) => {
+                assert_eq!(img.transform.anchor, Anchor::Center);
+                assert!(img.transform.flip_x);
+                assert!(!img.transform.flip_y);
+                assert_eq!(img.transform.rotation_deg, 90.0);
+                assert_eq!(img.transform.scale_x, 1.0);
+                assert_eq!(img.transform.scale_y, 1.0);
+            }
+            _ => panic!("expected image layer"),
         }
     }
 

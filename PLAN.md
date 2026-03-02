@@ -207,15 +207,15 @@ const id = comp.addShapeLayer({
 
 Current status:
 
-- Position, flip, anchor, and snapped rotation already exist for image layers
-- Destructive resize/crop/rotate layer helpers already exist
-- What is missing is one stable, non-destructive transform model at the JS API boundary
+- Stable JS patch-based transforms now exist for image, paint, and shape layers
+- Destructive resize/crop/rotate layer helpers still exist alongside the non-destructive model
 
-- [ ] Expose per-layer translate / scale / rotate / flip in the stable JS API
-- [ ] Support at least image, paint, and shape layers
-- [ ] Decide whether group transforms are in scope for the first pass
-- [ ] Prefer a patch-style API over many narrow setter methods
-- [ ] JS-facing API target:
+- [x] Expose per-layer translate / scale / rotate / flip in the stable JS API
+- [x] Support at least image, paint, and shape layers
+- [x] Decide whether group transforms are in scope for the first pass
+- [x] Prefer a patch-style API over many narrow setter methods
+- First pass excludes group transforms. Group-level transforms can be layered on later if needed.
+- [x] JS-facing API target:
 
 ```js
 comp.updateLayer(id, {

@@ -8,13 +8,19 @@ Rust+WASM pixel engine for layer-based image compositing.
 import { Composition } from "@iamkaf/kimg";
 
 const doc = await Composition.create({ width: 128, height: 128 });
-doc.addImageLayer({
+const layerId = doc.addImageLayer({
   name: "bg",
   rgba: rgbaData,
   width: 128,
   height: 128,
   x: 0,
   y: 0,
+});
+doc.updateLayer(layerId, {
+  anchor: "center",
+  rotation: 22.5,
+  scaleX: 1.25,
+  scaleY: 0.75,
 });
 const png = doc.exportPng();
 

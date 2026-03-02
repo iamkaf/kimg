@@ -16,7 +16,7 @@
 //! | [`LayerKind::Shape`] | A rasterized vector-style shape primitive |
 
 use crate::blend::BlendMode;
-use crate::blit::{Anchor, Rotation};
+use crate::blit::Anchor;
 use crate::buffer::ImageBuffer;
 use crate::filter::HslFilterConfig;
 use crate::pixel::Rgba;
@@ -68,14 +68,18 @@ pub struct LayerPatch {
     pub mask_inverted: Option<bool>,
     /// Set whether the layer clips to the layer below it.
     pub clip_to_below: Option<bool>,
-    /// Set the anchor for image/paint layers.
+    /// Set the anchor for image/paint/shape layers.
     pub anchor: Option<Anchor>,
-    /// Set horizontal flip for image layers.
+    /// Set horizontal flip for image/paint/shape layers.
     pub flip_x: Option<bool>,
-    /// Set vertical flip for image layers.
+    /// Set vertical flip for image/paint/shape layers.
     pub flip_y: Option<bool>,
-    /// Set snapped rotation for image layers.
-    pub rotation: Option<Rotation>,
+    /// Set non-destructive rotation in degrees for image/paint/shape layers.
+    pub rotation: Option<f64>,
+    /// Set horizontal scale for image/paint/shape layers.
+    pub scale_x: Option<f64>,
+    /// Set vertical scale for image/paint/shape layers.
+    pub scale_y: Option<f64>,
     /// Patch filter-layer configuration values.
     pub filter: Option<FilterLayerPatch>,
 }
@@ -124,20 +128,52 @@ impl LayerCommon {
     }
 }
 
+/// Shared non-destructive transform data for rasterized layer kinds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct LayerTransform {
+    /// Origin point for positioning the transformed bounds.
+    pub anchor: Anchor,
+    /// Flip along the X axis before scaling/rotation.
+    pub flip_x: bool,
+    /// Flip along the Y axis before scaling/rotation.
+    pub flip_y: bool,
+    /// Arbitrary clockwise rotation in degrees.
+    pub rotation_deg: f64,
+    /// Horizontal scale multiplier.
+    pub scale_x: f64,
+    /// Vertical scale multiplier.
+    pub scale_y: f64,
+}
+
+impl LayerTransform {
+    /// Create the default identity transform.
+    pub const fn new() -> Self {
+        Self {
+            anchor: Anchor::TopLeft,
+            flip_x: false,
+            flip_y: false,
+            rotation_deg: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+        }
+    }
+}
+
+impl Default for LayerTransform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Image layer with transform properties.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ImageLayerData {
     /// The source image buffer.
     pub buffer: ImageBuffer,
-    /// Origin point for transforms (e.g. TopLeft vs Center)
-    pub anchor: Anchor,
-    /// Flip along the X axis.
-    pub flip_x: bool,
-    /// Flip along the Y axis.
-    pub flip_y: bool,
-    /// Orthogonal rotation (0, 90, 180, 270)
-    pub rotation: Rotation,
+    /// Shared non-destructive transform state.
+    pub transform: LayerTransform,
 }
 
 impl ImageLayerData {
@@ -145,10 +181,7 @@ impl ImageLayerData {
     pub fn new(buffer: ImageBuffer) -> Self {
         Self {
             buffer,
-            anchor: Anchor::TopLeft,
-            flip_x: false,
-            flip_y: false,
-            rotation: Rotation::None,
+            transform: LayerTransform::new(),
         }
     }
 }
@@ -159,8 +192,8 @@ impl ImageLayerData {
 pub struct PaintLayerData {
     /// The editable pixel buffer.
     pub buffer: ImageBuffer,
-    /// Origin point when applying document position offsets.
-    pub anchor: Anchor,
+    /// Shared non-destructive transform state.
+    pub transform: LayerTransform,
 }
 
 impl PaintLayerData {
@@ -168,7 +201,7 @@ impl PaintLayerData {
     pub fn new(buffer: ImageBuffer) -> Self {
         Self {
             buffer,
-            anchor: Anchor::TopLeft,
+            transform: LayerTransform::new(),
         }
     }
 }
@@ -364,6 +397,8 @@ pub struct ShapeLayerData {
     pub stroke: Option<ShapeStroke>,
     /// Polygon points in local space. Ignored for non-polygon shapes.
     pub points: Vec<ShapePoint>,
+    /// Shared non-destructive transform state.
+    pub transform: LayerTransform,
 }
 
 impl ShapeLayerData {
@@ -385,6 +420,7 @@ impl ShapeLayerData {
             fill,
             stroke,
             points,
+            transform: LayerTransform::new(),
         }
     }
 }

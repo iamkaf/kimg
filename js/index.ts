@@ -183,6 +183,8 @@ export interface LayerUpdate {
   flipX?: boolean;
   flipY?: boolean;
   rotation?: number;
+  scaleX?: number;
+  scaleY?: number;
   filterConfig?: FilterConfig;
 }
 
@@ -289,6 +291,8 @@ export interface LayerInfo {
   flipX?: boolean;
   flipY?: boolean;
   rotation?: number;
+  scaleX?: number;
+  scaleY?: number;
   filterConfig?: FilterConfigSnapshot;
   childCount?: number;
   color?: number[];
@@ -371,6 +375,14 @@ function normalizeFiniteNumber(value, fieldName) {
 
 function normalizeInteger(value, fieldName) {
   return Math.trunc(normalizeFiniteNumber(value, fieldName));
+}
+
+function normalizePositiveNumber(value, fieldName) {
+  const normalized = normalizeFiniteNumber(value, fieldName);
+  if (normalized <= 0) {
+    throw new RangeError(`${fieldName} must be greater than 0.`);
+  }
+  return normalized;
 }
 
 function normalizePositiveInteger(value, fieldName) {
@@ -761,6 +773,12 @@ function normalizeLayerUpdatePatch(patch) {
   }
   if ("rotation" in object && object.rotation !== undefined) {
     normalized.rotation = normalizeFiniteNumber(object.rotation, "updateLayer.rotation");
+  }
+  if ("scaleX" in object && object.scaleX !== undefined) {
+    normalized.scaleX = normalizePositiveNumber(object.scaleX, "updateLayer.scaleX");
+  }
+  if ("scaleY" in object && object.scaleY !== undefined) {
+    normalized.scaleY = normalizePositiveNumber(object.scaleY, "updateLayer.scaleY");
   }
 
   const filterConfig = object.filterConfig ?? object.filter;

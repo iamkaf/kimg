@@ -14,15 +14,16 @@
 //! mirroring Spriteform's `renderSmartVariantScoped` behaviour.
 
 use crate::blend::{blend, blend_normal};
-use crate::blit::{blit_transformed, Anchor, BlitParams, Rotation};
+use crate::blit::{blit_transformed, BlitParams, Rotation};
 use crate::buffer::ImageBuffer;
 use crate::filter::{apply_hsl_filter, HslFilterConfig};
 use crate::layer::{
     FilterLayerPatch, GradientDirection, GradientLayerData, GroupLayerData, Layer, LayerKind,
-    LayerPatch, ShapeLayerData, SolidColorLayerData,
+    LayerPatch, LayerTransform, ShapeLayerData, SolidColorLayerData,
 };
 use crate::pixel::Rgba;
 use crate::shape::render_shape;
+use crate::transform;
 
 /// Location of a layer within the tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,22 +263,26 @@ impl Document {
         }
 
         if let Some(anchor) = patch.anchor {
-            match &mut layer.kind {
-                LayerKind::Image(img) => img.anchor = anchor,
-                LayerKind::Paint(paint) => paint.anchor = anchor,
-                _ => {}
+            if let Some(transform) = layer_transform_mut(layer) {
+                transform.anchor = anchor;
             }
         }
 
-        if let LayerKind::Image(img) = &mut layer.kind {
+        if let Some(transform) = layer_transform_mut(layer) {
             if let Some(flip_x) = patch.flip_x {
-                img.flip_x = flip_x;
+                transform.flip_x = flip_x;
             }
             if let Some(flip_y) = patch.flip_y {
-                img.flip_y = flip_y;
+                transform.flip_y = flip_y;
             }
             if let Some(rotation) = patch.rotation {
-                img.rotation = rotation;
+                transform.rotation_deg = rotation;
+            }
+            if let Some(scale_x) = patch.scale_x {
+                transform.scale_x = scale_x.abs().max(f64::EPSILON);
+            }
+            if let Some(scale_y) = patch.scale_y {
+                transform.scale_y = scale_y.abs().max(f64::EPSILON);
             }
         }
 
@@ -314,10 +319,7 @@ impl Document {
         let layer = self.find_layer_mut(group_id).unwrap();
         layer.kind = LayerKind::Image(crate::layer::ImageLayerData {
             buffer: buf,
-            anchor: crate::blit::Anchor::TopLeft,
-            flip_x: false,
-            flip_y: false,
-            rotation: crate::blit::Rotation::None,
+            transform: LayerTransform::new(),
         });
         // Reset position since the buffer is already at canvas coordinates
         layer.common.x = 0;
@@ -382,6 +384,54 @@ fn render_gradient(grad: &GradientLayerData, width: u32, height: u32) -> ImageBu
 /// Render a shape layer to its local buffer.
 fn render_shape_layer(shape: &ShapeLayerData) -> ImageBuffer {
     render_shape(shape)
+}
+
+fn layer_transform_mut(layer: &mut Layer) -> Option<&mut LayerTransform> {
+    match &mut layer.kind {
+        LayerKind::Image(image) => Some(&mut image.transform),
+        LayerKind::Paint(paint) => Some(&mut paint.transform),
+        LayerKind::Shape(shape) => Some(&mut shape.transform),
+        _ => None,
+    }
+}
+
+fn flip_buffer(src: &ImageBuffer, flip_x: bool, flip_y: bool) -> ImageBuffer {
+    if !flip_x && !flip_y {
+        return src.clone();
+    }
+
+    let mut dst = ImageBuffer::new_transparent(src.width, src.height);
+    for y in 0..src.height {
+        for x in 0..src.width {
+            let sx = if flip_x { src.width - 1 - x } else { x };
+            let sy = if flip_y { src.height - 1 - y } else { y };
+            dst.set_pixel(x, y, src.get_pixel(sx, sy));
+        }
+    }
+    dst
+}
+
+fn apply_non_destructive_transform(
+    src: &ImageBuffer,
+    transform_data: &LayerTransform,
+) -> ImageBuffer {
+    let mut current = flip_buffer(src, transform_data.flip_x, transform_data.flip_y);
+
+    let scaled_width = ((current.width as f64) * transform_data.scale_x.abs())
+        .round()
+        .max(1.0) as u32;
+    let scaled_height = ((current.height as f64) * transform_data.scale_y.abs())
+        .round()
+        .max(1.0) as u32;
+    if scaled_width != current.width || scaled_height != current.height {
+        current = transform::resize_bilinear(&current, scaled_width, scaled_height);
+    }
+
+    if transform_data.rotation_deg.abs() > f64::EPSILON {
+        current = transform::rotate_bilinear(&current, transform_data.rotation_deg);
+    }
+
+    current
 }
 
 /// Sample a gradient at position t (0..1) using sorted stops.
@@ -597,31 +647,33 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
 
     match &layer.kind {
         LayerKind::Image(img) => {
+            let transformed = apply_non_destructive_transform(&img.buffer, &img.transform);
             blit_transformed(
                 &mut buf,
-                &img.buffer,
+                &transformed,
                 &BlitParams {
                     dx: layer.common.x,
                     dy: layer.common.y,
-                    anchor: img.anchor,
-                    flip_x: img.flip_x,
-                    flip_y: img.flip_y,
-                    rotation: img.rotation,
+                    anchor: img.transform.anchor,
+                    flip_x: false,
+                    flip_y: false,
+                    rotation: Rotation::None,
                     opacity: layer.common.opacity,
                 },
             );
         }
         LayerKind::Paint(paint) => {
+            let transformed = apply_non_destructive_transform(&paint.buffer, &paint.transform);
             blit_transformed(
                 &mut buf,
-                &paint.buffer,
+                &transformed,
                 &BlitParams {
                     dx: layer.common.x,
                     dy: layer.common.y,
-                    anchor: paint.anchor,
+                    anchor: paint.transform.anchor,
                     flip_x: false,
                     flip_y: false,
-                    rotation: crate::blit::Rotation::None,
+                    rotation: Rotation::None,
                     opacity: layer.common.opacity,
                 },
             );
@@ -654,14 +706,15 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
             }
         }
         LayerKind::Shape(shape) => {
-            let shape_buf = render_shape_layer(shape);
+            let shape_buf =
+                apply_non_destructive_transform(&render_shape_layer(shape), &shape.transform);
             blit_transformed(
                 &mut buf,
                 &shape_buf,
                 &BlitParams {
                     dx: layer.common.x,
                     dy: layer.common.y,
-                    anchor: Anchor::TopLeft,
+                    anchor: shape.transform.anchor,
                     flip_x: false,
                     flip_y: false,
                     rotation: Rotation::None,
@@ -774,7 +827,6 @@ fn render_group(group: &GroupLayerData, output: &mut ImageBuffer, opacity: f64) 
 mod tests {
     use super::*;
     use crate::blend::BlendMode;
-    use crate::blit::{Anchor, Rotation};
     use crate::layer::*;
     use crate::pixel::Rgba;
 
@@ -787,10 +839,7 @@ mod tests {
             },
             kind: LayerKind::Image(ImageLayerData {
                 buffer: buf,
-                anchor: Anchor::TopLeft,
-                flip_x: false,
-                flip_y: false,
-                rotation: Rotation::None,
+                transform: LayerTransform::new(),
             }),
         }
     }
@@ -1025,6 +1074,8 @@ mod tests {
     fn update_layer_applies_common_and_filter_fields() {
         let mut doc = Document::new(4, 4);
         let image_id = doc.next_id();
+        let paint_id = doc.next_id();
+        let shape_id = doc.next_id();
         let filter_id = doc.next_id();
         doc.layers.push(img_layer(
             image_id,
@@ -1033,6 +1084,22 @@ mod tests {
             0,
             0,
         ));
+        doc.layers.push(Layer {
+            common: LayerCommon::new(paint_id, "paint"),
+            kind: LayerKind::Paint(PaintLayerData::new(ImageBuffer::new_transparent(2, 2))),
+        });
+        doc.layers.push(Layer {
+            common: LayerCommon::new(shape_id, "shape"),
+            kind: LayerKind::Shape(ShapeLayerData::new(
+                ShapeType::Rectangle,
+                2,
+                2,
+                0,
+                Some(Rgba::new(0, 255, 0, 255)),
+                None,
+                Vec::new(),
+            )),
+        });
         doc.layers.push(Layer {
             common: LayerCommon::new(filter_id, "filter"),
             kind: LayerKind::Filter(FilterLayerData::new()),
@@ -1046,10 +1113,34 @@ mod tests {
                 flip_x: Some(true),
                 name: Some("renamed".to_string()),
                 opacity: Some(0.5),
-                rotation: Some(Rotation::Cw90),
+                rotation: Some(90.0),
+                scale_x: Some(1.5),
+                scale_y: Some(2.0),
                 visible: Some(false),
                 x: Some(10),
                 y: Some(20),
+                ..Default::default()
+            },
+        ));
+        assert!(doc.update_layer(
+            paint_id,
+            &LayerPatch {
+                anchor: Some(crate::blit::Anchor::Center),
+                flip_y: Some(true),
+                rotation: Some(15.0),
+                scale_x: Some(2.0),
+                scale_y: Some(0.5),
+                ..Default::default()
+            },
+        ));
+        assert!(doc.update_layer(
+            shape_id,
+            &LayerPatch {
+                anchor: Some(crate::blit::Anchor::Center),
+                flip_x: Some(true),
+                rotation: Some(30.0),
+                scale_x: Some(1.25),
+                scale_y: Some(0.75),
                 ..Default::default()
             },
         ));
@@ -1075,10 +1166,34 @@ mod tests {
         assert!(image_layer.common.clip_to_below);
         match &image_layer.kind {
             LayerKind::Image(image) => {
-                assert!(image.flip_x);
-                assert_eq!(image.rotation, Rotation::Cw90);
+                assert!(image.transform.flip_x);
+                assert_eq!(image.transform.rotation_deg, 90.0);
+                assert_eq!(image.transform.scale_x, 1.5);
+                assert_eq!(image.transform.scale_y, 2.0);
             }
             _ => panic!("expected image layer"),
+        }
+
+        match &doc.find_layer(paint_id).unwrap().kind {
+            LayerKind::Paint(paint) => {
+                assert_eq!(paint.transform.anchor, crate::blit::Anchor::Center);
+                assert!(paint.transform.flip_y);
+                assert_eq!(paint.transform.rotation_deg, 15.0);
+                assert_eq!(paint.transform.scale_x, 2.0);
+                assert_eq!(paint.transform.scale_y, 0.5);
+            }
+            _ => panic!("expected paint layer"),
+        }
+
+        match &doc.find_layer(shape_id).unwrap().kind {
+            LayerKind::Shape(shape) => {
+                assert_eq!(shape.transform.anchor, crate::blit::Anchor::Center);
+                assert!(shape.transform.flip_x);
+                assert_eq!(shape.transform.rotation_deg, 30.0);
+                assert_eq!(shape.transform.scale_x, 1.25);
+                assert_eq!(shape.transform.scale_y, 0.75);
+            }
+            _ => panic!("expected shape layer"),
         }
 
         match &doc.find_layer(filter_id).unwrap().kind {

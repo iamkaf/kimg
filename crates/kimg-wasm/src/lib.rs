@@ -19,7 +19,7 @@ use wasm_bindgen::prelude::*;
 
 use js_sys::{Array, Object, Reflect};
 use kimg_core::blend::BlendMode;
-use kimg_core::blit::{Anchor, Rotation};
+use kimg_core::blit::Anchor;
 use kimg_core::buffer::ImageBuffer;
 use kimg_core::codec;
 use kimg_core::color;
@@ -28,8 +28,8 @@ use kimg_core::document::Document as CoreDocument;
 use kimg_core::filter;
 use kimg_core::layer::{
     FilterLayerData, FilterLayerPatch, GradientDirection, GradientLayerData, GradientStop,
-    GroupLayerData, ImageLayerData, Layer, LayerCommon, LayerKind, LayerPatch, PaintLayerData,
-    ShapeLayerData, ShapePoint, ShapeStroke, ShapeType, SolidColorLayerData,
+    GroupLayerData, ImageLayerData, Layer, LayerCommon, LayerKind, LayerPatch, LayerTransform,
+    PaintLayerData, ShapeLayerData, ShapePoint, ShapeStroke, ShapeType, SolidColorLayerData,
 };
 use kimg_core::pixel::Rgba;
 use kimg_core::serialize;
@@ -272,38 +272,30 @@ impl Document {
 
     // ── Image-specific setters ──
 
-    /// Set flip on an image layer.
+    /// Set flip on an image, paint, or shape layer.
     pub fn set_flip(&mut self, id: u32, flip_x: bool, flip_y: bool) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.flip_x = flip_x;
-                img.flip_y = flip_y;
-            }
-        }
+        let mut patch = LayerPatch::default();
+        patch.flip_x = Some(flip_x);
+        patch.flip_y = Some(flip_y);
+        let _ = self.inner.update_layer(id, &patch);
     }
 
-    /// Set rotation on an image layer (snaps to nearest 90 degrees).
+    /// Set non-destructive rotation on an image, paint, or shape layer.
     pub fn set_rotation(&mut self, id: u32, degrees: f64) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.rotation = Rotation::from_degrees(degrees);
-            }
-        }
+        let mut patch = LayerPatch::default();
+        patch.rotation = Some(degrees);
+        let _ = self.inner.update_layer(id, &patch);
     }
 
-    /// Set anchor on an image layer. 0 = TopLeft, 1 = Center.
+    /// Set anchor on an image, paint, or shape layer. 0 = TopLeft, 1 = Center.
     pub fn set_anchor(&mut self, id: u32, anchor: u8) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            let a = match anchor {
-                1 => Anchor::Center,
-                _ => Anchor::TopLeft,
-            };
-            match &mut layer.kind {
-                LayerKind::Image(img) => img.anchor = a,
-                LayerKind::Paint(paint) => paint.anchor = a,
-                _ => {}
-            }
-        }
+        let a = match anchor {
+            1 => Anchor::Center,
+            _ => Anchor::TopLeft,
+        };
+        let mut patch = LayerPatch::default();
+        patch.anchor = Some(a);
+        let _ = self.inner.update_layer(id, &patch);
     }
 
     // ── Filter config setter ──
@@ -1052,22 +1044,29 @@ fn anchor_from_js(value: &JsValue) -> Option<Anchor> {
     }
 }
 
-fn rotation_degrees(rotation: Rotation) -> u16 {
-    match rotation {
-        Rotation::None => 0,
-        Rotation::Cw90 => 90,
-        Rotation::Cw180 => 180,
-        Rotation::Cw270 => 270,
-        _ => 0,
-    }
-}
-
 fn anchor_name(anchor: Anchor) -> &'static str {
     match anchor {
         Anchor::TopLeft => "topLeft",
         Anchor::Center => "center",
         _ => "topLeft",
     }
+}
+
+fn set_transform_snapshot(object: &Object, transform: &LayerTransform) {
+    set_prop(
+        object,
+        "anchor",
+        JsValue::from_str(anchor_name(transform.anchor)),
+    );
+    set_prop(object, "flipX", JsValue::from_bool(transform.flip_x));
+    set_prop(object, "flipY", JsValue::from_bool(transform.flip_y));
+    set_prop(
+        object,
+        "rotation",
+        JsValue::from_f64(transform.rotation_deg),
+    );
+    set_prop(object, "scaleX", JsValue::from_f64(transform.scale_x));
+    set_prop(object, "scaleY", JsValue::from_f64(transform.scale_y));
 }
 
 fn gradient_direction_name(direction: GradientDirection) -> &'static str {
@@ -1139,18 +1138,7 @@ fn layer_snapshot(layer: &Layer, parent_id: Option<u32>, index: usize, depth: us
                 "height",
                 JsValue::from_f64(image.buffer.height as f64),
             );
-            set_prop(
-                &object,
-                "anchor",
-                JsValue::from_str(anchor_name(image.anchor)),
-            );
-            set_prop(&object, "flipX", JsValue::from_bool(image.flip_x));
-            set_prop(&object, "flipY", JsValue::from_bool(image.flip_y));
-            set_prop(
-                &object,
-                "rotation",
-                JsValue::from_f64(rotation_degrees(image.rotation) as f64),
-            );
+            set_transform_snapshot(&object, &image.transform);
         }
         LayerKind::Paint(paint) => {
             set_prop(&object, "kind", JsValue::from_str("paint"));
@@ -1164,11 +1152,7 @@ fn layer_snapshot(layer: &Layer, parent_id: Option<u32>, index: usize, depth: us
                 "height",
                 JsValue::from_f64(paint.buffer.height as f64),
             );
-            set_prop(
-                &object,
-                "anchor",
-                JsValue::from_str(anchor_name(paint.anchor)),
-            );
+            set_transform_snapshot(&object, &paint.transform);
         }
         LayerKind::Filter(filter) => {
             set_prop(&object, "kind", JsValue::from_str("filter"));
@@ -1236,6 +1220,7 @@ fn layer_snapshot(layer: &Layer, parent_id: Option<u32>, index: usize, depth: us
         }
         LayerKind::Shape(shape) => {
             set_prop(&object, "kind", JsValue::from_str("shape"));
+            set_transform_snapshot(&object, &shape.transform);
             set_prop(
                 &object,
                 "shapeType",
@@ -1348,9 +1333,9 @@ fn parse_layer_patch(value: &JsValue) -> Option<LayerPatch> {
     patch.anchor = get_prop(&object, "anchor").and_then(|value| anchor_from_js(&value));
     patch.flip_x = get_prop(&object, "flipX").and_then(|value| value.as_bool());
     patch.flip_y = get_prop(&object, "flipY").and_then(|value| value.as_bool());
-    patch.rotation = get_prop(&object, "rotation")
-        .and_then(|value| value.as_f64())
-        .map(Rotation::from_degrees);
+    patch.rotation = get_prop(&object, "rotation").and_then(|value| value.as_f64());
+    patch.scale_x = get_prop(&object, "scaleX").and_then(|value| value.as_f64());
+    patch.scale_y = get_prop(&object, "scaleY").and_then(|value| value.as_f64());
     patch.filter = get_prop(&object, "filterConfig").and_then(|value| parse_filter_patch(&value));
     Some(patch)
 }
@@ -1506,13 +1491,33 @@ mod tests {
         let mut doc = Document::new(4, 4);
         let rgba = vec![255u8; 2 * 2 * 4];
         let id = doc.add_image_layer("img", &rgba, 2, 2, 0, 0);
+        let paint_id = doc.add_paint_layer("paint", 2, 2);
+        let shape_id = doc.add_shape_layer(
+            "shape",
+            "rectangle",
+            2,
+            2,
+            0,
+            &[255, 0, 0, 255],
+            &[],
+            0,
+            &[],
+            0,
+            0,
+        );
 
         doc.set_opacity(id, 0.5);
         doc.set_visible(id, false);
         doc.set_position(id, 10, 20);
         doc.set_flip(id, true, false);
-        doc.set_rotation(id, 90.0);
+        doc.set_rotation(id, 22.5);
         doc.set_anchor(id, 1);
+        doc.set_flip(paint_id, false, true);
+        doc.set_rotation(paint_id, 15.0);
+        doc.set_anchor(paint_id, 1);
+        doc.set_flip(shape_id, true, true);
+        doc.set_rotation(shape_id, 30.0);
+        doc.set_anchor(shape_id, 1);
         doc.set_blend_mode(id, "multiply");
 
         let layer = doc.inner.find_layer(id).unwrap();
@@ -1522,12 +1527,32 @@ mod tests {
         assert_eq!(layer.common.y, 20);
         assert_eq!(layer.common.blend_mode, BlendMode::Multiply);
         if let LayerKind::Image(img) = &layer.kind {
-            assert!(img.flip_x);
-            assert!(!img.flip_y);
-            assert_eq!(img.rotation, Rotation::Cw90);
-            assert_eq!(img.anchor, Anchor::Center);
+            assert!(img.transform.flip_x);
+            assert!(!img.transform.flip_y);
+            assert_eq!(img.transform.rotation_deg, 22.5);
+            assert_eq!(img.transform.anchor, Anchor::Center);
         } else {
             panic!("expected image layer");
+        }
+
+        match &doc.inner.find_layer(paint_id).unwrap().kind {
+            LayerKind::Paint(paint) => {
+                assert!(!paint.transform.flip_x);
+                assert!(paint.transform.flip_y);
+                assert_eq!(paint.transform.rotation_deg, 15.0);
+                assert_eq!(paint.transform.anchor, Anchor::Center);
+            }
+            _ => panic!("expected paint layer"),
+        }
+
+        match &doc.inner.find_layer(shape_id).unwrap().kind {
+            LayerKind::Shape(shape) => {
+                assert!(shape.transform.flip_x);
+                assert!(shape.transform.flip_y);
+                assert_eq!(shape.transform.rotation_deg, 30.0);
+                assert_eq!(shape.transform.anchor, Anchor::Center);
+            }
+            _ => panic!("expected shape layer"),
         }
     }
 

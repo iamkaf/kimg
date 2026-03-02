@@ -42,7 +42,9 @@ describe("main package facade", () => {
         opacity: 0.5,
         anchor: "center",
         flipX: true,
-        rotation: 90,
+        rotation: 22.5,
+        scaleX: 1.5,
+        scaleY: 0.75,
       }),
     ).toBe(true);
 
@@ -52,7 +54,9 @@ describe("main package facade", () => {
       flipX: true,
       opacity: 0.5,
       parentId: groupId,
-      rotation: 90,
+      rotation: 22.5,
+      scaleX: 1.5,
+      scaleY: 0.75,
       x: 1,
       y: 2,
     });
@@ -100,6 +104,11 @@ describe("main package facade", () => {
   test("shape layers render and expose shape metadata through the facade", async () => {
     const composition = await Composition.create({ width: 8, height: 8 });
     const groupId = composition.addGroupLayer({ name: "group" });
+    const paintId = composition.addPaintLayer({
+      name: "paint",
+      width: 2,
+      height: 2,
+    });
     const shapeId = composition.addShapeLayer({
       name: "badge",
       type: "roundedRect",
@@ -115,21 +124,54 @@ describe("main package facade", () => {
       },
       parentId: groupId,
     });
+    expect(
+      composition.updateLayer(paintId, {
+        anchor: "center",
+        flipY: true,
+        rotation: 15,
+        scaleX: 2,
+        scaleY: 0.5,
+      }),
+    ).toBe(true);
+    expect(
+      composition.updateLayer(shapeId, {
+        anchor: "center",
+        flipX: true,
+        rotation: 30,
+        scaleX: 1.25,
+        scaleY: 0.75,
+      }),
+    ).toBe(true);
 
     const shape = composition.getLayer(shapeId);
     expect(shape).toMatchObject({
+      anchor: "center",
+      flipX: true,
       kind: "shape",
       parentId: groupId,
+      rotation: 30,
+      scaleX: 1.25,
+      scaleY: 0.75,
       shapeType: "roundedRect",
       width: 4,
       height: 3,
       radius: 1,
       strokeWidth: 1,
     });
+    expect(composition.getLayer(paintId)).toMatchObject({
+      anchor: "center",
+      flipY: true,
+      kind: "paint",
+      rotation: 15,
+      scaleX: 2,
+      scaleY: 0.5,
+    });
 
     const rgba = composition.renderRgba();
     const pixelIndex = (1 * composition.width + 1) * 4;
-    expect(Array.from(rgba.slice(pixelIndex, pixelIndex + 4))).toEqual([255, 255, 255, 255]);
+    const pixel = Array.from(rgba.slice(pixelIndex, pixelIndex + 4));
+    expect(pixel[0]).toBeGreaterThan(0);
+    expect(pixel[3]).toBeGreaterThan(0);
 
     composition.free();
   });

@@ -24,6 +24,8 @@ export interface RawLayerPatch {
   flipX?: boolean;
   flipY?: boolean;
   rotation?: number;
+  scaleX?: number;
+  scaleY?: number;
   filterConfig?: RawFilterConfig;
 }
 
@@ -48,6 +50,8 @@ export interface RawLayerSnapshot {
   flipX?: boolean;
   flipY?: boolean;
   rotation?: number;
+  scaleX?: number;
+  scaleY?: number;
   filterConfig?: {
     hueDeg: number;
     saturation: number;

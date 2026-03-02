@@ -46,7 +46,13 @@ const layerId = doc.addImageLayer({
   x: 0,
   y: 0,
 });
-doc.setLayerOpacity(layerId, 0.8);
+doc.updateLayer(layerId, {
+  opacity: 0.8,
+  anchor: 'center',
+  rotation: 22.5,
+  scaleX: 1.25,
+  scaleY: 0.75,
+});
 
 const png = doc.exportPng();
 ```
@@ -71,7 +77,7 @@ Shape layers are also available for rectangle, rounded rectangle, ellipse, line,
 
 **Filters** — HSL adjustments, brightness/contrast, temperature/tint, sharpen. Invert, posterize, threshold, levels, gradient map. Box blur, Gaussian blur, edge detect, emboss (all as convolution kernels).
 
-**Transforms** — Resize (nearest-neighbor, bilinear, Lanczos3), arbitrary-angle rotation, crop, trim alpha.
+**Transforms** — Non-destructive per-layer translate / scale / rotate / flip for image, paint, and shape layers, plus destructive resize (nearest-neighbor, bilinear, Lanczos3), crop, trim alpha.
 
 **Sprite tools** — Sprite sheet packer (shelf bin-packing), contact sheet grids, pixel-art upscale, color quantization, batch render pipeline.
 
@@ -92,6 +98,21 @@ const badgeId = doc.addShapeLayer({
   radius: 12,
   fill: [255, 0, 0, 255],
   stroke: { color: [255, 255, 255, 255], width: 2 },
+});
+```
+
+### Per-layer transforms
+
+```js
+doc.updateLayer(layerId, {
+  x: 10,
+  y: -4,
+  anchor: "center",
+  flipX: false,
+  flipY: true,
+  rotation: 30,
+  scaleX: 1.25,
+  scaleY: 0.75,
 });
 ```
 
@@ -189,7 +210,7 @@ npm run test:js
 npm run test:all
 ```
 
-132 Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, and shape layers.
+133 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, and shared per-layer transforms.
 
 The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
 
