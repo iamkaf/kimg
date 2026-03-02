@@ -8,7 +8,7 @@ const SIMD_DETECT_BYTES = new Uint8Array([
     1, 8, 0, 65, 0, 253, 15, 253, 98, 11,
 ]);
 
-const DOCUMENT_PROXY_HANDLER = {
+const COMPOSITION_PROXY_HANDLER = {
     get(target, prop, receiver) {
         if (Reflect.has(target, prop)) {
             return Reflect.get(target, prop, receiver);
@@ -75,16 +75,25 @@ export function simdSupported() {
     return cachedSimdSupport;
 }
 
-export class Document {
-    constructor(width, height) {
-        const bindings = requireBindings();
-        Object.defineProperty(this, "_inner", {
+export class Composition {
+    static #fromInner(inner) {
+        const composition = Object.create(Composition.prototype);
+        Object.defineProperty(composition, "_inner", {
             configurable: false,
             enumerable: false,
-            value: new bindings.Document(width, height),
+            value: inner,
             writable: false,
         });
-        return new Proxy(this, DOCUMENT_PROXY_HANDLER);
+        return new Proxy(composition, COMPOSITION_PROXY_HANDLER);
+    }
+
+    constructor(width, height) {
+        const bindings = requireBindings();
+        return Composition.#fromInner(new bindings.Composition(width, height));
+    }
+
+    static deserialize(data) {
+        return Composition.#fromInner(requireBindings().Composition.deserialize(data));
     }
 
     free() {
@@ -93,7 +102,7 @@ export class Document {
 }
 
 if (typeof Symbol.dispose === "symbol") {
-    Document.prototype[Symbol.dispose] = function () {
+    Composition.prototype[Symbol.dispose] = function () {
         if (typeof this._inner[Symbol.dispose] === "function") {
             return this._inner[Symbol.dispose]();
         }

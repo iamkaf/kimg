@@ -2,9 +2,8 @@
 
 [![CI](https://github.com/iamkaf/kimg/actions/workflows/ci.yml/badge.svg)](https://github.com/iamkaf/kimg/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![WASM Size](https://img.shields.io/badge/wasm-271KB-green.svg)]()
 
-A Rust+WASM image compositing engine. Think of it as a headless Photoshop you can `import` — layers, blend modes, filters, masks, and multi-format I/O, all running in a ~270KB WASM binary.
+A Rust+WASM image compositing engine. Think of it as a headless Photoshop you can `import` — layers, blend modes, filters, masks, and multi-format I/O, all running in release-built WASM binaries.
 
 It works the same way in Node.js and the browser. No native dependencies, no Canvas API, no DOM.
 
@@ -17,19 +16,23 @@ kimg fills that gap. Originally extracted from the [Spriteform](https://spritefo
 ## Install
 
 ```bash
-npm install kimg
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli
+./scripts/build.sh
 ```
+
+This builds the consumable JS/WASM package into `dist/`.
 
 ## Quick start
 
 ### Browser
 
 ```js
-import init, { Document } from 'kimg';
+import init, { Composition } from './dist/kimg_wasm.js';
 
 await init(); // auto-selects the SIMD wasm build when the runtime supports it
 
-const doc = new Document(128, 128);
+const doc = new Composition(128, 128);
 const layerId = doc.add_image_layer('sprite', rgbaPixels, 128, 128, 0, 0);
 doc.set_opacity(layerId, 0.8);
 
@@ -40,12 +43,12 @@ const png = doc.export_png();
 
 ```js
 import { readFileSync } from 'fs';
-import { initSync, Document, simdSupported } from 'kimg';
+import { initSync, Composition, simdSupported } from './dist/kimg_wasm.js';
 
 const wasmName = simdSupported() ? 'kimg_wasm_simd_bg.wasm' : 'kimg_wasm_bg.wasm';
-initSync({ module: readFileSync(new URL(wasmName, import.meta.resolve('kimg'))) });
+initSync({ module: readFileSync(new URL(`./dist/${wasmName}`, import.meta.url)) });
 
-const doc = new Document(64, 64);
+const doc = new Composition(64, 64);
 // same API from here on
 ```
 
@@ -71,10 +74,10 @@ const doc = new Document(64, 64);
 
 ```js
 // Base64 RGBA helpers — pure JS, no WASM init needed
-import { rgbaToBase64, base64ToRgba } from 'kimg/base64';
+import { rgbaToBase64, base64ToRgba } from './dist/base64.js';
 
 // Pick readable text color for a background (needs WASM init first)
-import { readableTextColor } from 'kimg/color-utils';
+import { readableTextColor } from './dist/color-utils.js';
 readableTextColor('#1a1a2e'); // '#ffffff'
 readableTextColor('#f0f0f0'); // '#000000'
 ```
@@ -84,7 +87,7 @@ readableTextColor('#f0f0f0'); // '#000000'
 These are free functions, not tied to a document:
 
 ```js
-import { hex_to_rgb, rgb_to_hex, relative_luminance, contrast_ratio, dominant_rgb_from_rgba } from 'kimg';
+import { hex_to_rgb, rgb_to_hex, relative_luminance, contrast_ratio, dominant_rgb_from_rgba } from './dist/kimg_wasm.js';
 
 hex_to_rgb('#ff8000');                    // Uint8Array [255, 128, 0]
 rgb_to_hex(255, 128, 0);                  // '#ff8000'
@@ -144,7 +147,7 @@ The build emits two wasm binaries:
 cargo test -p kimg-core
 ```
 
-117 tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, and color utilities.
+118 tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, and color utilities.
 
 ## Benchmarks
 
@@ -207,7 +210,12 @@ Representative medians from a recent local run on March 2, 2026. These are hardw
 
 ## WASM binary size
 
-The full binary with all codecs (PNG, JPEG, WebP, GIF, PSD) is ~271KB uncompressed. Gzipped it sits around 120KB.
+Current local release build sizes:
+
+- `dist/kimg_wasm_bg.wasm`: `934 KB` uncompressed, `346,582` bytes gzipped
+- `dist/kimg_wasm_simd_bg.wasm`: `1.1 MB` uncompressed, `385,388` bytes gzipped
+
+These vary slightly with toolchain and optimization settings.
 
 ## License
 

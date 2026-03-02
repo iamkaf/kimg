@@ -1,92 +1,277 @@
-# kimg — Implementation Plan
+# kimg Plan
 
-## Phase 0: Foundation (done)
+This is the only planning document. It tracks the delta from the current repo state
+to the public API we actually want to ship and support.
 
-Bootstrap the project with end-to-end WASM compilation.
+## Current Baseline
 
-- [x] PRD written
-- [x] Rust workspace initialized (`kimg-core` + `kimg-wasm`)
-- [x] Core pixel types: `Rgba`, `ImageBuffer`
-- [x] Alpha blending (Porter-Duff source-over)
-- [x] Transformed blit (position, anchor, flip, rotation, opacity)
-- [x] HSL filter pipeline (hue/sat/light/alpha/brightness/contrast/temp/tint/sharpen)
-- [x] RGB↔HSL color conversion
-- [x] Layer types: Image, Paint, Filter, Group
-- [x] Document with canvas + layer tree + `render()`
-- [x] WASM bindings via `wasm-bindgen`
-- [x] Build script producing `.wasm` + `.js` + `.d.ts`
-- [x] Browser demo page (`demo/index.html`) — static proof-of-concept
-- [x] 28 unit tests passing (at time of Phase 0 completion)
+Already in repo:
 
-## Phase 1: Spriteform Parity (v0.1) (done)
+- Rust core compositor with layers, blend modes, masks, filters, transforms, sprite tools, codecs, and document serialization
+- `wasm-bindgen` surface exposed through `kimg-wasm`
+- Tracked JS package sources in `js/` and generated build output in `dist/`
+- Dual wasm builds: baseline + `simd128`, with runtime SIMD detection in JS
+- Fuzz targets for codec/deserialization paths
+- `cargo audit` / `cargo deny` security policy
+- Benchmark coverage and published local baseline numbers in the README
 
-Feature-complete replacement for the JS compositor (core + WASM).
+Current weakness:
 
-- [x] WASM API: layer property setters (opacity, visible, position, flip, rotation, anchor)
-- [x] WASM API: filter config bulk setter (all 9 fields)
-- [x] WASM API: group layer child management (add image/filter/group, remove)
-- [x] PNG decode/encode (via `png` crate, `codec.rs`)
-- [x] Raw RGBA import/export (`add_png_layer`, `export_png`, `get_layer_rgba`)
-- [x] Scoped filter rendering (two-pass: render non-filter layers, then apply filters)
-- [x] Color utilities: `hex_to_rgb`, `rgb_to_hex`, `srgb_to_linear`, `relative_luminance`, `contrast_ratio`, `dominant_rgb_from_rgba`
-- [x] Recursive layer tree search (`find_layer`, `find_layer_mut`)
-- [x] Interactive demo page with live filter sliders, PNG export/round-trip, color panel
-- [x] 50 unit tests passing (42 core + 8 WASM)
+- The shipped JS API is still mostly a direct wasm-bound surface
+- Public filenames still leak implementation details like `kimg_wasm.js`
+- Method naming is Rust-style `snake_case`
+- Layer manipulation is functional but not ergonomic from JS
+- npm publication is not finalized
 
-## Phase 2: Extended Blend Modes & Masks (v0.2) (done)
+## Product Direction
 
-- [x] All 16 Photoshop-compatible blend modes (Normal, Multiply, Screen, Overlay, Darken, Lighten, ColorDodge, ColorBurn, HardLight, SoftLight, Difference, Exclusion, Hue, Saturation, Color, Luminosity)
-- [x] Layer masks (grayscale alpha, applied via red channel)
-- [x] Clipping masks (`clip_to_below` flag)
-- [x] SolidColorLayer, GradientLayer (horizontal, vertical, diagonal)
-- [x] Flatten group to single image layer
-- [x] WASM bindings: `set_blend_mode`, `set_layer_mask`, `remove_layer_mask`, `set_clip_to_below`, `add_solid_color_layer`, `add_gradient_layer`, `flatten_group`
-- [x] 71 unit tests passing (57 core + 14 WASM)
+Target a thin, stable, JavaScript-first API over the current engine.
 
-## Phase 3: Advanced Filters & Transforms (v0.3) (done)
+Design rules:
 
-- [x] Convolution kernels (blur, edge detect, emboss, sharpen) — `convolution.rs`
-- [x] Pixel filters: Invert, Posterize, Threshold, Levels, Gradient Map — `filter.rs`
-- [x] Arbitrary-angle rotation (bilinear interpolation) — `transform.rs`
-- [x] Resize (nearest-neighbor, bilinear, Lanczos3) — `transform.rs`
-- [x] Crop, trim alpha — `transform.rs`
-- [x] WASM bindings for all Phase 3 features (30 WASM tests, 82 core tests)
-- [x] 112 unit tests passing (82 core + 30 WASM)
+- No singleton `initKimg()` object
+- No deep layer-handle class hierarchy in v1
+- Keep numeric layer ids in v1 for simplicity and low wrapper overhead
+- Use `camelCase` and object parameters at the package boundary
+- Keep the raw wasm-bound API available under a separate subpath for power users/tests
+- Treat copied `Uint8Array` results as the stable contract; do not promise zero-copy views
 
-## Phase 4: Sprite & Game Dev Tools (v0.4) (done)
+## Target Public API
 
-- [x] Sprite sheet packer (shelf next-fit bin-packing) — `sprite.rs`
-- [x] Contact sheet / grid layout — `sprite.rs`
-- [x] Pixel-art upscale (nearest-neighbor integer scale) — `sprite.rs`
-- [x] Color quantization (median-cut) and palette generation — `sprite.rs`
-- [x] Batch rendering pipeline — `sprite.rs`
-- [x] WASM bindings for all Phase 4 features (35 WASM tests, 93 core tests)
-- [x] 128 unit tests passing (93 core + 35 WASM)
+Main package entrypoint:
 
-## Phase 5: Format Support & Serialization (v0.5) (done)
+```js
+import { init, initSync, simdSupported, Composition } from "kimg";
 
-- [x] JPEG decode/encode (`jpeg-decoder` + `jpeg-encoder`)
-- [x] WebP decode/encode (lossless, `image-webp`)
-- [x] GIF decode (animated frames → layers, `gif` crate)
-- [x] PSD layer import (`psd` crate)
-- [x] Format auto-detection via magic bytes (PNG, JPEG, WebP, GIF, PSD)
-- [x] Document serialization (JSON metadata + binary pixel data) — `serialize.rs`
-- [x] WASM bindings: `import_jpeg`, `import_webp`, `import_gif_frames`, `import_psd`, `import_auto`, `export_jpeg`, `export_webp`, `serialize`, `deserialize`, `detect_format`, `decode_image`
-- [x] Demo page: drag-and-drop import, multi-format export, document save/load
-- [x] 150 unit tests passing (109 core + 41 WASM)
+await init();
 
-## Phase 6: Stable Release (v1.0)
+const comp = new Composition({ width: 128, height: 128 });
+```
 
-- [x] API stability guarantee
-- [x] Comprehensive docs and examples
-- [x] Published benchmarks
-- [ ] WASM-SIMD optimized builds
-- [x] Fuzz-tested codec paths
-- [x] Security audit
+Composition creation and common operations:
 
-## Backlog (unscheduled)
+```js
+const comp = new Composition({ width: 256, height: 256 });
 
-- [x] npm package with Node.js + Browser entrypoints
-- [x] Integration tests comparing output to JS compositor golden images
-- [x] Base64 RGBA encode/decode (JS-only, `atob`/`btoa`)
-- [x] `readableTextColor` (trivial in JS once `relative_luminance` exposed)
+const groupId = comp.addGroupLayer({ name: "Character" });
+
+const layerId = comp.addImageLayer({
+  name: "Hair",
+  rgba,
+  width: 64,
+  height: 64,
+  x: 0,
+  y: 0,
+  parentId: groupId,
+});
+
+comp.updateLayer(layerId, {
+  opacity: 0.8,
+  visible: true,
+  blendMode: "multiply",
+  anchor: "center",
+  flipX: false,
+  flipY: false,
+  rotation: 90,
+  clipToBelow: false,
+});
+
+comp.setLayerMask(layerId, {
+  rgba: mask,
+  width: 64,
+  height: 64,
+  inverted: false,
+});
+
+const rendered = comp.renderRgba();
+const png = comp.exportPng();
+```
+
+Format and utility surface:
+
+```js
+import {
+  decodeImage,
+  detectFormat,
+  hexToRgb,
+  rgbToHex,
+  relativeLuminance,
+  contrastRatio,
+  dominantRgbFromRgba,
+} from "kimg";
+```
+
+Raw compatibility surface:
+
+```js
+import init, { RawComposition } from "kimg/raw";
+```
+
+## Stable v1 Scope
+
+Must be true before calling the API stable:
+
+- `kimg` main entrypoint hides wasm filenames and internal glue naming
+- `kimg/raw` exposes the existing low-level wasm-bound surface
+- Main entrypoint uses `camelCase` names and object arguments
+- `Composition` supports creation, render/export, import/decode, and common layer creation
+- Common layer updates go through one stable patch method instead of many narrow setters in JS
+- Layer tree queries exist in JS-friendly form: `getLayer`, `listLayers`
+- Basic structural mutation exists: `removeLayer`, `moveLayer`
+- Package can be published under a real npm name without conflicting with an unrelated package
+
+## Delta Plan
+
+### 1. Package Surface
+
+- [ ] Rename the main package entrypoint to `js/index.js` / `dist/index.js`
+- [ ] Export `init`, `initSync`, `simdSupported`, `Composition`, and utility functions from the main entrypoint
+- [ ] Move the current direct wasm wrapper behind `kimg/raw`
+- [ ] Stop exposing `kimg_wasm` filenames as the primary user-facing API
+- [ ] Decide the final npm package name and publication path
+
+### 2. JS Facade
+
+- [ ] Add a stable JS `Composition` wrapper with object-based constructor and methods
+- [ ] Convert public API names to `camelCase`
+- [ ] Add wrapper methods for:
+  - `addImageLayer`
+  - `addPaintLayer`
+  - `addFilterLayer`
+  - `addGroupLayer`
+  - `addSolidColorLayer`
+  - `addGradientLayer`
+  - `renderRgba`
+  - `exportPng`
+  - `exportJpeg`
+  - `exportWebp`
+- [ ] Add JS utility wrappers for current free functions:
+  - `decodeImage`
+  - `detectFormat`
+  - `hexToRgb`
+  - `rgbToHex`
+  - `relativeLuminance`
+  - `contrastRatio`
+  - `dominantRgbFromRgba`
+  - `extractPaletteFromRgba`
+  - `histogramRgba`
+  - `quantizeRgba`
+
+### 3. Core/Binding Delta
+
+- [ ] Add `removeLayer(id)` for both top-level and nested layers
+- [ ] Add `moveLayer(id, target)` for reorder/reparent operations
+- [ ] Add `getLayer(id)` metadata snapshot
+- [ ] Add `listLayers({ parentId?, recursive? })`
+- [ ] Add `resizeCanvas(width, height)` on `Composition`
+- [ ] Add a single layer patch/update path that the JS wrapper can target cleanly
+- [ ] Keep current raw methods for backwards compatibility until the facade is complete
+
+### 4. Requested Feature Tracks
+
+These are requested product features. They are tracked here, not scheduled for
+immediate implementation unless reprioritized.
+
+#### 4.1 Shape Layers
+
+- [ ] Add Photoshop-style shape layers as first-class document layers
+- [ ] Start with rasterized shape primitives:
+  - rectangle
+  - rounded rectangle
+  - ellipse
+  - line
+  - polygon
+- [ ] Support fill and optional stroke in v1 of the feature
+- [ ] Ensure shape layers participate in the normal layer stack: opacity, blend mode, masks, clipping, groups, filters
+- [ ] JS-facing API target:
+
+```js
+const id = comp.addShapeLayer({
+  name: "Badge",
+  type: "roundedRect",
+  x: 24,
+  y: 24,
+  width: 96,
+  height: 40,
+  radius: 12,
+  fill: [255, 0, 0, 255],
+  stroke: { color: [255, 255, 255, 255], width: 2 },
+  parentId,
+});
+```
+
+#### 4.2 Per-Layer Transform Model
+
+Current status:
+
+- Position, flip, anchor, and snapped rotation already exist for image layers
+- Destructive resize/crop/rotate layer helpers already exist
+- What is missing is one stable, non-destructive transform model at the JS API boundary
+
+- [ ] Expose per-layer translate / scale / rotate / flip in the stable JS API
+- [ ] Support at least image, paint, and shape layers
+- [ ] Decide whether group transforms are in scope for the first pass
+- [ ] Prefer a patch-style API over many narrow setter methods
+- [ ] JS-facing API target:
+
+```js
+comp.updateLayer(id, {
+  x: 10,
+  y: -4,
+  scaleX: 1.25,
+  scaleY: 0.75,
+  rotation: 30,
+  flipX: false,
+  flipY: true,
+  anchor: "center",
+});
+```
+
+#### 4.3 Bucket Fill
+
+- [ ] Add bucket fill for paint/image-style pixel layers
+- [ ] Support `contiguous: true | false`
+- [ ] Add tolerance control so fill can be strict or color-range based
+- [ ] Decide alpha-aware matching behavior before implementation
+- [ ] JS-facing API target:
+
+```js
+comp.bucketFillLayer(layerId, {
+  x: 12,
+  y: 18,
+  color: [0, 255, 0, 255],
+  contiguous: true,
+  tolerance: 0,
+});
+```
+
+### 5. Packaging and Release
+
+- [ ] Verify `dist/` can be packed/published directly
+- [ ] Add a local pack/install smoke test for Node.js and browser consumption
+- [ ] Update README/examples to use the stable entrypoint, not implementation filenames
+- [ ] Add CI coverage for:
+  - `cargo test --workspace`
+  - `cargo check --target wasm32-unknown-unknown -p kimg-wasm`
+  - `./scripts/build.sh`
+  - `cargo audit`
+  - `cargo deny check`
+
+## Roadmap
+
+Tracked for later, not part of the current delivery target:
+
+- [ ] Selection system
+- [ ] Text
+- [ ] Brush / brush engine
+
+## Explicit Non-Goals For This Plan
+
+Not part of the current target unless reprioritized:
+
+- Reintroducing the old singleton `initKimg()` design
+- Layer wrapper classes per layer kind
+- Zero-copy RGBA view APIs across the wasm boundary
+- Radial gradients
+- Additional blend modes beyond the current 16-mode set
+- Worker-pool or threaded rendering API

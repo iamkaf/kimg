@@ -304,7 +304,7 @@
 
   <script type="module">
     import init, {
-      Document,
+      Composition,
       hex_to_rgb,
       rgb_to_hex,
       relative_luminance,
@@ -362,7 +362,7 @@
       const tInit = performance.now() - t0;
 
       const SIZE = 128;
-      let doc = new Document(SIZE, SIZE);
+      let doc = new Composition(SIZE, SIZE);
 
       // --- Build layer tree ---
 
@@ -561,7 +561,7 @@
           const bytes = new Uint8Array(reader.result);
           try {
             doc.free();
-            doc = Document.deserialize(bytes);
+            doc = Composition.deserialize(bytes);
             updateLayerCount();
             rerender();
             importNote.textContent = `Document loaded (${bytes.length} bytes)`;
@@ -577,7 +577,7 @@
 
       document.getElementById('btn-reimport').addEventListener('click', () => {
         const pngBytes = doc.export_png();
-        const doc2 = new Document(SIZE, SIZE);
+        const doc2 = new Composition(SIZE, SIZE);
         doc2.add_png_layer('re-imported', pngBytes, 0, 0);
         const rgba2 = doc2.render();
         drawToCanvas(rgba2);

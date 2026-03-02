@@ -1,16 +1,16 @@
 //! WebAssembly bindings for kimg — the image compositing engine.
 //!
-//! Exposes a [`Document`] class to JavaScript/TypeScript via `wasm-bindgen`.
+//! Exposes a [`Composition`] class to JavaScript/TypeScript via `wasm-bindgen`.
 //! The API mirrors the kimg-core document model: create layers, set properties,
 //! and call `render()` to get a flat RGBA byte array.
 //!
 //! # JavaScript usage
 //!
 //! ```js
-//! import init, { Document } from "kimg_wasm";
+//! import init, { Composition } from "kimg_wasm";
 //!
 //! await init();
-//! const doc = new Document(512, 512);
+//! const doc = new Composition(512, 512);
 //! const layerId = doc.add_solid_color_layer("bg", 255, 0, 0, 255);
 //! const rgba = doc.render(); // Uint8Array, length = width * height * 4
 //! ```
@@ -34,8 +34,8 @@ use kimg_core::serialize;
 use kimg_core::sprite;
 use kimg_core::transform;
 
-/// WASM-exposed Document for image compositing.
-#[wasm_bindgen]
+/// WASM-exposed Composition for image compositing.
+#[wasm_bindgen(js_name = Composition)]
 pub struct Document {
     inner: CoreDocument,
 }
