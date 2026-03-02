@@ -81,8 +81,8 @@ Feature-complete replacement for the JS compositor (core + WASM).
 - [x] Comprehensive docs and examples
 - [x] Published benchmarks
 - [ ] WASM-SIMD optimized builds
-- [ ] Fuzz-tested codec paths
-- [ ] Security audit
+- [x] Fuzz-tested codec paths
+- [x] Security audit
 
 ## Backlog (unscheduled)
 

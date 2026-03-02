@@ -1,9 +1,10 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, Criterion, SamplingMode};
 use kimg_core::buffer::ImageBuffer;
 use kimg_core::pixel::Rgba;
 use kimg_core::transform::{
     crop, resize_bilinear, resize_lanczos3, resize_nearest, rotate_bilinear, trim_alpha,
 };
+use std::time::Duration;
 
 fn solid_buf(size: u32) -> ImageBuffer {
     let mut buf = ImageBuffer::new_transparent(size, size);
@@ -11,9 +12,45 @@ fn solid_buf(size: u32) -> ImageBuffer {
     buf
 }
 
+fn configure_resize_group(group: &mut BenchmarkGroup<'_, WallTime>, in_size: u32, quality: &str) {
+    match (quality, in_size) {
+        ("nearest", 2048) => {
+            group.sample_size(20);
+            group.sampling_mode(SamplingMode::Flat);
+            group.measurement_time(Duration::from_secs(8));
+            group.warm_up_time(Duration::from_secs(1));
+        }
+        ("bilinear", 2048) => {
+            group.sample_size(10);
+            group.sampling_mode(SamplingMode::Flat);
+            group.measurement_time(Duration::from_secs(8));
+            group.warm_up_time(Duration::from_secs(1));
+        }
+        ("lanczos3", 512) => {
+            group.sample_size(20);
+            group.sampling_mode(SamplingMode::Flat);
+            group.measurement_time(Duration::from_secs(8));
+            group.warm_up_time(Duration::from_secs(1));
+        }
+        ("lanczos3", 2048) => {
+            group.sample_size(10);
+            group.sampling_mode(SamplingMode::Flat);
+            group.measurement_time(Duration::from_secs(8));
+            group.warm_up_time(Duration::from_secs(1));
+        }
+        _ => {
+            group.sample_size(100);
+            group.sampling_mode(SamplingMode::Auto);
+            group.measurement_time(Duration::from_secs(5));
+            group.warm_up_time(Duration::from_secs(3));
+        }
+    }
+}
+
 fn bench_resize_nearest(c: &mut Criterion) {
     let mut group = c.benchmark_group("resize_nearest");
     for (in_size, out_size) in [(64u32, 128u32), (512, 1024), (2048, 4096)] {
+        configure_resize_group(&mut group, in_size, "nearest");
         let src = solid_buf(in_size);
         group.bench_function(format!("{in_size}→{out_size}"), |b| {
             b.iter(|| black_box(resize_nearest(black_box(&src), out_size, out_size)))
@@ -25,6 +62,7 @@ fn bench_resize_nearest(c: &mut Criterion) {
 fn bench_resize_bilinear(c: &mut Criterion) {
     let mut group = c.benchmark_group("resize_bilinear");
     for (in_size, out_size) in [(64u32, 128u32), (512, 1024), (2048, 4096)] {
+        configure_resize_group(&mut group, in_size, "bilinear");
         let src = solid_buf(in_size);
         group.bench_function(format!("{in_size}→{out_size}"), |b| {
             b.iter(|| black_box(resize_bilinear(black_box(&src), out_size, out_size)))
@@ -36,6 +74,7 @@ fn bench_resize_bilinear(c: &mut Criterion) {
 fn bench_resize_lanczos3(c: &mut Criterion) {
     let mut group = c.benchmark_group("resize_lanczos3");
     for (in_size, out_size) in [(64u32, 128u32), (512, 1024), (2048, 4096)] {
+        configure_resize_group(&mut group, in_size, "lanczos3");
         let src = solid_buf(in_size);
         group.bench_function(format!("{in_size}→{out_size}"), |b| {
             b.iter(|| black_box(resize_lanczos3(black_box(&src), out_size, out_size)))

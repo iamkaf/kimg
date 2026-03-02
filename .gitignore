@@ -4,3 +4,12 @@
 *.swo
 *.png
 .DS_Store
+
+# Rust backup files
+**/*.rs.bk
+*.pdb
+
+# Fuzzing artifacts
+**/fuzz/artifacts/
+**/fuzz/target/
+**/fuzz/corpus/

@@ -173,6 +173,30 @@ The benchmarks cover:
 | `codec` | PNG / JPEG / WebP encode and decode of a 512×512 buffer |
 | `sprite` | Sprite sheet packing, palette extraction, quantization, pixel-art scale |
 
+Notes on the harnesses:
+
+- Very expensive resize cases use reduced flat-sampled Criterion groups so `cargo bench -p kimg-core` stays practical while still reporting worst-case medians.
+- Codec benchmarks use a deterministic textured 512×512 image instead of a flat fill, which avoids unrealistically optimistic compression timings.
+
+Representative medians from a recent local run on March 2, 2026. These are hardware-dependent and should be treated as a baseline example, not a guarantee:
+
+| Operation | Median |
+|------|------:|
+| `render/single_image/512` | `5.01 ms` |
+| `render/10_layers/512` | `42.69 ms` |
+| `render/10_layers_with_filter/512` | `48.61 ms` |
+| `encode_png/512` | `1.25 ms` |
+| `decode_png/512` | `1.24 ms` |
+| `encode_jpeg/512` | `2.18 ms` |
+| `decode_jpeg/512` | `1.21 ms` |
+| `encode_webp/512` | `1.41 ms` |
+| `decode_webp/512` | `2.65 ms` |
+| `extract_palette/512/16colors` | `20.45 ms` |
+| `resize_nearest/512→1024` | `1.63 ms` |
+| `resize_bilinear/512→1024` | `17.55 ms` |
+| `resize_lanczos3/512→1024` | `148.75 ms` |
+| `resize_lanczos3/2048→4096` | `2.41 s` |
+
 ## WASM binary size
 
 The full binary with all codecs (PNG, JPEG, WebP, GIF, PSD) is ~271KB uncompressed. Gzipped it sits around 120KB.
