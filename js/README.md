@@ -22,6 +22,13 @@ doc.updateLayer(layerId, {
   scaleX: 1.25,
   scaleY: 0.75,
 });
+doc.bucketFillLayer(layerId, {
+  x: 8,
+  y: 8,
+  color: [0, 255, 0, 255],
+  contiguous: true,
+  tolerance: 0,
+});
 const png = doc.exportPng();
 
 doc.addShapeLayer({

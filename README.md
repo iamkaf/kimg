@@ -79,6 +79,8 @@ Shape layers are also available for rectangle, rounded rectangle, ellipse, line,
 
 **Transforms** — Non-destructive per-layer translate / scale / rotate / flip for image, paint, and shape layers, plus destructive resize (nearest-neighbor, bilinear, Lanczos3), crop, trim alpha.
 
+**Paint tools** — Bucket fill for image and paint layers with contiguous/non-contiguous modes and alpha-aware RGBA tolerance matching.
+
 **Sprite tools** — Sprite sheet packer (shelf bin-packing), contact sheet grids, pixel-art upscale, color quantization, batch render pipeline.
 
 **Format support** — PNG, JPEG, WebP, GIF (animated frames → layers), PSD (layer import). Auto-detection via magic bytes.
@@ -113,6 +115,21 @@ doc.updateLayer(layerId, {
   rotation: 30,
   scaleX: 1.25,
   scaleY: 0.75,
+});
+```
+
+### Bucket fill
+
+Coordinates are layer-local pixel coordinates. Tolerance is alpha-aware and
+checked per channel across RGBA.
+
+```js
+doc.bucketFillLayer(layerId, {
+  x: 12,
+  y: 18,
+  color: [0, 255, 0, 255],
+  contiguous: true,
+  tolerance: 0,
 });
 ```
 
@@ -169,6 +186,7 @@ kimg/
 │   │   │   ├── color.rs       # RGB/HSL conversion, luminance, contrast
 │   │   │   ├── convolution.rs # Blur, sharpen, edge detect, emboss kernels
 │   │   │   ├── document.rs    # Document struct, layer tree, render pipeline
+│   │   │   ├── fill.rs        # Bucket fill for image/paint pixel layers
 │   │   │   ├── filter.rs      # HSL filters, invert, posterize, threshold, levels
 │   │   │   ├── layer.rs       # Layer types and common properties
 │   │   │   ├── serialize.rs   # Document save/load
@@ -210,7 +228,7 @@ npm run test:js
 npm run test:all
 ```
 
-133 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, and shared per-layer transforms.
+137 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, bucket fill, and shared per-layer transforms.
 
 The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
 

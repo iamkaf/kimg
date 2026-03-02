@@ -547,6 +547,25 @@ impl Document {
         }
     }
 
+    /// Bucket-fill an image or paint layer using layer-local coordinates.
+    ///
+    /// Matching is alpha-aware and uses per-channel tolerance across RGBA.
+    pub fn bucket_fill_layer(
+        &mut self,
+        id: u32,
+        x: u32,
+        y: u32,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+        contiguous: bool,
+        tolerance: u8,
+    ) -> bool {
+        self.inner
+            .bucket_fill_layer(id, x, y, Rgba::new(r, g, b, a), contiguous, tolerance)
+    }
+
     // ── Rendering ──
 
     /// Render the document and return the flat RGBA buffer.
@@ -1637,6 +1656,32 @@ mod tests {
         let buf = doc.get_layer_rgba(id);
         assert_eq!(buf.len(), 16);
         assert!(buf.iter().all(|&b| b == 1));
+    }
+
+    #[test]
+    fn bucket_fill_layer_wasm() {
+        let mut doc = Document::new(3, 1);
+        let image_id = doc.add_image_layer(
+            "img",
+            &[100, 0, 0, 255, 0, 0, 0, 255, 100, 0, 0, 255],
+            3,
+            1,
+            0,
+            0,
+        );
+        let paint_id = doc.add_paint_layer("paint", 2, 1);
+
+        assert!(doc.bucket_fill_layer(image_id, 0, 0, 0, 255, 0, 255, false, 0));
+        assert!(doc.bucket_fill_layer(paint_id, 0, 0, 0, 0, 255, 255, true, 0));
+
+        let image = doc.get_layer_rgba(image_id);
+        assert_eq!(&image[..4], &[0, 255, 0, 255]);
+        assert_eq!(&image[4..8], &[0, 0, 0, 255]);
+        assert_eq!(&image[8..12], &[0, 255, 0, 255]);
+
+        let paint = doc.get_layer_rgba(paint_id);
+        assert_eq!(&paint[..4], &[0, 0, 255, 255]);
+        assert_eq!(&paint[4..8], &[0, 0, 255, 255]);
     }
 
     #[test]

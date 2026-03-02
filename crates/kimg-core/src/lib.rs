@@ -10,6 +10,7 @@ pub mod codec;
 pub mod color;
 pub mod convolution;
 pub mod document;
+pub mod fill;
 pub mod filter;
 pub mod layer;
 pub mod pixel;

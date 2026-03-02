@@ -126,6 +126,14 @@ export interface MaskOptions {
   inverted?: boolean;
 }
 
+export interface BucketFillOptions {
+  x: number;
+  y: number;
+  color: ByteInput;
+  contiguous?: boolean;
+  tolerance?: number;
+}
+
 export interface Position {
   x: number;
   y: number;
@@ -377,6 +385,14 @@ function normalizeInteger(value, fieldName) {
   return Math.trunc(normalizeFiniteNumber(value, fieldName));
 }
 
+function normalizeNonNegativeInteger(value, fieldName) {
+  const normalized = normalizeInteger(value, fieldName);
+  if (normalized < 0) {
+    throw new RangeError(`${fieldName} must be greater than or equal to 0.`);
+  }
+  return normalized;
+}
+
 function normalizePositiveNumber(value, fieldName) {
   const normalized = normalizeFiniteNumber(value, fieldName);
   if (normalized <= 0) {
@@ -439,6 +455,14 @@ function normalizeRgbaColor(value, fieldName): Uint8Array {
     throw new TypeError(`${fieldName} must contain exactly 4 RGBA bytes.`);
   }
   return rgba;
+}
+
+function normalizeByte(value, fieldName) {
+  const normalized = normalizeInteger(value, fieldName);
+  if (normalized < 0 || normalized > 255) {
+    throw new RangeError(`${fieldName} must be between 0 and 255.`);
+  }
+  return normalized;
 }
 
 function normalizeOptionalRgbaColor(value, fieldName): Uint8Array {
@@ -660,6 +684,17 @@ function normalizeFlipArg(flipXOrOptions, flipY) {
   return {
     flipX: Boolean(flipXOrOptions),
     flipY: Boolean(flipY),
+  };
+}
+
+function normalizeBucketFillOptions(options) {
+  const object = requireObject(options, "bucketFillLayer");
+  return {
+    color: normalizeRgbaColor(object.color, "bucketFillLayer.color"),
+    contiguous: object.contiguous ?? true,
+    tolerance: normalizeByte(object.tolerance ?? 0, "bucketFillLayer.tolerance"),
+    x: normalizeNonNegativeInteger(object.x, "bucketFillLayer.x"),
+    y: normalizeNonNegativeInteger(object.y, "bucketFillLayer.y"),
   };
 }
 
@@ -893,6 +928,7 @@ export interface Composition {
   setLayerPosition(id: number, xOrPosition: number | Position, y?: number): void;
   setLayerBlendMode(id: number, blendMode: string): void;
   setLayerMask(id: number, options: MaskOptions): void;
+  bucketFillLayer(id: number, options: BucketFillOptions): boolean;
   clearLayerMask(id: number): void;
   setLayerMaskInverted(id: number, inverted: boolean): void;
   setLayerClipToBelow(id: number, clipToBelow: boolean): void;
@@ -1213,6 +1249,21 @@ export class Composition {
     if (mask.inverted !== undefined) {
       this._inner.set_mask_inverted(normalizeLayerId(id), Boolean(mask.inverted));
     }
+  }
+
+  bucketFillLayer(id, options) {
+    const fill = normalizeBucketFillOptions(options);
+    return this._inner.bucket_fill_layer(
+      normalizeLayerId(id),
+      fill.x,
+      fill.y,
+      fill.color[0],
+      fill.color[1],
+      fill.color[2],
+      fill.color[3],
+      fill.contiguous,
+      fill.tolerance,
+    );
   }
 
   clearLayerMask(id) {

@@ -176,6 +176,17 @@ interface RawCompositionMethods {
   add_png_layer(name: string, png_bytes: Uint8Array, x: number, y: number): number;
   export_png(): Uint8Array;
   get_layer_rgba(id: number): Uint8Array;
+  bucket_fill_layer(
+    id: number,
+    x: number,
+    y: number,
+    r: number,
+    g: number,
+    b: number,
+    a: number,
+    contiguous: boolean,
+    tolerance: number,
+  ): boolean;
   render(): Uint8Array;
   layer_count(): number;
   resize_layer_nearest(id: number, new_width: number, new_height: number): void;

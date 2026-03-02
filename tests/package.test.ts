@@ -101,6 +101,77 @@ describe("main package facade", () => {
     composition.free();
   });
 
+  test("bucket fill edits image and paint layers with tolerance controls", async () => {
+    const composition = await Composition.create({ width: 4, height: 2 });
+    const imageId = composition.addImageLayer({
+      name: "image",
+      rgba: [100, 100, 100, 128, 0, 0, 0, 255, 100, 100, 100, 140],
+      width: 3,
+      height: 1,
+    });
+    const alphaImageId = composition.addImageLayer({
+      name: "alpha-aware",
+      rgba: [50, 50, 50, 128, 50, 50, 50, 145],
+      width: 2,
+      height: 1,
+      y: 1,
+    });
+    const paintId = composition.addPaintLayer({
+      name: "paint",
+      width: 2,
+      height: 1,
+    });
+    const groupId = composition.addGroupLayer({ name: "group" });
+
+    expect(
+      composition.bucketFillLayer(imageId, {
+        x: 0,
+        y: 0,
+        color: [0, 255, 0, 255],
+        contiguous: false,
+        tolerance: 12,
+      }),
+    ).toBe(true);
+    expect(
+      composition.bucketFillLayer(alphaImageId, {
+        x: 0,
+        y: 0,
+        color: [255, 0, 0, 255],
+        contiguous: false,
+        tolerance: 12,
+      }),
+    ).toBe(true);
+    expect(
+      composition.bucketFillLayer(paintId, {
+        x: 0,
+        y: 0,
+        color: [0, 0, 255, 255],
+      }),
+    ).toBe(true);
+    expect(
+      composition.bucketFillLayer(groupId, {
+        x: 0,
+        y: 0,
+        color: [255, 255, 255, 255],
+      }),
+    ).toBe(false);
+
+    const image = composition.getLayerRgba(imageId);
+    expect(Array.from(image.slice(0, 4))).toEqual([0, 255, 0, 255]);
+    expect(Array.from(image.slice(4, 8))).toEqual([0, 0, 0, 255]);
+    expect(Array.from(image.slice(8, 12))).toEqual([0, 255, 0, 255]);
+
+    const alphaImage = composition.getLayerRgba(alphaImageId);
+    expect(Array.from(alphaImage.slice(0, 4))).toEqual([255, 0, 0, 255]);
+    expect(Array.from(alphaImage.slice(4, 8))).toEqual([50, 50, 50, 145]);
+
+    const paint = composition.getLayerRgba(paintId);
+    expect(Array.from(paint.slice(0, 4))).toEqual([0, 0, 255, 255]);
+    expect(Array.from(paint.slice(4, 8))).toEqual([0, 0, 255, 255]);
+
+    composition.free();
+  });
+
   test("shape layers render and expose shape metadata through the facade", async () => {
     const composition = await Composition.create({ width: 8, height: 8 });
     const groupId = composition.addGroupLayer({ name: "group" });

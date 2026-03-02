@@ -16,6 +16,7 @@
 use crate::blend::{blend, blend_normal};
 use crate::blit::{blit_transformed, BlitParams, Rotation};
 use crate::buffer::ImageBuffer;
+use crate::fill;
 use crate::filter::{apply_hsl_filter, HslFilterConfig};
 use crate::layer::{
     FilterLayerPatch, GradientDirection, GradientLayerData, GroupLayerData, Layer, LayerKind,
@@ -325,6 +326,36 @@ impl Document {
         layer.common.x = 0;
         layer.common.y = 0;
         true
+    }
+
+    /// Bucket-fill an image or paint layer using layer-local coordinates.
+    ///
+    /// Matching is alpha-aware and uses per-channel tolerance across RGBA.
+    /// Returns `false` when the layer does not exist, is not a pixel layer, or
+    /// the start point is out of bounds.
+    pub fn bucket_fill_layer(
+        &mut self,
+        id: u32,
+        x: u32,
+        y: u32,
+        color: Rgba,
+        contiguous: bool,
+        tolerance: u8,
+    ) -> bool {
+        let layer = match self.find_layer_mut(id) {
+            Some(layer) => layer,
+            None => return false,
+        };
+
+        match &mut layer.kind {
+            LayerKind::Image(image) => {
+                fill::bucket_fill(&mut image.buffer, x, y, color, contiguous, tolerance)
+            }
+            LayerKind::Paint(paint) => {
+                fill::bucket_fill(&mut paint.buffer, x, y, color, contiguous, tolerance)
+            }
+            _ => false,
+        }
     }
 
     /// Render the full document to a flat RGBA8 buffer.
@@ -1211,6 +1242,45 @@ mod tests {
         doc.resize_canvas(16, 9);
         assert_eq!(doc.width, 16);
         assert_eq!(doc.height, 9);
+    }
+
+    #[test]
+    fn bucket_fill_layer_mutates_pixel_layers_only() {
+        let mut doc = Document::new(4, 4);
+        let image_id = doc.next_id();
+        let paint_id = doc.next_id();
+        let group_id = doc.next_id();
+        let mut image = solid_buf(2, 2, Rgba::new(10, 10, 10, 255));
+        image.set_pixel(1, 1, Rgba::new(200, 0, 0, 255));
+        doc.layers.push(img_layer(image_id, "img", image, 0, 0));
+        doc.layers.push(Layer {
+            common: LayerCommon::new(paint_id, "paint"),
+            kind: LayerKind::Paint(PaintLayerData::new(ImageBuffer::new_transparent(2, 2))),
+        });
+        doc.layers.push(Layer {
+            common: LayerCommon::new(group_id, "group"),
+            kind: LayerKind::Group(GroupLayerData::new()),
+        });
+
+        assert!(doc.bucket_fill_layer(image_id, 0, 0, Rgba::new(0, 255, 0, 255), true, 0,));
+        assert!(doc.bucket_fill_layer(paint_id, 0, 0, Rgba::new(0, 0, 255, 255), false, 0,));
+        assert!(!doc.bucket_fill_layer(group_id, 0, 0, Rgba::new(255, 255, 255, 255), true, 0,));
+
+        match &doc.find_layer(image_id).unwrap().kind {
+            LayerKind::Image(image) => {
+                assert_eq!(image.buffer.get_pixel(0, 0), Rgba::new(0, 255, 0, 255));
+                assert_eq!(image.buffer.get_pixel(1, 1), Rgba::new(200, 0, 0, 255));
+            }
+            _ => panic!("expected image layer"),
+        }
+
+        match &doc.find_layer(paint_id).unwrap().kind {
+            LayerKind::Paint(paint) => {
+                assert_eq!(paint.buffer.get_pixel(0, 0), Rgba::new(0, 0, 255, 255));
+                assert_eq!(paint.buffer.get_pixel(1, 1), Rgba::new(0, 0, 255, 255));
+            }
+            _ => panic!("expected paint layer"),
+        }
     }
 
     #[test]

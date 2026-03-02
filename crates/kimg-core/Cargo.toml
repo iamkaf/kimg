@@ -48,3 +48,7 @@ harness = false
 [[bench]]
 name = "sprite"
 harness = false
+
+[[bench]]
+name = "fill"
+harness = false

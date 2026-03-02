@@ -232,11 +232,13 @@ comp.updateLayer(id, {
 
 #### 4.3 Bucket Fill
 
-- [ ] Add bucket fill for paint/image-style pixel layers
-- [ ] Support `contiguous: true | false`
-- [ ] Add tolerance control so fill can be strict or color-range based
-- [ ] Decide alpha-aware matching behavior before implementation
-- [ ] JS-facing API target:
+- [x] Add bucket fill for paint/image-style pixel layers
+- [x] Support `contiguous: true | false`
+- [x] Add tolerance control so fill can be strict or color-range based
+- [x] Decide alpha-aware matching behavior before implementation
+- Matching is alpha-aware: tolerance is applied per channel across RGBA, including alpha.
+- API coordinates are layer-local pixel coordinates, not canvas/render coordinates.
+- [x] JS-facing API target:
 
 ```js
 comp.bucketFillLayer(layerId, {
