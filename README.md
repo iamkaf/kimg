@@ -63,6 +63,7 @@ const doc = await Composition.create({ width: 64, height: 64 });
 ## What it can do
 
 **Layers** — Image, Paint, Filter, Group, SolidColor, Gradient. Nested groups with scoped filter application.
+Shape layers are also available for rectangle, rounded rectangle, ellipse, line, and polygon primitives with fill/stroke styling.
 
 **16 blend modes** — Normal, Multiply, Screen, Overlay, Darken, Lighten, ColorDodge, ColorBurn, HardLight, SoftLight, Difference, Exclusion, Hue, Saturation, Color, Luminosity.
 
@@ -77,6 +78,22 @@ const doc = await Composition.create({ width: 64, height: 64 });
 **Format support** — PNG, JPEG, WebP, GIF (animated frames → layers), PSD (layer import). Auto-detection via magic bytes.
 
 **Serialization** — Save/load full documents as `.kimg` files (JSON metadata + binary pixel data).
+
+### Shape layers
+
+```js
+const badgeId = doc.addShapeLayer({
+  name: "Badge",
+  type: "roundedRect",
+  x: 24,
+  y: 24,
+  width: 96,
+  height: 40,
+  radius: 12,
+  fill: [255, 0, 0, 255],
+  stroke: { color: [255, 255, 255, 255], width: 2 },
+});
+```
 
 ## Subpath exports
 
@@ -172,7 +189,7 @@ npm run test:js
 npm run test:all
 ```
 
-126 Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, and color utilities.
+132 Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, and shape layers.
 
 The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
 

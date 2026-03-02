@@ -29,10 +29,11 @@ use kimg_core::filter;
 use kimg_core::layer::{
     FilterLayerData, FilterLayerPatch, GradientDirection, GradientLayerData, GradientStop,
     GroupLayerData, ImageLayerData, Layer, LayerCommon, LayerKind, LayerPatch, PaintLayerData,
-    SolidColorLayerData,
+    ShapeLayerData, ShapePoint, ShapeStroke, ShapeType, SolidColorLayerData,
 };
 use kimg_core::pixel::Rgba;
 use kimg_core::serialize;
+use kimg_core::shape::render_shape;
 use kimg_core::sprite;
 use kimg_core::transform;
 
@@ -168,6 +169,42 @@ impl Document {
         self.inner.layers.push(Layer::new(
             LayerCommon::new(id, name),
             LayerKind::Gradient(GradientLayerData::new(stops, dir)),
+        ));
+        id
+    }
+
+    /// Add a rasterized shape layer. Returns the layer ID.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_shape_layer(
+        &mut self,
+        name: &str,
+        shape_type: &str,
+        width: u32,
+        height: u32,
+        radius: u32,
+        fill: &[u8],
+        stroke_color: &[u8],
+        stroke_width: u32,
+        points_xy: &[i32],
+        x: i32,
+        y: i32,
+    ) -> u32 {
+        let id = self.inner.next_id();
+        let mut common = LayerCommon::new(id, name);
+        common.x = x;
+        common.y = y;
+        self.inner.layers.push(Layer::new(
+            common,
+            LayerKind::Shape(build_shape_data(
+                shape_type,
+                width,
+                height,
+                radius,
+                fill,
+                stroke_color,
+                stroke_width,
+                points_xy,
+            )),
         ));
         id
     }
@@ -354,6 +391,46 @@ impl Document {
         id
     }
 
+    /// Add a shape layer as a child of a group. Returns the child layer ID.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_shape_to_group(
+        &mut self,
+        group_id: u32,
+        name: &str,
+        shape_type: &str,
+        width: u32,
+        height: u32,
+        radius: u32,
+        fill: &[u8],
+        stroke_color: &[u8],
+        stroke_width: u32,
+        points_xy: &[i32],
+        x: i32,
+        y: i32,
+    ) -> u32 {
+        let id = self.inner.next_id();
+        let mut common = LayerCommon::new(id, name);
+        common.x = x;
+        common.y = y;
+        let child = Layer::new(
+            common,
+            LayerKind::Shape(build_shape_data(
+                shape_type,
+                width,
+                height,
+                radius,
+                fill,
+                stroke_color,
+                stroke_width,
+                points_xy,
+            )),
+        );
+        self.inner
+            .add_child_to_group(group_id, child)
+            .expect("group not found");
+        id
+    }
+
     /// Remove a child from a group. Returns true if found and removed.
     pub fn remove_from_group(&mut self, group_id: u32, child_id: u32) -> bool {
         self.inner.remove_child_from_group(group_id, child_id)
@@ -471,6 +548,7 @@ impl Document {
             Some(layer) => match &layer.kind {
                 LayerKind::Image(img) => img.buffer.data.clone(),
                 LayerKind::Paint(paint) => paint.buffer.data.clone(),
+                LayerKind::Shape(shape) => render_shape(shape).data,
                 _ => Vec::new(),
             },
             None => Vec::new(),
@@ -753,6 +831,14 @@ impl Document {
                 let buf = match &layer.kind {
                     LayerKind::Image(img) => &img.buffer,
                     LayerKind::Paint(paint) => &paint.buffer,
+                    LayerKind::Shape(_) => {
+                        let rasterized = match &layer.kind {
+                            LayerKind::Shape(shape) => render_shape(shape),
+                            _ => unreachable!(),
+                        };
+                        let palette = sprite::extract_palette(&rasterized, max_colors);
+                        return palette_to_flat(&palette);
+                    }
                     _ => return Vec::new(),
                 };
                 let palette = sprite::extract_palette(buf, max_colors);
@@ -873,6 +959,7 @@ impl Document {
                     .and_then(|layer| match &layer.kind {
                         LayerKind::Image(img) => Some(img.buffer.clone()),
                         LayerKind::Paint(paint) => Some(paint.buffer.clone()),
+                        LayerKind::Shape(shape) => Some(render_shape(shape)),
                         _ => None,
                     })
             })
@@ -891,6 +978,62 @@ fn get_prop(object: &Object, key: &str) -> Option<JsValue> {
     } else {
         Some(value)
     }
+}
+
+fn parse_optional_rgba(bytes: &[u8], what: &str) -> Option<Rgba> {
+    match bytes.len() {
+        0 => None,
+        4 => Some(Rgba::new(bytes[0], bytes[1], bytes[2], bytes[3])),
+        _ => panic!("{what} must contain exactly 4 RGBA bytes or be empty"),
+    }
+}
+
+fn parse_shape_points(points_xy: &[i32]) -> Vec<ShapePoint> {
+    assert!(
+        points_xy.len().is_multiple_of(2),
+        "shape points must be a flat [x0, y0, x1, y1, ...] array"
+    );
+
+    points_xy
+        .chunks_exact(2)
+        .map(|chunk| ShapePoint::new(chunk[0], chunk[1]))
+        .collect()
+}
+
+fn parse_shape_type(shape_type: &str) -> ShapeType {
+    match shape_type {
+        "roundedRect" | "rounded_rect" => ShapeType::RoundedRect,
+        "ellipse" => ShapeType::Ellipse,
+        "line" => ShapeType::Line,
+        "polygon" => ShapeType::Polygon,
+        _ => ShapeType::Rectangle,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_shape_data(
+    shape_type: &str,
+    width: u32,
+    height: u32,
+    radius: u32,
+    fill: &[u8],
+    stroke_color: &[u8],
+    stroke_width: u32,
+    points_xy: &[i32],
+) -> ShapeLayerData {
+    let fill = parse_optional_rgba(fill, "shape fill");
+    let stroke = parse_optional_rgba(stroke_color, "shape stroke color")
+        .map(|color| ShapeStroke::new(color, stroke_width.max(1)));
+    let points = parse_shape_points(points_xy);
+    ShapeLayerData::new(
+        parse_shape_type(shape_type),
+        width.max(1),
+        height.max(1),
+        radius,
+        fill,
+        stroke,
+        points,
+    )
 }
 
 fn anchor_from_js(value: &JsValue) -> Option<Anchor> {
@@ -934,6 +1077,17 @@ fn gradient_direction_name(direction: GradientDirection) -> &'static str {
         GradientDirection::DiagonalDown => "diagonalDown",
         GradientDirection::DiagonalUp => "diagonalUp",
         _ => "horizontal",
+    }
+}
+
+fn shape_type_name(shape_type: ShapeType) -> &'static str {
+    match shape_type {
+        ShapeType::Rectangle => "rectangle",
+        ShapeType::RoundedRect => "roundedRect",
+        ShapeType::Ellipse => "ellipse",
+        ShapeType::Line => "line",
+        ShapeType::Polygon => "polygon",
+        _ => "rectangle",
     }
 }
 
@@ -1079,6 +1233,43 @@ fn layer_snapshot(layer: &Layer, parent_id: Option<u32>, index: usize, depth: us
                 "stopCount",
                 JsValue::from_f64(gradient.stops.len() as f64),
             );
+        }
+        LayerKind::Shape(shape) => {
+            set_prop(&object, "kind", JsValue::from_str("shape"));
+            set_prop(
+                &object,
+                "shapeType",
+                JsValue::from_str(shape_type_name(shape.shape_type)),
+            );
+            set_prop(&object, "width", JsValue::from_f64(shape.width as f64));
+            set_prop(&object, "height", JsValue::from_f64(shape.height as f64));
+            set_prop(&object, "radius", JsValue::from_f64(shape.radius as f64));
+            set_prop(
+                &object,
+                "pointCount",
+                JsValue::from_f64(shape.points.len() as f64),
+            );
+            if let Some(fill) = shape.fill {
+                let rgba = Array::new();
+                rgba.push(&JsValue::from_f64(fill.r as f64));
+                rgba.push(&JsValue::from_f64(fill.g as f64));
+                rgba.push(&JsValue::from_f64(fill.b as f64));
+                rgba.push(&JsValue::from_f64(fill.a as f64));
+                set_prop(&object, "fill", rgba.into());
+            }
+            if let Some(stroke) = shape.stroke {
+                let rgba = Array::new();
+                rgba.push(&JsValue::from_f64(stroke.color.r as f64));
+                rgba.push(&JsValue::from_f64(stroke.color.g as f64));
+                rgba.push(&JsValue::from_f64(stroke.color.b as f64));
+                rgba.push(&JsValue::from_f64(stroke.color.a as f64));
+                set_prop(&object, "strokeColor", rgba.into());
+                set_prop(
+                    &object,
+                    "strokeWidth",
+                    JsValue::from_f64(stroke.width as f64),
+                );
+            }
         }
         _ => {
             set_prop(&object, "kind", JsValue::from_str("unknown"));
@@ -1557,6 +1748,38 @@ mod tests {
         let result = doc.render();
         assert!(result[0] < 10); // left ≈ black
         assert!(result[8] > 245); // right ≈ white
+    }
+
+    #[test]
+    fn shape_layer_wasm() {
+        let mut doc = Document::new(6, 6);
+        let id = doc.add_shape_layer(
+            "shape",
+            "roundedRect",
+            4,
+            3,
+            1,
+            &[255, 0, 0, 255],
+            &[255, 255, 255, 255],
+            1,
+            &[],
+            1,
+            1,
+        );
+
+        let layer = doc.inner.find_layer(id).unwrap();
+        match &layer.kind {
+            LayerKind::Shape(shape) => {
+                assert_eq!(shape.shape_type, ShapeType::RoundedRect);
+                assert_eq!(shape.width, 4);
+                assert_eq!(shape.height, 3);
+            }
+            _ => panic!("expected shape layer"),
+        }
+
+        let result = doc.render();
+        let index = ((doc.width() + 1) * 4) as usize;
+        assert_eq!(&result[index..index + 4], &[255, 255, 255, 255]);
     }
 
     #[test]

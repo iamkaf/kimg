@@ -30,4 +30,38 @@ describe("subpath exports", () => {
 
     composition.free();
   });
+
+  test("raw subpath exposes shape-layer entrypoints", () => {
+    const wasm = readFileSync(new URL("../dist/kimg_wasm_bg.wasm", import.meta.url));
+
+    initSync({ module: wasm });
+
+    const composition = new RawComposition(4, 4);
+    const shapeId = composition.add_shape_layer(
+      "shape",
+      "rectangle",
+      2,
+      2,
+      0,
+      new Uint8Array([255, 0, 0, 255]),
+      new Uint8Array(),
+      0,
+      new Int32Array(),
+      1,
+      1,
+    );
+
+    const shape = composition.get_layer(shapeId) as {
+      kind: string;
+      shapeType: string;
+      width: number;
+      height: number;
+    };
+    expect(shape.kind).toBe("shape");
+    expect(shape.shapeType).toBe("rectangle");
+    expect(shape.width).toBe(2);
+    expect(shape.height).toBe(2);
+
+    composition.free();
+  });
 });

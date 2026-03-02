@@ -177,16 +177,16 @@ immediate implementation unless reprioritized.
 
 #### 4.1 Shape Layers
 
-- [ ] Add Photoshop-style shape layers as first-class document layers
-- [ ] Start with rasterized shape primitives:
+- [x] Add Photoshop-style shape layers as first-class document layers
+- [x] Start with rasterized shape primitives:
   - rectangle
   - rounded rectangle
   - ellipse
   - line
   - polygon
-- [ ] Support fill and optional stroke in v1 of the feature
-- [ ] Ensure shape layers participate in the normal layer stack: opacity, blend mode, masks, clipping, groups, filters
-- [ ] JS-facing API target:
+- [x] Support fill and optional stroke in v1 of the feature
+- [x] Ensure shape layers participate in the normal layer stack: opacity, blend mode, masks, clipping, groups, filters
+- [x] JS-facing API target:
 
 ```js
 const id = comp.addShapeLayer({

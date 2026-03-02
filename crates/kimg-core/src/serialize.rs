@@ -243,6 +243,37 @@ fn serialize_layer(layer: &Layer, pixel_data: &mut Vec<u8>) -> String {
                 stops.join(","),
             )
         }
+        LayerKind::Shape(shape) => {
+            let points: Vec<String> = shape
+                .points
+                .iter()
+                .map(|point| format!(r#"{{"x":{},"y":{}}}"#, point.x, point.y))
+                .collect();
+            let mut props = format!(
+                r#""kind":"shape","shape_type":"{}","width":{},"height":{},"radius":{},"points":[{}]"#,
+                shape.shape_type.as_str(),
+                shape.width,
+                shape.height,
+                shape.radius,
+                points.join(","),
+            );
+
+            if let Some(fill) = shape.fill {
+                props.push_str(&format!(
+                    r#","fill":[{},{},{},{}]"#,
+                    fill.r, fill.g, fill.b, fill.a,
+                ));
+            }
+
+            if let Some(stroke) = shape.stroke {
+                props.push_str(&format!(
+                    r#","stroke":{{"width":{},"color":[{},{},{},{}]}}"#,
+                    stroke.width, stroke.color.r, stroke.color.g, stroke.color.b, stroke.color.a,
+                ));
+            }
+
+            props
+        }
     };
 
     format!("{{{},{}}}", props, kind_json)
@@ -752,6 +783,73 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             }
             LayerKind::Gradient(GradientLayerData { stops, direction })
         }
+        "shape" => {
+            let shape_type =
+                parse_shape_type(get_json_str(&obj, "shape_type").unwrap_or("rectangle"));
+            let width = get_json_u32(&obj, "width")?;
+            let height = get_json_u32(&obj, "height")?;
+            let radius = get_json_u32(&obj, "radius").unwrap_or(0);
+
+            let fill = if let Ok(fill_str) = get_json_str(&obj, "fill") {
+                let fill = parse_json_u8_array(&ensure_array_wrapped(fill_str))
+                    .map_err(SerializeError::InvalidData)?;
+                if fill.len() != 4 {
+                    return Err(SerializeError::InvalidData(
+                        "shape fill needs 4 values".into(),
+                    ));
+                }
+                Some(Rgba::new(fill[0], fill[1], fill[2], fill[3]))
+            } else {
+                None
+            };
+
+            let stroke = if let Ok(stroke_str) = get_json_str(&obj, "stroke") {
+                let stroke_obj = parse_json_object(&ensure_object_wrapped(stroke_str))
+                    .map_err(SerializeError::InvalidData)?;
+                let stroke_width = get_json_u32(&stroke_obj, "width")?;
+                let color = parse_json_u8_array(&ensure_array_wrapped(
+                    get_json_str(&stroke_obj, "color").map_err(SerializeError::InvalidData)?,
+                ))
+                .map_err(SerializeError::InvalidData)?;
+                if color.len() != 4 {
+                    return Err(SerializeError::InvalidData(
+                        "shape stroke color needs 4 values".into(),
+                    ));
+                }
+                Some(ShapeStroke::new(
+                    Rgba::new(color[0], color[1], color[2], color[3]),
+                    stroke_width,
+                ))
+            } else {
+                None
+            };
+
+            let points = if let Ok(points_str) = get_json_str(&obj, "points") {
+                let point_items = parse_json_array(&ensure_array_wrapped(points_str))
+                    .map_err(SerializeError::InvalidData)?;
+                let mut points = Vec::with_capacity(point_items.len());
+                for item in &point_items {
+                    let point_obj = parse_json_object(&ensure_object_wrapped(item))
+                        .map_err(SerializeError::InvalidData)?;
+                    let x: i32 = get_json_str(&point_obj, "x")
+                        .map_err(SerializeError::InvalidData)?
+                        .parse()
+                        .map_err(|_| SerializeError::InvalidData("invalid shape point x".into()))?;
+                    let y: i32 = get_json_str(&point_obj, "y")
+                        .map_err(SerializeError::InvalidData)?
+                        .parse()
+                        .map_err(|_| SerializeError::InvalidData("invalid shape point y".into()))?;
+                    points.push(ShapePoint::new(x, y));
+                }
+                points
+            } else {
+                Vec::new()
+            };
+
+            LayerKind::Shape(ShapeLayerData::new(
+                shape_type, width, height, radius, fill, stroke, points,
+            ))
+        }
         other => {
             return Err(SerializeError::InvalidData(format!(
                 "unknown layer kind: {other}"
@@ -781,6 +879,16 @@ fn parse_rotation(s: &str) -> Rotation {
         "cw180" => Rotation::Cw180,
         "cw270" => Rotation::Cw270,
         _ => Rotation::None,
+    }
+}
+
+fn parse_shape_type(s: &str) -> ShapeType {
+    match s {
+        "rounded_rect" => ShapeType::RoundedRect,
+        "ellipse" => ShapeType::Ellipse,
+        "line" => ShapeType::Line,
+        "polygon" => ShapeType::Polygon,
+        _ => ShapeType::Rectangle,
     }
 }
 
@@ -923,6 +1031,49 @@ mod tests {
         if let LayerKind::Group(g) = &restored.layers[3].kind {
             assert_eq!(g.children.len(), 1);
             assert_eq!(g.children[0].common.name, "child");
+        }
+    }
+
+    #[test]
+    fn serialize_shape_layer() {
+        let mut doc = Document::new(8, 8);
+        let id = doc.next_id();
+        doc.layers.push(Layer {
+            common: LayerCommon {
+                x: 2,
+                y: 3,
+                ..LayerCommon::new(id, "shape")
+            },
+            kind: LayerKind::Shape(ShapeLayerData::new(
+                ShapeType::RoundedRect,
+                5,
+                4,
+                2,
+                Some(Rgba::new(255, 0, 0, 255)),
+                Some(ShapeStroke::new(Rgba::new(255, 255, 255, 255), 1)),
+                Vec::new(),
+            )),
+        });
+
+        let data = serialize(&doc).unwrap();
+        let restored = deserialize(&data).unwrap();
+        let layer = &restored.layers[0];
+
+        assert_eq!(layer.common.x, 2);
+        assert_eq!(layer.common.y, 3);
+        match &layer.kind {
+            LayerKind::Shape(shape) => {
+                assert_eq!(shape.shape_type, ShapeType::RoundedRect);
+                assert_eq!(shape.width, 5);
+                assert_eq!(shape.height, 4);
+                assert_eq!(shape.radius, 2);
+                assert_eq!(shape.fill, Some(Rgba::new(255, 0, 0, 255)));
+                assert_eq!(
+                    shape.stroke,
+                    Some(ShapeStroke::new(Rgba::new(255, 255, 255, 255), 1))
+                );
+            }
+            _ => panic!("expected shape layer"),
         }
     }
 

@@ -14,5 +14,6 @@ pub mod filter;
 pub mod layer;
 pub mod pixel;
 pub mod serialize;
+pub mod shape;
 pub mod sprite;
 pub mod transform;

@@ -14,14 +14,15 @@
 //! mirroring Spriteform's `renderSmartVariantScoped` behaviour.
 
 use crate::blend::{blend, blend_normal};
-use crate::blit::{blit_transformed, BlitParams};
+use crate::blit::{blit_transformed, Anchor, BlitParams, Rotation};
 use crate::buffer::ImageBuffer;
 use crate::filter::{apply_hsl_filter, HslFilterConfig};
 use crate::layer::{
     FilterLayerPatch, GradientDirection, GradientLayerData, GroupLayerData, Layer, LayerKind,
-    LayerPatch, SolidColorLayerData,
+    LayerPatch, ShapeLayerData, SolidColorLayerData,
 };
 use crate::pixel::Rgba;
+use crate::shape::render_shape;
 
 /// Location of a layer within the tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,6 +379,11 @@ fn render_gradient(grad: &GradientLayerData, width: u32, height: u32) -> ImageBu
     buf
 }
 
+/// Render a shape layer to its local buffer.
+fn render_shape_layer(shape: &ShapeLayerData) -> ImageBuffer {
+    render_shape(shape)
+}
+
 /// Sample a gradient at position t (0..1) using sorted stops.
 fn sample_gradient(stops: &[crate::layer::GradientStop], t: f64) -> Rgba {
     if stops.len() == 1 {
@@ -646,6 +652,22 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
             } else {
                 buf = fill;
             }
+        }
+        LayerKind::Shape(shape) => {
+            let shape_buf = render_shape_layer(shape);
+            blit_transformed(
+                &mut buf,
+                &shape_buf,
+                &BlitParams {
+                    dx: layer.common.x,
+                    dy: layer.common.y,
+                    anchor: Anchor::TopLeft,
+                    flip_x: false,
+                    flip_y: false,
+                    rotation: Rotation::None,
+                    opacity: layer.common.opacity,
+                },
+            );
         }
         LayerKind::Group(group) => {
             render_group(group, &mut buf, layer.common.opacity);
@@ -1273,6 +1295,72 @@ mod tests {
         assert!(p0.r < 10, "left should be ~black, r={}", p0.r);
         assert!(p1.r > 120 && p1.r < 136, "mid should be ~128, r={}", p1.r);
         assert!(p2.r > 250, "right should be ~white, r={}", p2.r);
+    }
+
+    #[test]
+    fn shape_layer_rectangle_renders_at_position() {
+        let mut doc = Document::new(6, 6);
+        let id = doc.next_id();
+        doc.layers.push(Layer {
+            common: LayerCommon {
+                x: 1,
+                y: 2,
+                ..LayerCommon::new(id, "shape")
+            },
+            kind: LayerKind::Shape(ShapeLayerData::new(
+                ShapeType::Rectangle,
+                3,
+                2,
+                0,
+                Some(Rgba::new(255, 0, 0, 255)),
+                None,
+                Vec::new(),
+            )),
+        });
+
+        let result = doc.render();
+        assert_eq!(result.get_pixel(1, 2), Rgba::new(255, 0, 0, 255));
+        assert_eq!(result.get_pixel(3, 3), Rgba::new(255, 0, 0, 255));
+        assert_eq!(result.get_pixel(0, 0), Rgba::TRANSPARENT);
+    }
+
+    #[test]
+    fn shape_layer_respects_clip_and_blend_stack() {
+        let mut doc = Document::new(4, 4);
+        let base_id = doc.next_id();
+        doc.layers.push(Layer {
+            common: LayerCommon::new(base_id, "base"),
+            kind: LayerKind::Shape(ShapeLayerData::new(
+                ShapeType::Rectangle,
+                2,
+                4,
+                0,
+                Some(Rgba::new(0, 255, 0, 255)),
+                None,
+                Vec::new(),
+            )),
+        });
+
+        let top_id = doc.next_id();
+        let mut common = LayerCommon::new(top_id, "top");
+        common.clip_to_below = true;
+        common.blend_mode = BlendMode::Normal;
+        doc.layers.push(Layer {
+            common,
+            kind: LayerKind::Shape(ShapeLayerData::new(
+                ShapeType::Rectangle,
+                4,
+                4,
+                0,
+                Some(Rgba::new(255, 0, 0, 255)),
+                None,
+                Vec::new(),
+            )),
+        });
+
+        let result = doc.render();
+        assert_eq!(result.get_pixel(0, 0), Rgba::new(255, 0, 0, 255));
+        assert_eq!(result.get_pixel(3, 0), Rgba::TRANSPARENT);
     }
 
     #[test]

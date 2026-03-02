@@ -13,6 +13,7 @@
 //! | [`LayerKind::Group`] | A folder containing child layers |
 //! | [`LayerKind::SolidColor`] | A flat color fill |
 //! | [`LayerKind::Gradient`] | A linear color gradient fill |
+//! | [`LayerKind::Shape`] | A rasterized vector-style shape primitive |
 
 use crate::blend::BlendMode;
 use crate::blit::{Anchor, Rotation};
@@ -282,6 +283,112 @@ impl GradientLayerData {
     }
 }
 
+/// The primitive geometry for a shape layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ShapeType {
+    /// An axis-aligned rectangle.
+    Rectangle,
+    /// An axis-aligned rounded rectangle.
+    RoundedRect,
+    /// An axis-aligned ellipse.
+    Ellipse,
+    /// A straight line from the top-left to the bottom-right of the local bounds.
+    Line,
+    /// A closed polygon using the provided local points.
+    Polygon,
+}
+
+impl ShapeType {
+    /// Stable string form used in JS snapshots and serialization.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ShapeType::Rectangle => "rectangle",
+            ShapeType::RoundedRect => "rounded_rect",
+            ShapeType::Ellipse => "ellipse",
+            ShapeType::Line => "line",
+            ShapeType::Polygon => "polygon",
+        }
+    }
+}
+
+/// A local point in a shape layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ShapePoint {
+    /// Horizontal coordinate in layer-local pixels.
+    pub x: i32,
+    /// Vertical coordinate in layer-local pixels.
+    pub y: i32,
+}
+
+impl ShapePoint {
+    /// Create a new local point.
+    pub const fn new(x: i32, y: i32) -> Self {
+        Self { x, y }
+    }
+}
+
+/// Stroke style for a shape layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ShapeStroke {
+    /// RGBA stroke color.
+    pub color: Rgba,
+    /// Stroke width in pixels.
+    pub width: u32,
+}
+
+impl ShapeStroke {
+    /// Create a new stroke style.
+    pub const fn new(color: Rgba, width: u32) -> Self {
+        Self { color, width }
+    }
+}
+
+/// Shape layer data stored as primitive parameters and rasterized at render time.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ShapeLayerData {
+    /// Shape primitive type.
+    pub shape_type: ShapeType,
+    /// Local raster width in pixels.
+    pub width: u32,
+    /// Local raster height in pixels.
+    pub height: u32,
+    /// Corner radius for rounded rectangles.
+    pub radius: u32,
+    /// Optional fill color.
+    pub fill: Option<Rgba>,
+    /// Optional stroke style.
+    pub stroke: Option<ShapeStroke>,
+    /// Polygon points in local space. Ignored for non-polygon shapes.
+    pub points: Vec<ShapePoint>,
+}
+
+impl ShapeLayerData {
+    /// Create a new shape layer description.
+    pub fn new(
+        shape_type: ShapeType,
+        width: u32,
+        height: u32,
+        radius: u32,
+        fill: Option<Rgba>,
+        stroke: Option<ShapeStroke>,
+        points: Vec<ShapePoint>,
+    ) -> Self {
+        Self {
+            shape_type,
+            width,
+            height,
+            radius,
+            fill,
+            stroke,
+            points,
+        }
+    }
+}
+
 /// A layer in the compositing document.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -315,6 +422,8 @@ pub enum LayerKind {
     SolidColor(SolidColorLayerData),
     /// A linear gradient fill.
     Gradient(GradientLayerData),
+    /// A rasterized shape primitive.
+    Shape(ShapeLayerData),
 }
 
 #[cfg(test)]

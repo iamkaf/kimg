@@ -96,4 +96,41 @@ describe("main package facade", () => {
 
     composition.free();
   });
+
+  test("shape layers render and expose shape metadata through the facade", async () => {
+    const composition = await Composition.create({ width: 8, height: 8 });
+    const groupId = composition.addGroupLayer({ name: "group" });
+    const shapeId = composition.addShapeLayer({
+      name: "badge",
+      type: "roundedRect",
+      x: 1,
+      y: 1,
+      width: 4,
+      height: 3,
+      radius: 1,
+      fill: [255, 0, 0, 255],
+      stroke: {
+        color: [255, 255, 255, 255],
+        width: 1,
+      },
+      parentId: groupId,
+    });
+
+    const shape = composition.getLayer(shapeId);
+    expect(shape).toMatchObject({
+      kind: "shape",
+      parentId: groupId,
+      shapeType: "roundedRect",
+      width: 4,
+      height: 3,
+      radius: 1,
+      strokeWidth: 1,
+    });
+
+    const rgba = composition.renderRgba();
+    const pixelIndex = (1 * composition.width + 1) * 4;
+    expect(Array.from(rgba.slice(pixelIndex, pixelIndex + 4))).toEqual([255, 255, 255, 255]);
+
+    composition.free();
+  });
 });

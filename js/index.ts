@@ -78,6 +78,32 @@ export interface GradientLayerOptions {
   parentId?: number;
 }
 
+export type ShapeLayerType = "rectangle" | "roundedRect" | "ellipse" | "line" | "polygon";
+
+export interface ShapePoint {
+  x: number;
+  y: number;
+}
+
+export interface ShapeStrokeOptions {
+  color: ByteInput;
+  width: number;
+}
+
+export interface ShapeLayerOptions {
+  name: string;
+  type: ShapeLayerType;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  radius?: number;
+  fill?: ByteInput;
+  stroke?: ShapeStrokeOptions;
+  points?: ShapePoint[];
+  parentId?: number;
+}
+
 export interface PngLayerOptions {
   name: string;
   png: ByteInput;
@@ -239,6 +265,7 @@ export type LayerKind =
   | "group"
   | "solidColor"
   | "gradient"
+  | "shape"
   | "unknown";
 
 export interface LayerInfo {
@@ -267,6 +294,12 @@ export interface LayerInfo {
   color?: number[];
   direction?: Exclude<GradientDirection, 0 | 1 | 2 | 3>;
   stopCount?: number;
+  shapeType?: ShapeLayerType;
+  radius?: number;
+  pointCount?: number;
+  fill?: number[];
+  strokeColor?: number[];
+  strokeWidth?: number;
 }
 
 const PRIVATE_CONSTRUCTOR_TOKEN = Symbol("kimgComposition");
@@ -340,6 +373,14 @@ function normalizeInteger(value, fieldName) {
   return Math.trunc(normalizeFiniteNumber(value, fieldName));
 }
 
+function normalizePositiveInteger(value, fieldName) {
+  const normalized = normalizeInteger(value, fieldName);
+  if (normalized <= 0) {
+    throw new RangeError(`${fieldName} must be greater than 0.`);
+  }
+  return normalized;
+}
+
 function normalizeString(value, fieldName) {
   if (typeof value !== "string") {
     throw new TypeError(`${fieldName} must be a string.`);
@@ -348,7 +389,7 @@ function normalizeString(value, fieldName) {
   return value;
 }
 
-function normalizeByteInput(value, fieldName) {
+function normalizeByteInput(value, fieldName): Uint8Array {
   if (value instanceof Uint8Array) {
     return value;
   }
@@ -380,12 +421,19 @@ function normalizeFloat64Input(value, fieldName) {
   throw new TypeError(`${fieldName} must be a Float64Array or array-like object.`);
 }
 
-function normalizeRgbaColor(value, fieldName) {
+function normalizeRgbaColor(value, fieldName): Uint8Array {
   const rgba = normalizeByteInput(value, fieldName);
   if (rgba.length !== 4) {
     throw new TypeError(`${fieldName} must contain exactly 4 RGBA bytes.`);
   }
   return rgba;
+}
+
+function normalizeOptionalRgbaColor(value, fieldName): Uint8Array {
+  if (value === undefined || value === null) {
+    return new Uint8Array();
+  }
+  return normalizeRgbaColor(value, fieldName);
 }
 
 function normalizeImagePlacement(options, what) {
@@ -454,6 +502,107 @@ function normalizeGradientStops(stops) {
   }
 
   return { colors, positions };
+}
+
+function normalizeShapeType(shapeType) {
+  switch (shapeType) {
+    case "rectangle":
+    case "roundedRect":
+    case "ellipse":
+    case "line":
+    case "polygon":
+      return shapeType;
+    default:
+      throw new TypeError(
+        'type must be "rectangle", "roundedRect", "ellipse", "line", or "polygon".',
+      );
+  }
+}
+
+function normalizeShapePoints(points, fieldName) {
+  if (!Array.isArray(points) || points.length < 3) {
+    throw new TypeError(`${fieldName} must be an array with at least 3 points.`);
+  }
+
+  const flat = new Int32Array(points.length * 2);
+  let maxX = 0;
+  let maxY = 0;
+
+  for (let index = 0; index < points.length; index += 1) {
+    const point = requireObject(points[index], `${fieldName}[${index}]`);
+    const x = normalizeInteger(point.x, `${fieldName}[${index}].x`);
+    const y = normalizeInteger(point.y, `${fieldName}[${index}].y`);
+    if (x < 0 || y < 0) {
+      throw new RangeError(`${fieldName}[${index}] coordinates must be >= 0.`);
+    }
+    flat[index * 2] = x;
+    flat[index * 2 + 1] = y;
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+
+  return {
+    height: maxY + 1,
+    points: flat,
+    width: maxX + 1,
+  };
+}
+
+function normalizeShapeLayerOptions(options) {
+  const layer = requireObject(options, "addShapeLayer");
+  const type = normalizeShapeType(layer.type);
+  const position = normalizePositionArg(layer.x, layer.y, "addShapeLayer");
+  const fill = normalizeOptionalRgbaColor(layer.fill, "addShapeLayer.fill");
+  let strokeColor: Uint8Array<ArrayBufferLike> = new Uint8Array();
+  let strokeWidth = 0;
+
+  if (layer.stroke !== undefined && layer.stroke !== null) {
+    const stroke = requireObject(layer.stroke, "addShapeLayer.stroke");
+    strokeColor = normalizeRgbaColor(stroke.color, "addShapeLayer.stroke.color");
+    strokeWidth = normalizePositiveInteger(stroke.width, "addShapeLayer.stroke.width");
+  }
+
+  if (fill.length === 0 && strokeWidth === 0) {
+    throw new TypeError("addShapeLayer requires a fill color, a stroke, or both.");
+  }
+
+  let width;
+  let height;
+  let points = new Int32Array();
+
+  if (type === "polygon") {
+    const polygon = normalizeShapePoints(layer.points, "addShapeLayer.points");
+    points = polygon.points;
+    width =
+      layer.width === undefined
+        ? polygon.width
+        : normalizePositiveInteger(layer.width, "addShapeLayer.width");
+    height =
+      layer.height === undefined
+        ? polygon.height
+        : normalizePositiveInteger(layer.height, "addShapeLayer.height");
+  } else {
+    width = normalizePositiveInteger(layer.width, "addShapeLayer.width");
+    height = normalizePositiveInteger(layer.height, "addShapeLayer.height");
+  }
+
+  const radius =
+    type === "roundedRect" ? normalizeInteger(layer.radius ?? 0, "addShapeLayer.radius") : 0;
+
+  return {
+    fill,
+    height,
+    name: normalizeString(layer.name, "addShapeLayer.name"),
+    parentId: layer.parentId,
+    points,
+    radius: Math.max(radius, 0),
+    strokeColor,
+    strokeWidth,
+    type,
+    width,
+    x: position.x,
+    y: position.y,
+  };
 }
 
 function normalizeLayerId(id, fieldName = "id") {
@@ -714,6 +863,7 @@ export interface Composition {
   addGroupLayer(options: GroupLayerOptions): number;
   addSolidColorLayer(options: SolidColorLayerOptions): number;
   addGradientLayer(options: GradientLayerOptions): number;
+  addShapeLayer(options: ShapeLayerOptions): number;
   addPngLayer(options: PngLayerOptions): number;
   importImage(options: ImportImageOptions): number;
   importJpeg(options: ImportImageOptions): number;
@@ -921,6 +1071,41 @@ export class Composition {
     const { colors, positions } = normalizeGradientStops(layer.stops);
     const direction = normalizeGradientDirection(layer.direction);
     return this._inner.add_gradient_layer(layer.name, colors, positions, direction);
+  }
+
+  addShapeLayer(options) {
+    const layer = normalizeShapeLayerOptions(options);
+
+    if (layer.parentId !== undefined) {
+      return this._inner.add_shape_to_group(
+        normalizeLayerId(layer.parentId, "addShapeLayer.parentId"),
+        layer.name,
+        layer.type,
+        layer.width,
+        layer.height,
+        layer.radius,
+        layer.fill,
+        layer.strokeColor,
+        layer.strokeWidth,
+        layer.points,
+        layer.x,
+        layer.y,
+      );
+    }
+
+    return this._inner.add_shape_layer(
+      layer.name,
+      layer.type,
+      layer.width,
+      layer.height,
+      layer.radius,
+      layer.fill,
+      layer.strokeColor,
+      layer.strokeWidth,
+      layer.points,
+      layer.x,
+      layer.y,
+    );
   }
 
   addPngLayer(options) {

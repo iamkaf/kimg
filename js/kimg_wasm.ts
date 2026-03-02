@@ -32,7 +32,7 @@ export interface RawLayerSnapshot {
   parentId: number | null;
   index: number;
   depth: number;
-  kind: "image" | "paint" | "filter" | "group" | "solidColor" | "gradient" | "unknown";
+  kind: "image" | "paint" | "filter" | "group" | "solidColor" | "gradient" | "shape" | "unknown";
   name: string;
   visible: boolean;
   opacity: number;
@@ -63,6 +63,12 @@ export interface RawLayerSnapshot {
   color?: number[];
   direction?: "horizontal" | "vertical" | "diagonalDown" | "diagonalUp";
   stopCount?: number;
+  shapeType?: "rectangle" | "roundedRect" | "ellipse" | "line" | "polygon";
+  radius?: number;
+  pointCount?: number;
+  fill?: number[];
+  strokeColor?: number[];
+  strokeWidth?: number;
 }
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -93,6 +99,19 @@ interface RawCompositionMethods {
     stops_colors: Uint8Array,
     stops_positions: Float64Array,
     direction: number,
+  ): number;
+  add_shape_layer(
+    name: string,
+    shape_type: string,
+    width: number,
+    height: number,
+    radius: number,
+    fill: Uint8Array,
+    stroke_color: Uint8Array,
+    stroke_width: number,
+    points_xy: Int32Array,
+    x: number,
+    y: number,
   ): number;
   set_opacity(id: number, opacity: number): void;
   set_visible(id: number, visible: boolean): void;
@@ -128,6 +147,20 @@ interface RawCompositionMethods {
   ): number;
   add_filter_to_group(group_id: number, name: string): number;
   add_group_to_group(group_id: number, name: string): number;
+  add_shape_to_group(
+    group_id: number,
+    name: string,
+    shape_type: string,
+    width: number,
+    height: number,
+    radius: number,
+    fill: Uint8Array,
+    stroke_color: Uint8Array,
+    stroke_width: number,
+    points_xy: Int32Array,
+    x: number,
+    y: number,
+  ): number;
   remove_from_group(group_id: number, child_id: number): boolean;
   flatten_group(group_id: number): boolean;
   remove_layer(id: number): boolean;

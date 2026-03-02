@@ -17,6 +17,18 @@ doc.addImageLayer({
   y: 0,
 });
 const png = doc.exportPng();
+
+doc.addShapeLayer({
+  name: "badge",
+  type: "roundedRect",
+  x: 16,
+  y: 16,
+  width: 48,
+  height: 24,
+  radius: 8,
+  fill: [255, 0, 0, 255],
+  stroke: { color: [255, 255, 255, 255], width: 2 },
+});
 ```
 
 ## Node.js
