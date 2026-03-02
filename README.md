@@ -28,7 +28,7 @@ This builds the consumable JS/WASM package into `dist/`.
 ### Browser
 
 ```js
-import init, { Composition } from './dist/kimg_wasm.js';
+import init, { Composition } from './dist/index.js';
 
 await init(); // auto-selects the SIMD wasm build when the runtime supports it
 
@@ -43,7 +43,7 @@ const png = doc.export_png();
 
 ```js
 import { readFileSync } from 'fs';
-import { initSync, Composition, simdSupported } from './dist/kimg_wasm.js';
+import { initSync, Composition, simdSupported } from './dist/index.js';
 
 const wasmName = simdSupported() ? 'kimg_wasm_simd_bg.wasm' : 'kimg_wasm_bg.wasm';
 initSync({ module: readFileSync(new URL(`./dist/${wasmName}`, import.meta.url)) });
@@ -80,6 +80,9 @@ import { rgbaToBase64, base64ToRgba } from './dist/base64.js';
 import { readableTextColor } from './dist/color-utils.js';
 readableTextColor('#1a1a2e'); // '#ffffff'
 readableTextColor('#f0f0f0'); // '#000000'
+
+// Low-level wasm-bound API
+import initRaw, { Composition as RawComposition } from './dist/raw.js';
 ```
 
 ## Color utilities
@@ -87,7 +90,7 @@ readableTextColor('#f0f0f0'); // '#000000'
 These are free functions, not tied to a document:
 
 ```js
-import { hex_to_rgb, rgb_to_hex, relative_luminance, contrast_ratio, dominant_rgb_from_rgba } from './dist/kimg_wasm.js';
+import { hex_to_rgb, rgb_to_hex, relative_luminance, contrast_ratio, dominant_rgb_from_rgba } from './dist/index.js';
 
 hex_to_rgb('#ff8000');                    // Uint8Array [255, 128, 0]
 rgb_to_hex(255, 128, 0);                  // '#ff8000'

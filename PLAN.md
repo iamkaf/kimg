@@ -18,7 +18,6 @@ Already in repo:
 Current weakness:
 
 - The shipped JS API is still mostly a direct wasm-bound surface
-- Public filenames still leak implementation details like `kimg_wasm.js`
 - Method naming is Rust-style `snake_case`
 - Layer manipulation is functional but not ergonomic from JS
 - npm publication is not finalized
@@ -124,10 +123,10 @@ Must be true before calling the API stable:
 
 ### 1. Package Surface
 
-- [ ] Rename the main package entrypoint to `js/index.js` / `dist/index.js`
-- [ ] Export `init`, `initSync`, `simdSupported`, `Composition`, and utility functions from the main entrypoint
-- [ ] Move the current direct wasm wrapper behind `kimg/raw`
-- [ ] Stop exposing `kimg_wasm` filenames as the primary user-facing API
+- [x] Rename the main package entrypoint to `js/index.js` / `dist/index.js`
+- [x] Export `init`, `initSync`, `simdSupported`, `Composition`, and utility functions from the main entrypoint
+- [x] Move the current direct wasm wrapper behind `kimg/raw`
+- [x] Stop exposing `kimg_wasm` filenames as the primary user-facing API
 - [ ] Decide the final npm package name and publication path
 
 ### 2. JS Facade

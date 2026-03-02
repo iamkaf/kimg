@@ -3,14 +3,18 @@
   "version": "0.5.0",
   "description": "Rust+WASM pixel engine for layer-based image compositing — blend modes, masks, filters, transforms, sprite tools, multi-format I/O",
   "type": "module",
-  "main": "kimg_wasm.js",
-  "module": "kimg_wasm.js",
-  "types": "kimg_wasm.d.ts",
+  "main": "index.js",
+  "module": "index.js",
+  "types": "index.d.ts",
   "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./kimg_wasm.d.ts",
-      "import": "./kimg_wasm.js"
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./raw": {
+      "types": "./raw.d.ts",
+      "import": "./raw.js"
     },
     "./base64": {
       "types": "./base64.d.ts",
@@ -22,6 +26,10 @@
     }
   },
   "files": [
+    "index.js",
+    "index.d.ts",
+    "raw.js",
+    "raw.d.ts",
     "kimg_wasm.js",
     "kimg_wasm.d.ts",
     "kimg_wasm_bg.js",

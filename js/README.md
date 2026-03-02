@@ -36,4 +36,7 @@ import { rgbaToBase64, base64ToRgba } from 'kimg/base64';
 
 // Color utilities (requires WASM init first)
 import { readableTextColor } from 'kimg/color-utils';
+
+// Low-level wasm-bound surface
+import initRaw, { Composition as RawComposition } from 'kimg/raw';
 ```

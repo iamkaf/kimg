@@ -1,4 +1,4 @@
-import { relative_luminance } from "./kimg_wasm.js";
+import { relative_luminance } from "./raw.js";
 
 /**
  * Pick a readable text color (black or white) for the given background.
