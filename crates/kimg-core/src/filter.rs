@@ -72,124 +72,175 @@ pub fn apply_hsl_filter(buf: &mut ImageBuffer, cfg: &HslFilterConfig) {
     let tint = cfg.tint.clamp(-1.0, 1.0);
     let sharpen = cfg.sharpen.clamp(0.0, 1.0);
 
-    let has_post_adjust =
-        brightness != 0.0 || contrast != 0.0 || temperature != 0.0 || tint != 0.0 || sharpen > 0.0;
+    let has_hsl_adjust = hue != 0.0 || sat != 0.0 || light != 0.0;
+    let has_alpha_adjust = a_delta != 0.0;
+    let has_tone_adjust = brightness != 0.0 || contrast != 0.0 || temperature != 0.0 || tint != 0.0;
+    let has_sharpen = sharpen > 0.0;
+
+    if !(has_hsl_adjust || has_alpha_adjust || has_tone_adjust || has_sharpen) {
+        return;
+    }
 
     let pixel_count = (buf.width as usize) * (buf.height as usize);
-    let mut rgb_base: Vec<u8> = if has_post_adjust {
+    let mut rgb_base: Vec<u8> = if has_sharpen {
         vec![0; pixel_count * 3]
     } else {
         Vec::new()
     };
-    let mut alpha_mask: Vec<u8> = if has_post_adjust {
-        vec![0; pixel_count]
-    } else {
-        Vec::new()
-    };
 
-    // Pass 1: HSL adjustment + alpha delta
-    for i in (0..buf.data.len()).step_by(4) {
-        let a = buf.data[i + 3];
-        if a == 0 {
-            continue;
+    if has_hsl_adjust || has_alpha_adjust {
+        // Pass 1: HSL adjustment + alpha delta, plus optional sharpen source capture.
+        for i in (0..buf.data.len()).step_by(4) {
+            let a = buf.data[i + 3];
+            if a == 0 {
+                continue;
+            }
+
+            let mut nr = buf.data[i];
+            let mut ng = buf.data[i + 1];
+            let mut nb = buf.data[i + 2];
+
+            if has_hsl_adjust {
+                let hsl = rgb_to_hsl(nr, ng, nb);
+                let nh = hsl.h + hue;
+                let ns = (hsl.s + sat).clamp(0.0, 1.0);
+                let nl = (hsl.l + light).clamp(0.0, 1.0);
+                (nr, ng, nb) = hsl_to_rgb(nh, ns, nl);
+                buf.data[i] = nr;
+                buf.data[i + 1] = ng;
+                buf.data[i + 2] = nb;
+            }
+
+            if has_alpha_adjust {
+                let na = (a as f64 + (a_delta * 255.0).round()).clamp(0.0, 255.0) as u8;
+                buf.data[i + 3] = na;
+            }
+
+            if has_sharpen {
+                let pi = i / 4;
+                let ri = pi * 3;
+                rgb_base[ri] = nr;
+                rgb_base[ri + 1] = ng;
+                rgb_base[ri + 2] = nb;
+            }
         }
-
-        let r = buf.data[i];
-        let g = buf.data[i + 1];
-        let b = buf.data[i + 2];
-
-        let hsl = rgb_to_hsl(r, g, b);
-        let nh = hsl.h + hue;
-        let ns = (hsl.s + sat).clamp(0.0, 1.0);
-        let nl = (hsl.l + light).clamp(0.0, 1.0);
-        let (nr, ng, nb) = hsl_to_rgb(nh, ns, nl);
-
-        buf.data[i] = nr;
-        buf.data[i + 1] = ng;
-        buf.data[i + 2] = nb;
-
-        let na = (a as f64 + (a_delta * 255.0).round()).clamp(0.0, 255.0) as u8;
-        buf.data[i + 3] = na;
-
-        if has_post_adjust {
+    } else if has_sharpen {
+        // Capture a stable RGB snapshot for the sharpen kernel without a second clone.
+        for i in (0..buf.data.len()).step_by(4) {
             let pi = i / 4;
             let ri = pi * 3;
-            rgb_base[ri] = nr;
-            rgb_base[ri + 1] = ng;
-            rgb_base[ri + 2] = nb;
-            alpha_mask[pi] = na;
+            rgb_base[ri] = buf.data[i];
+            rgb_base[ri + 1] = buf.data[i + 1];
+            rgb_base[ri + 2] = buf.data[i + 2];
         }
-    }
-
-    if !has_post_adjust {
+    } else if !has_tone_adjust {
         return;
     }
 
-    // Pass 2: brightness, contrast, temperature, tint, sharpen
+    if !has_tone_adjust && !has_sharpen {
+        return;
+    }
+
     let contrast_factor = if contrast >= 0.0 {
         1.0 + contrast * 3.0
     } else {
         1.0 / (1.0 + contrast.abs() * 3.0)
     };
 
-    let sharpen_src = if sharpen > 0.0 {
-        rgb_base.clone()
-    } else {
-        Vec::new()
-    };
-
     let w = buf.width as usize;
     let h = buf.height as usize;
 
+    if !has_sharpen {
+        for i in (0..buf.data.len()).step_by(4) {
+            if buf.data[i + 3] == 0 {
+                continue;
+            }
+
+            let mut r = buf.data[i] as f64;
+            let mut g = buf.data[i + 1] as f64;
+            let mut b = buf.data[i + 2] as f64;
+
+            if brightness != 0.0 {
+                let delta = brightness * 180.0;
+                r += delta;
+                g += delta;
+                b += delta;
+            }
+
+            if contrast != 0.0 {
+                r = (r - 128.0) * contrast_factor + 128.0;
+                g = (g - 128.0) * contrast_factor + 128.0;
+                b = (b - 128.0) * contrast_factor + 128.0;
+            }
+
+            if temperature != 0.0 {
+                let t = temperature * 90.0;
+                r += t;
+                b -= t;
+            }
+
+            if tint != 0.0 {
+                let t = tint * 80.0;
+                g += t;
+                r -= t * 0.35;
+                b -= t * 0.35;
+            }
+
+            buf.data[i] = clamp_byte(r);
+            buf.data[i + 1] = clamp_byte(g);
+            buf.data[i + 2] = clamp_byte(b);
+        }
+        return;
+    }
+
+    // Pass 2: optional sharpen + tone adjustments.
     for y in 0..h {
         for x in 0..w {
             let pi = y * w + x;
-            if alpha_mask[pi] == 0 {
+            let di = pi * 4;
+            if buf.data[di + 3] == 0 {
                 continue;
             }
-            let di = pi * 4;
             let ri = pi * 3;
 
             let mut r = rgb_base[ri] as f64;
             let mut g = rgb_base[ri + 1] as f64;
             let mut b = rgb_base[ri + 2] as f64;
 
-            // Sharpen (unsharp mask via 3x3 box blur)
-            if sharpen > 0.0 {
-                let mut sum_r = 0.0;
-                let mut sum_g = 0.0;
-                let mut sum_b = 0.0;
-                let mut weight = 0.0;
-                for oy in -1i32..=1 {
-                    let ny = y as i32 + oy;
-                    if ny < 0 || ny >= h as i32 {
+            let mut sum_r = 0.0;
+            let mut sum_g = 0.0;
+            let mut sum_b = 0.0;
+            let mut weight = 0.0;
+            for oy in -1i32..=1 {
+                let ny = y as i32 + oy;
+                if ny < 0 || ny >= h as i32 {
+                    continue;
+                }
+                for ox in -1i32..=1 {
+                    let nx = x as i32 + ox;
+                    if nx < 0 || nx >= w as i32 {
                         continue;
                     }
-                    for ox in -1i32..=1 {
-                        let nx = x as i32 + ox;
-                        if nx < 0 || nx >= w as i32 {
-                            continue;
-                        }
-                        let npi = ny as usize * w + nx as usize;
-                        if alpha_mask[npi] == 0 {
-                            continue;
-                        }
-                        let nri = npi * 3;
-                        sum_r += sharpen_src[nri] as f64;
-                        sum_g += sharpen_src[nri + 1] as f64;
-                        sum_b += sharpen_src[nri + 2] as f64;
-                        weight += 1.0;
+                    let npi = ny as usize * w + nx as usize;
+                    let ndi = npi * 4;
+                    if buf.data[ndi + 3] == 0 {
+                        continue;
                     }
+                    let nri = npi * 3;
+                    sum_r += rgb_base[nri] as f64;
+                    sum_g += rgb_base[nri + 1] as f64;
+                    sum_b += rgb_base[nri + 2] as f64;
+                    weight += 1.0;
                 }
-                if weight > 0.0 {
-                    let blur_r = sum_r / weight;
-                    let blur_g = sum_g / weight;
-                    let blur_b = sum_b / weight;
-                    let amount = sharpen * 1.2;
-                    r = (r + (r - blur_r) * amount).clamp(0.0, 255.0);
-                    g = (g + (g - blur_g) * amount).clamp(0.0, 255.0);
-                    b = (b + (b - blur_b) * amount).clamp(0.0, 255.0);
-                }
+            }
+            if weight > 0.0 {
+                let blur_r = sum_r / weight;
+                let blur_g = sum_g / weight;
+                let blur_b = sum_b / weight;
+                let amount = sharpen * 1.2;
+                r = (r + (r - blur_r) * amount).clamp(0.0, 255.0);
+                g = (g + (g - blur_g) * amount).clamp(0.0, 255.0);
+                b = (b + (b - blur_b) * amount).clamp(0.0, 255.0);
             }
 
             if brightness != 0.0 {

@@ -14,7 +14,7 @@
 //! mirroring Spriteform's `renderSmartVariantScoped` behaviour.
 
 use crate::blend::{blend, blend_normal, BlendMode};
-use crate::blit::{blit_transformed, BlitParams, Rotation};
+use crate::blit::{blit_transformed, Anchor, BlitParams, Rotation};
 use crate::buffer::ImageBuffer;
 use crate::fill;
 use crate::filter::{apply_hsl_filter, HslFilterConfig};
@@ -476,6 +476,27 @@ fn blit_raster_layer(
     );
 }
 
+fn blit_pretransformed_raster_layer(
+    target: &mut ImageBuffer,
+    source: &ImageBuffer,
+    common: &LayerCommon,
+    anchor: Anchor,
+) {
+    blit_transformed(
+        target,
+        source,
+        &BlitParams {
+            dx: common.x,
+            dy: common.y,
+            anchor,
+            flip_x: false,
+            flip_y: false,
+            rotation: Rotation::None,
+            opacity: common.opacity,
+        },
+    );
+}
+
 fn apply_non_destructive_transform(
     src: &ImageBuffer,
     transform_data: &LayerTransform,
@@ -603,8 +624,20 @@ fn render_layer_direct(layer: &Layer, output: &mut ImageBuffer) -> bool {
             true
         }
         LayerKind::Shape(shape) => {
-            let shape_buf = render_shape_layer(shape);
-            blit_raster_layer(output, &shape_buf, &layer.common, &shape.transform);
+            shape.with_cached_transformed_raster(
+                || {
+                    let shape_buf = render_shape_layer(shape);
+                    apply_non_destructive_transform(&shape_buf, &shape.transform)
+                },
+                |shape_buf| {
+                    blit_pretransformed_raster_layer(
+                        output,
+                        shape_buf,
+                        &layer.common,
+                        shape.transform.anchor,
+                    );
+                },
+            );
             true
         }
         _ => false,
@@ -780,8 +813,20 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
         }
         LayerKind::Shape(shape) => {
             let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
-            let shape_buf = render_shape_layer(shape);
-            blit_raster_layer(&mut buf, &shape_buf, &layer.common, &shape.transform);
+            shape.with_cached_transformed_raster(
+                || {
+                    let shape_buf = render_shape_layer(shape);
+                    apply_non_destructive_transform(&shape_buf, &shape.transform)
+                },
+                |shape_buf| {
+                    blit_pretransformed_raster_layer(
+                        &mut buf,
+                        shape_buf,
+                        &layer.common,
+                        shape.transform.anchor,
+                    );
+                },
+            );
             if let Some(mask) = &layer.common.mask {
                 apply_mask(&mut buf, mask, layer.common.mask_inverted);
             }
@@ -806,7 +851,6 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
 /// Layers at the end of the vec are drawn on top.
 fn render_layers(layers: &[Layer], output: &mut ImageBuffer) {
     let mut prev_alpha = vec![0; (output.width as usize) * (output.height as usize)];
-
     for layer in layers {
         if !layer.common.visible {
             continue;

@@ -228,7 +228,7 @@ npm run test:js
 npm run test:all
 ```
 
-137 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, bucket fill, and shared per-layer transforms.
+144 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, bucket fill, and shared per-layer transforms.
 
 The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
 
@@ -278,27 +278,29 @@ Notes on the harnesses:
 - RGBA bilinear and Lanczos3 resize paths use `fast_image_resize`, so native builds pick up host SIMD and the browser `Composition.create()` path can load the separate `simd128` wasm artifact.
 - Codec benchmarks use a deterministic textured 512×512 image instead of a flat fill, which avoids unrealistically optimistic compression timings.
 - `render/repeated_transformed_layer/512` performs two back-to-back renders of the same transformed document in one iteration so future caching work has a stable benchmark target.
+- Standalone shape benches instantiate a fresh shape per sample so they continue to measure rasterization work instead of the document-level layer cache.
 
-Representative medians from recent local runs on March 2, 2026. These are hardware-dependent and should be treated as a baseline example, not a guarantee:
+Representative medians from recent local runs on March 3, 2026. These are hardware-dependent and should be treated as a baseline example, not a guarantee:
 
 | Operation | Median |
 |------|------:|
 | `render/single_image/512` | `5.29 ms` |
 | `render/10_layers/512` | `8.31 ms` |
 | `render/10_normal_layers/512` | `17.78 ms` |
-| `render/10_layers_with_filter/512` | `51.12 ms` |
-| `render/single_shape/512` | `6.40 ms` |
-| `render/10_shapes/512` | `55.66 ms` |
-| `render/10_shapes_with_filter/512` | `67.91 ms` |
+| `render/10_layers_with_filter/512` | `14.05 ms` |
+| `render/single_shape/512` | `739.04 µs` |
+| `render/10_shapes/512` | `7.30 ms` |
+| `render/10_shapes_with_filter/512` | `14.79 ms` |
 | `render/group_of_5/512` | `28.08 ms` |
-| `render/clipped_layer_stack/512` | `18.42 ms` |
+| `render/clipped_layer_stack/512` | `18.40 ms` |
 | `render/masked_layer_stack/512` | `10.59 ms` |
 | `render/transformed_image/512` | `9.02 ms` |
 | `render/transformed_paint/512` | `11.03 ms` |
-| `render/transformed_shape/512` | `11.18 ms` |
-| `render/10_layers_with_transforms/512` | `71.67 ms` |
+| `render/transformed_shape/512` | `861.31 µs` |
+| `render/10_layers_with_transforms/512` | `55.52 ms` |
 | `render/repeated_transformed_layer/512` | `11.79 ms` |
 | `serialize_deserialize/10_layers` | `762.54 µs` |
+| `apply_hsl_filter/512` | `5.31 ms` |
 | `bucket_fill/contiguous/512` | `945.14 µs` |
 | `bucket_fill/non_contiguous/512` | `808.98 µs` |
 | `bucket_fill/tolerance/512` | `1.19 ms` |
@@ -309,8 +311,8 @@ Representative medians from recent local runs on March 2, 2026. These are hardwa
 | `encode_webp/512` | `1.41 ms` |
 | `decode_webp/512` | `2.65 ms` |
 | `extract_palette/512/16colors` | `20.45 ms` |
-| `shape/rasterize_rectangle/512` | `341.91 µs` |
-| `shape/rasterize_polygon/512` | `11.88 ms` |
+| `shape/rasterize_rectangle/512` | `869.95 µs` |
+| `shape/rasterize_polygon/512` | `12.64 ms` |
 | `resize_nearest/512→1024` | `1.63 ms` |
 | `resize_bilinear/512→1024` | `1.01 ms` |
 | `resize_lanczos3/512→1024` | `1.59 ms` |
@@ -324,6 +326,19 @@ Current local release build sizes:
 - `dist/kimg_wasm_simd_bg.wasm`: `1.1 MB` uncompressed, `385,388` bytes gzipped
 
 These vary slightly with toolchain and optimization settings.
+
+## Roadmap
+
+Tracked for later:
+
+- Selection system
+- Text
+- Brush / brush engine
+
+Possible follow-up work if those areas become important:
+
+- Revisit the PSD parser
+- Evaluate a text engine such as `cosmic-text`
 
 ## License
 

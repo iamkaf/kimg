@@ -11,15 +11,17 @@ use tiny_skia::{FillRule, Paint, Path, PathBuilder, Pixmap, Rect, Stroke, Transf
 
 /// Rasterize a shape layer into its local RGBA buffer.
 pub fn render_shape(shape: &ShapeLayerData) -> ImageBuffer {
-    #[cfg(feature = "tiny-skia-shapes")]
-    {
-        return render_shape_tiny_skia(shape).unwrap_or_else(|| render_shape_manual(shape));
-    }
+    shape.cached_local_raster(|| {
+        #[cfg(feature = "tiny-skia-shapes")]
+        {
+            return render_shape_tiny_skia(shape).unwrap_or_else(|| render_shape_manual(shape));
+        }
 
-    #[cfg(not(feature = "tiny-skia-shapes"))]
-    {
-        render_shape_manual(shape)
-    }
+        #[cfg(not(feature = "tiny-skia-shapes"))]
+        {
+            render_shape_manual(shape)
+        }
+    })
 }
 
 fn render_shape_manual(shape: &ShapeLayerData) -> ImageBuffer {

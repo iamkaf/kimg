@@ -20,6 +20,7 @@ use crate::blit::Anchor;
 use crate::buffer::ImageBuffer;
 use crate::filter::HslFilterConfig;
 use crate::pixel::Rgba;
+use std::cell::RefCell;
 
 /// Unique layer identifier.
 pub type LayerId = u32;
@@ -380,7 +381,7 @@ impl ShapeStroke {
 }
 
 /// Shape layer data stored as primitive parameters and rasterized at render time.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub struct ShapeLayerData {
     /// Shape primitive type.
@@ -399,6 +400,8 @@ pub struct ShapeLayerData {
     pub points: Vec<ShapePoint>,
     /// Shared non-destructive transform state.
     pub transform: LayerTransform,
+    raster_cache: RefCell<Option<ShapeRasterCache>>,
+    transformed_cache: RefCell<Option<ShapeTransformedCache>>,
 }
 
 impl ShapeLayerData {
@@ -421,8 +424,135 @@ impl ShapeLayerData {
             stroke,
             points,
             transform: LayerTransform::new(),
+            raster_cache: RefCell::new(None),
+            transformed_cache: RefCell::new(None),
         }
     }
+
+    pub(crate) fn cached_local_raster<F>(&self, render: F) -> ImageBuffer
+    where
+        F: FnOnce() -> ImageBuffer,
+    {
+        let key = ShapeRasterCacheKey::from_shape(self);
+        if let Some(cached) = self.raster_cache.borrow().as_ref() {
+            if cached.key == key {
+                return cached.buffer.clone();
+            }
+        }
+
+        let buffer = render();
+        *self.raster_cache.borrow_mut() = Some(ShapeRasterCache {
+            key,
+            buffer: buffer.clone(),
+        });
+        buffer
+    }
+
+    pub(crate) fn with_cached_transformed_raster<F, R>(
+        &self,
+        render: F,
+        use_buffer: impl FnOnce(&ImageBuffer) -> R,
+    ) -> R
+    where
+        F: FnOnce() -> ImageBuffer,
+    {
+        let key = ShapeTransformedCacheKey::from_shape(self);
+        let needs_refresh = self
+            .transformed_cache
+            .borrow()
+            .as_ref()
+            .is_none_or(|cached| cached.key != key);
+
+        if needs_refresh {
+            let buffer = render();
+            *self.transformed_cache.borrow_mut() = Some(ShapeTransformedCache { key, buffer });
+        }
+
+        let cached = self.transformed_cache.borrow();
+        let entry = cached
+            .as_ref()
+            .expect("transformed shape cache should be populated");
+        use_buffer(&entry.buffer)
+    }
+}
+
+impl Clone for ShapeLayerData {
+    fn clone(&self) -> Self {
+        Self {
+            shape_type: self.shape_type,
+            width: self.width,
+            height: self.height,
+            radius: self.radius,
+            fill: self.fill,
+            stroke: self.stroke,
+            points: self.points.clone(),
+            transform: self.transform,
+            raster_cache: RefCell::new(None),
+            transformed_cache: RefCell::new(None),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShapeRasterCacheKey {
+    shape_type: ShapeType,
+    width: u32,
+    height: u32,
+    radius: u32,
+    fill: Option<Rgba>,
+    stroke: Option<ShapeStroke>,
+    points: Vec<ShapePoint>,
+}
+
+impl ShapeRasterCacheKey {
+    fn from_shape(shape: &ShapeLayerData) -> Self {
+        Self {
+            shape_type: shape.shape_type,
+            width: shape.width,
+            height: shape.height,
+            radius: shape.radius,
+            fill: shape.fill,
+            stroke: shape.stroke,
+            points: shape.points.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShapeTransformedCacheKey {
+    raster: ShapeRasterCacheKey,
+    anchor: Anchor,
+    flip_x: bool,
+    flip_y: bool,
+    rotation_bits: u64,
+    scale_x_bits: u64,
+    scale_y_bits: u64,
+}
+
+impl ShapeTransformedCacheKey {
+    fn from_shape(shape: &ShapeLayerData) -> Self {
+        Self {
+            raster: ShapeRasterCacheKey::from_shape(shape),
+            anchor: shape.transform.anchor,
+            flip_x: shape.transform.flip_x,
+            flip_y: shape.transform.flip_y,
+            rotation_bits: shape.transform.rotation_deg.to_bits(),
+            scale_x_bits: shape.transform.scale_x.to_bits(),
+            scale_y_bits: shape.transform.scale_y.to_bits(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ShapeRasterCache {
+    key: ShapeRasterCacheKey,
+    buffer: ImageBuffer,
+}
+
+#[derive(Debug, Clone)]
+struct ShapeTransformedCache {
+    key: ShapeTransformedCacheKey,
+    buffer: ImageBuffer,
 }
 
 /// A layer in the compositing document.
@@ -465,6 +595,7 @@ pub enum LayerKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     #[test]
     fn layer_common_defaults() {
@@ -478,5 +609,80 @@ mod tests {
         assert_eq!(c.blend_mode, BlendMode::Normal);
         assert!(c.mask.is_none());
         assert!(!c.clip_to_below);
+    }
+
+    #[test]
+    fn shape_local_cache_reuses_and_invalidates() {
+        let shape = ShapeLayerData::new(
+            ShapeType::Rectangle,
+            8,
+            8,
+            0,
+            Some(Rgba::new(255, 255, 255, 255)),
+            None,
+            vec![],
+        );
+        let calls = Cell::new(0);
+
+        let first = shape.cached_local_raster(|| {
+            calls.set(calls.get() + 1);
+            ImageBuffer::new_transparent(8, 8)
+        });
+        let second = shape.cached_local_raster(|| {
+            calls.set(calls.get() + 1);
+            ImageBuffer::new_transparent(8, 8)
+        });
+
+        assert_eq!(calls.get(), 1);
+        assert_eq!(first.data, second.data);
+
+        let mut changed = shape.clone();
+        changed.width = 9;
+        changed.cached_local_raster(|| {
+            calls.set(calls.get() + 1);
+            ImageBuffer::new_transparent(9, 8)
+        });
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn shape_transformed_cache_reuses_and_invalidates() {
+        let mut shape = ShapeLayerData::new(
+            ShapeType::Rectangle,
+            8,
+            8,
+            0,
+            Some(Rgba::new(255, 255, 255, 255)),
+            None,
+            vec![],
+        );
+        shape.transform.rotation_deg = 45.0;
+        let calls = Cell::new(0);
+
+        shape.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(12, 12)
+            },
+            Clone::clone,
+        );
+        shape.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(12, 12)
+            },
+            Clone::clone,
+        );
+        assert_eq!(calls.get(), 1);
+
+        shape.transform.scale_x = 2.0;
+        shape.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(24, 12)
+            },
+            Clone::clone,
+        );
+        assert_eq!(calls.get(), 2);
     }
 }

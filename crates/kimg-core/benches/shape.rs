@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use kimg_core::layer::{ShapeLayerData, ShapePoint, ShapeStroke, ShapeType};
 use kimg_core::pixel::Rgba;
 use kimg_core::shape::render_shape;
@@ -40,16 +40,22 @@ fn polygon_shape(size: u32) -> ShapeLayerData {
 }
 
 fn bench_shape_rasterize_rectangle(c: &mut Criterion) {
-    let shape = rectangle_shape(512);
     c.bench_function("shape/rasterize_rectangle/512", |b| {
-        b.iter(|| black_box(render_shape(black_box(&shape))))
+        b.iter_batched(
+            || rectangle_shape(512),
+            |shape| black_box(render_shape(black_box(&shape))),
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_shape_rasterize_polygon(c: &mut Criterion) {
-    let shape = polygon_shape(512);
     c.bench_function("shape/rasterize_polygon/512", |b| {
-        b.iter(|| black_box(render_shape(black_box(&shape))))
+        b.iter_batched(
+            || polygon_shape(512),
+            |shape| black_box(render_shape(black_box(&shape))),
+            BatchSize::SmallInput,
+        )
     });
 }
 
