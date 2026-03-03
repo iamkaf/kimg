@@ -64,7 +64,9 @@ BROWSER_BIN="$(pick_browser)"
 
 cd "$ROOT"
 
-echo "==> Serving demo at http://127.0.0.1:${PORT}/demo/"
+DEMO_URL="http://127.0.0.1:${PORT}/demo/?wasm=baseline"
+
+echo "==> Serving demo at ${DEMO_URL}"
 python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$ROOT" >/dev/null 2>&1 &
 SERVER_PID=$!
 wait_for_url "http://127.0.0.1:${PORT}/demo/"
@@ -81,7 +83,7 @@ if [ "$(id -u)" -eq 0 ] || [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "
 fi
 
 echo "==> Loading demo page in headless browser..."
-DOM="$("$BROWSER_BIN" "${CHROME_FLAGS[@]}" "http://127.0.0.1:${PORT}/demo/")"
+DOM="$("$BROWSER_BIN" "${CHROME_FLAGS[@]}" "$DEMO_URL")"
 DOM_FILE="$(mktemp)"
 printf '%s' "$DOM" >"$DOM_FILE"
 

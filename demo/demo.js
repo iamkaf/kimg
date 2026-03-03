@@ -103,7 +103,7 @@ async function runSuite() {
   setSimdStatus("Checking");
 
   try {
-    await preload();
+    await preload(resolveDemoPreloadInput());
     const context = await buildContext();
     if (runId !== runSequence) {
       return;
@@ -1098,6 +1098,17 @@ function createTests() {
       },
     },
   ];
+}
+
+function resolveDemoPreloadInput() {
+  const mode = new URLSearchParams(window.location.search).get("wasm");
+  if (mode === "baseline") {
+    return { module_or_path: new URL("../dist/kimg_wasm_bg.wasm", import.meta.url) };
+  }
+  if (mode === "simd") {
+    return { module_or_path: new URL("../dist/kimg_wasm_simd_bg.wasm", import.meta.url) };
+  }
+  return undefined;
 }
 
 async function buildContext() {
