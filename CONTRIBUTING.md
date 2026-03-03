@@ -38,6 +38,7 @@ The tracked JS/TS wrapper sources live in `js/`, the npm package metadata lives 
 1. Fork the repo and create a branch from `main`.
 2. Make your changes. Add tests for new functionality.
 3. Run `npm run test:all` and `cargo clippy --workspace` to check for issues.
+   Run `npm run test:pack` too if you changed packaging, exports, or the build pipeline.
 4. Open a pull request.
 
 ## Code style

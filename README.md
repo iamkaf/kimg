@@ -225,6 +225,7 @@ The build emits two wasm binaries:
 cargo test -p kimg-core
 npm run fmt:js:check
 npm run test:js
+npm run test:pack
 npm run test:all
 ```
 
@@ -235,6 +236,8 @@ The package layer also has a small Vitest suite that exercises the built JS/WASM
 `npm run test:all` is the convenience entrypoint for the full Rust + package-layer test pass.
 
 `npm run fmt:js` and `npm run fmt:js:check` use `oxfmt` for the tracked TypeScript sources and tests.
+
+`npm run test:pack` packs the repo, installs the tarball into temporary Node/browser projects, and smoke-tests the published package shape instead of the local source tree.
 
 ## Benchmarks
 
