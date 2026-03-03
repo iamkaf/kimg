@@ -9,6 +9,7 @@
 *.swp
 *.swo
 *.png
+!demo/assets/teapot.png
 .DS_Store
 
 # Rust backup files
