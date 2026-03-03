@@ -1622,7 +1622,13 @@ export async function contrastRatio(a: string, b: string): Promise<number> {
 }
 
 export async function decodeImage(data: ByteInput): Promise<Uint8Array> {
-  return withPreload(() => decode_image(normalizeByteInput(data, "decodeImage.data")));
+  return withPreload(() => {
+    const decoded = decode_image(normalizeByteInput(data, "decodeImage.data"));
+    if (decoded.length < 8) {
+      throw new Error("decodeImage returned malformed output");
+    }
+    return decoded.slice(8);
+  });
 }
 
 export async function detectFormat(data: ByteInput): Promise<string> {

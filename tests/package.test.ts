@@ -2,8 +2,19 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, test } from "vitest";
 
-import { Composition, detectFormat, hexToRgb, preload, rgbToHex } from "../dist/index.js";
-import { Composition as RawComposition, initSync } from "../dist/raw.js";
+import {
+  Composition,
+  decodeImage,
+  detectFormat,
+  hexToRgb,
+  preload,
+  rgbToHex,
+} from "../dist/index.js";
+import {
+  Composition as RawComposition,
+  decode_image as rawDecodeImage,
+  initSync,
+} from "../dist/raw.js";
 
 const wasm = readFileSync(new URL("../dist/kimg_wasm_bg.wasm", import.meta.url));
 
@@ -126,8 +137,31 @@ describe("main package facade", () => {
     const png = composition.exportPng();
 
     expect(await detectFormat(png)).toBe("png");
+    expect(Array.from(await decodeImage(png))).toEqual(Array.from(composition.renderRgba()));
     expect(Array.from(await hexToRgb("#ff8000"))).toEqual([255, 128, 0]);
     expect(await rgbToHex({ r: 255, g: 128, b: 0 })).toBe("#ff8000");
+
+    composition.free();
+  });
+
+  test("decodeImage strips raw wasm width and height prefix bytes", async () => {
+    await initBindings();
+
+    const composition = await Composition.create({ width: 2, height: 2 });
+    composition.addImageLayer({
+      name: "sprite",
+      rgba: new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]),
+      width: 2,
+      height: 2,
+    });
+
+    const png = composition.exportPng();
+    const publicDecoded = await decodeImage(png);
+    const rawDecoded = rawDecodeImage(png);
+
+    expect(rawDecoded.length).toBe(publicDecoded.length + 8);
+    expect(Array.from(publicDecoded)).toEqual(Array.from(composition.renderRgba()));
+    expect(Array.from(rawDecoded.slice(8))).toEqual(Array.from(publicDecoded));
 
     composition.free();
   });

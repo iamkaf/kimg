@@ -2737,54 +2737,76 @@ async function loadTeapotFixture(url, maxEdge) {
   }
 
   const sourceBytes = new Uint8Array(await response.arrayBuffer());
-  const blobUrl = URL.createObjectURL(new Blob([sourceBytes], { type: "image/png" }));
+  const { width: originalWidth, height: originalHeight } = parsePngSize(sourceBytes);
+  const scale = Math.min(1, maxEdge / Math.max(originalWidth, originalHeight));
+  const width = Math.max(1, Math.round(originalWidth * scale));
+  const height = Math.max(1, Math.round(originalHeight * scale));
+  const decoded = await decodeImage(sourceBytes);
+
+  const sourceComposition = await Composition.create({ width: originalWidth, height: originalHeight });
 
   try {
-    const image = await loadImage(blobUrl);
-    const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight));
-    const width = Math.max(1, Math.round(image.naturalWidth * scale));
-    const height = Math.max(1, Math.round(image.naturalHeight * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    context.drawImage(image, 0, 0, width, height);
-    const rgba = new Uint8Array(context.getImageData(0, 0, width, height).data);
-    const pngBytes = await canvasToBytes(canvas, "image/png");
+    const layerId = sourceComposition.addImageLayer({
+      height: originalHeight,
+      name: "teapot-source",
+      rgba: decoded,
+      width: originalWidth,
+    });
 
-    return {
-      originalHeight: image.naturalHeight,
-      originalWidth: image.naturalWidth,
-      pngBytes,
-      rgba,
-      sourceBytes,
-      height,
-      width,
-    };
+    if (width !== originalWidth || height !== originalHeight) {
+      sourceComposition.resizeLayerBilinear(layerId, { width, height });
+    }
+
+    const rgba = new Uint8Array(sourceComposition.getLayerRgba(layerId));
+    const workingComposition = await Composition.create({ width, height });
+
+    try {
+      workingComposition.addImageLayer({
+        height,
+        name: "teapot-working",
+        rgba,
+        width,
+      });
+
+      return {
+        originalHeight,
+        originalWidth,
+        pngBytes: workingComposition.exportPng(),
+        rgba,
+        sourceBytes,
+        height,
+        width,
+      };
+    } finally {
+      workingComposition.free();
+    }
   } finally {
-    URL.revokeObjectURL(blobUrl);
+    sourceComposition.free();
   }
 }
 
-function loadImage(src) {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error(`Failed to decode image: ${src}`));
-    image.src = src;
-  });
-}
+function parsePngSize(bytes) {
+  if (bytes.length < 24) {
+    throw new Error("PNG fixture is too short to contain an IHDR chunk");
+  }
 
-function canvasToBytes(canvas, type, quality) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(async (blob) => {
-      if (blob === null) {
-        reject(new Error(`Canvas conversion failed for ${type}`));
-        return;
-      }
-      resolve(new Uint8Array(await blob.arrayBuffer()));
-    }, type, quality);
-  });
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  for (let index = 0; index < signature.length; index += 1) {
+    if (bytes[index] !== signature[index]) {
+      throw new Error("Teapot fixture is not a valid PNG file");
+    }
+  }
+
+  const chunkType = String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]);
+  if (chunkType !== "IHDR") {
+    throw new Error("PNG fixture is missing the IHDR chunk");
+  }
+
+  const dataView = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return {
+    height: dataView.getUint32(20),
+    width: dataView.getUint32(16),
+  };
 }
 
 function splitPalette(palette) {
