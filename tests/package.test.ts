@@ -546,4 +546,56 @@ describe("main package facade", () => {
 
     composition.free();
   });
+
+  test("text layers render, serialize, and expose text metadata", async () => {
+    const composition = await Composition.create({ width: 96, height: 32 });
+    const textId = composition.addTextLayer({
+      name: "headline",
+      text: "Hi",
+      color: [255, 0, 0, 255],
+      fontSize: 16,
+      lineHeight: 18,
+      letterSpacing: 1,
+      x: 4,
+      y: 6,
+    });
+
+    expect(
+      composition.updateLayer(textId, {
+        rotation: 12,
+        textConfig: {
+          text: "Hello",
+          color: [0, 0, 255, 255],
+          fontSize: 24,
+          lineHeight: 28,
+          letterSpacing: 2,
+        },
+      }),
+    ).toBe(true);
+
+    const layer = composition.getLayer(textId);
+    expect(layer).toMatchObject({
+      kind: "text",
+      text: "Hello",
+      fontSize: 24,
+      lineHeight: 28,
+      letterSpacing: 2,
+      rotation: 12,
+    });
+
+    const rendered = composition.renderRgba();
+    expect(rendered.some((value) => value !== 0)).toBe(true);
+
+    const roundTrip = await Composition.deserialize(composition.serialize());
+    expect(roundTrip.getLayer(textId)).toMatchObject({
+      kind: "text",
+      text: "Hello",
+      fontSize: 24,
+      lineHeight: 28,
+      letterSpacing: 2,
+    });
+
+    composition.free();
+    roundTrip.free();
+  });
 });

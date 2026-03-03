@@ -68,8 +68,8 @@ const doc = await Composition.create({ width: 64, height: 64 });
 
 ## What it can do
 
-**Layers** — Image, Paint, Filter, Group, SolidColor, Gradient. Nested groups with scoped filter application.
-Shape layers are also available for rectangle, rounded rectangle, ellipse, line, and polygon primitives with fill/stroke styling.
+**Layers** — Image, Paint, Filter, Group, SolidColor, Gradient, Shape, Text. Nested groups with scoped filter application.
+Shape layers cover rectangle, rounded rectangle, ellipse, line, and polygon primitives with fill/stroke styling. Text layers use a built-in bitmap font backend, so they work in native and wasm builds with no runtime font loading.
 
 **16 blend modes** — Normal, Multiply, Screen, Overlay, Darken, Lighten, ColorDodge, ColorBurn, HardLight, SoftLight, Difference, Exclusion, Hue, Saturation, Color, Luminosity.
 
@@ -100,6 +100,30 @@ const badgeId = doc.addShapeLayer({
   radius: 12,
   fill: [255, 0, 0, 255],
   stroke: { color: [255, 255, 255, 255], width: 2 },
+});
+```
+
+### Text layers
+
+```js
+const titleId = doc.addTextLayer({
+  name: "Title",
+  text: "HELLO\nKIMG",
+  color: [24, 77, 163, 255],
+  fontSize: 24,
+  lineHeight: 28,
+  letterSpacing: 2,
+  x: 24,
+  y: 24,
+});
+
+doc.updateLayer(titleId, {
+  anchor: "center",
+  rotation: -12,
+  textConfig: {
+    text: "HELLO\nTEXT",
+    color: [201, 73, 45, 255],
+  },
 });
 ```
 
@@ -230,7 +254,7 @@ npm run test:pack
 npm run test:all
 ```
 
-148 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, bucket fill, and shared per-layer transforms.
+154 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, text layers, bucket fill, and shared per-layer transforms.
 
 The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
 
@@ -338,13 +362,12 @@ These vary slightly with toolchain and optimization settings.
 Tracked for later:
 
 - Selection system
-- Text
 - Brush / brush engine
 
 Possible follow-up work if those areas become important:
 
 - Keep PSD import experimental unless it becomes a priority again
-- Evaluate a text engine such as `cosmic-text`
+- Evaluate a richer text engine such as `cosmic-text`
 
 ## License
 

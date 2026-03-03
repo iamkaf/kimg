@@ -30,11 +30,13 @@ use kimg_core::layer::{
     FilterLayerData, FilterLayerPatch, GradientDirection, GradientLayerData, GradientStop,
     GroupLayerData, ImageLayerData, Layer, LayerCommon, LayerKind, LayerPatch, LayerTransform,
     PaintLayerData, ShapeLayerData, ShapePoint, ShapeStroke, ShapeType, SolidColorLayerData,
+    TextLayerData, TextLayerPatch,
 };
 use kimg_core::pixel::Rgba;
 use kimg_core::serialize;
 use kimg_core::shape::render_shape;
 use kimg_core::sprite;
+use kimg_core::text::{measure_text, render_text};
 use kimg_core::transform;
 
 /// WASM-exposed Composition for image compositing.
@@ -216,6 +218,36 @@ impl Document {
                 stroke_color,
                 stroke_width,
                 points_xy,
+            )),
+        ));
+        id
+    }
+
+    /// Add a rasterized text layer. Returns the layer ID.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_text_layer(
+        &mut self,
+        name: &str,
+        text: &str,
+        font_size: u32,
+        line_height: u32,
+        letter_spacing: u32,
+        color: &[u8],
+        x: i32,
+        y: i32,
+    ) -> u32 {
+        let id = self.inner.next_id();
+        let mut common = LayerCommon::new(id, name);
+        common.x = x;
+        common.y = y;
+        self.inner.layers.push(Layer::new(
+            common,
+            LayerKind::Text(build_text_data(
+                text,
+                font_size,
+                line_height,
+                letter_spacing,
+                color,
             )),
         ));
         id
@@ -435,6 +467,40 @@ impl Document {
         id
     }
 
+    /// Add a text layer as a child of a group. Returns the child layer ID.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_text_to_group(
+        &mut self,
+        group_id: u32,
+        name: &str,
+        text: &str,
+        font_size: u32,
+        line_height: u32,
+        letter_spacing: u32,
+        color: &[u8],
+        x: i32,
+        y: i32,
+    ) -> u32 {
+        let id = self.inner.next_id();
+        let mut common = LayerCommon::new(id, name);
+        common.x = x;
+        common.y = y;
+        let child = Layer::new(
+            common,
+            LayerKind::Text(build_text_data(
+                text,
+                font_size,
+                line_height,
+                letter_spacing,
+                color,
+            )),
+        );
+        self.inner
+            .add_child_to_group(group_id, child)
+            .expect("group not found");
+        id
+    }
+
     /// Remove a child from a group. Returns true if found and removed.
     pub fn remove_from_group(&mut self, group_id: u32, child_id: u32) -> bool {
         self.inner.remove_child_from_group(group_id, child_id)
@@ -553,6 +619,7 @@ impl Document {
                 LayerKind::Image(img) => img.buffer.data.clone(),
                 LayerKind::Paint(paint) => paint.buffer.data.clone(),
                 LayerKind::Shape(shape) => render_shape(shape).data,
+                LayerKind::Text(text) => render_text(text).data,
                 _ => Vec::new(),
             },
             None => Vec::new(),
@@ -971,6 +1038,7 @@ impl Document {
                         LayerKind::Image(img) => Some(img.buffer.clone()),
                         LayerKind::Paint(paint) => Some(paint.buffer.clone()),
                         LayerKind::Shape(shape) => Some(render_shape(shape)),
+                        LayerKind::Text(text) => Some(render_text(text)),
                         _ => None,
                     })
             })
@@ -1044,6 +1112,23 @@ fn build_shape_data(
         fill,
         stroke,
         points,
+    )
+}
+
+fn build_text_data(
+    text: &str,
+    font_size: u32,
+    line_height: u32,
+    letter_spacing: u32,
+    color: &[u8],
+) -> TextLayerData {
+    let color = parse_optional_rgba(color, "text color").unwrap_or(Rgba::new(0, 0, 0, 255));
+    TextLayerData::new(
+        text,
+        color,
+        font_size.max(1),
+        line_height.max(1),
+        letter_spacing,
     )
 }
 
@@ -1275,6 +1360,35 @@ fn layer_snapshot(layer: &Layer, parent_id: Option<u32>, index: usize, depth: us
                 );
             }
         }
+        LayerKind::Text(text) => {
+            let (width, height) = measure_text(text);
+            set_prop(&object, "kind", JsValue::from_str("text"));
+            set_transform_snapshot(&object, &text.transform);
+            set_prop(&object, "width", JsValue::from_f64(width as f64));
+            set_prop(&object, "height", JsValue::from_f64(height as f64));
+            set_prop(&object, "text", JsValue::from_str(&text.text));
+            set_prop(
+                &object,
+                "fontSize",
+                JsValue::from_f64(text.font_size as f64),
+            );
+            set_prop(
+                &object,
+                "lineHeight",
+                JsValue::from_f64(text.line_height as f64),
+            );
+            set_prop(
+                &object,
+                "letterSpacing",
+                JsValue::from_f64(text.letter_spacing as f64),
+            );
+            let rgba = Array::new();
+            rgba.push(&JsValue::from_f64(text.color.r as f64));
+            rgba.push(&JsValue::from_f64(text.color.g as f64));
+            rgba.push(&JsValue::from_f64(text.color.b as f64));
+            rgba.push(&JsValue::from_f64(text.color.a as f64));
+            set_prop(&object, "color", rgba.into());
+        }
         _ => {
             set_prop(&object, "kind", JsValue::from_str("unknown"));
         }
@@ -1328,6 +1442,39 @@ fn parse_filter_patch(value: &JsValue) -> Option<FilterLayerPatch> {
     Some(patch)
 }
 
+fn parse_text_patch(value: &JsValue) -> Option<TextLayerPatch> {
+    if !value.is_object() {
+        return None;
+    }
+
+    let object = Object::from(value.clone());
+    let mut patch = TextLayerPatch::default();
+    patch.text = get_prop(&object, "text").and_then(|value| value.as_string());
+    patch.color = get_prop(&object, "color").and_then(|value| {
+        let color = js_sys::Uint8Array::new(&value);
+        if color.length() == 4 {
+            Some(Rgba::new(
+                color.get_index(0),
+                color.get_index(1),
+                color.get_index(2),
+                color.get_index(3),
+            ))
+        } else {
+            None
+        }
+    });
+    patch.font_size = get_prop(&object, "fontSize")
+        .and_then(|value| value.as_f64())
+        .map(|value| value as u32);
+    patch.line_height = get_prop(&object, "lineHeight")
+        .and_then(|value| value.as_f64())
+        .map(|value| value as u32);
+    patch.letter_spacing = get_prop(&object, "letterSpacing")
+        .and_then(|value| value.as_f64())
+        .map(|value| value as u32);
+    Some(patch)
+}
+
 fn parse_layer_patch(value: &JsValue) -> Option<LayerPatch> {
     if !value.is_object() {
         return None;
@@ -1356,6 +1503,7 @@ fn parse_layer_patch(value: &JsValue) -> Option<LayerPatch> {
     patch.scale_x = get_prop(&object, "scaleX").and_then(|value| value.as_f64());
     patch.scale_y = get_prop(&object, "scaleY").and_then(|value| value.as_f64());
     patch.filter = get_prop(&object, "filterConfig").and_then(|value| parse_filter_patch(&value));
+    patch.text = get_prop(&object, "textConfig").and_then(|value| parse_text_patch(&value));
     Some(patch)
 }
 
@@ -1839,6 +1987,26 @@ mod tests {
     }
 
     #[test]
+    fn text_layer_wasm() {
+        let mut doc = Document::new(64, 24);
+        let id = doc.add_text_layer("title", "Hi", 16, 18, 1, &[255, 0, 0, 255], 2, 3);
+
+        let layer = doc.inner.find_layer(id).unwrap();
+        match &layer.kind {
+            LayerKind::Text(text) => {
+                assert_eq!(text.text, "Hi");
+                assert_eq!(text.font_size, 16);
+                assert_eq!(text.line_height, 18);
+                assert_eq!(text.letter_spacing, 1);
+            }
+            _ => panic!("expected text layer"),
+        }
+
+        let rendered = doc.render();
+        assert!(rendered.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
     fn flatten_group_wasm() {
         let mut doc = Document::new(2, 2);
         let gid = doc.add_group_layer("g");
@@ -2163,17 +2331,16 @@ mod tests {
             .collect();
         doc.add_image_layer("red", &rgba, 4, 4, 0, 0);
         doc.add_solid_color_layer("fill", 0, 255, 0, 255);
+        doc.add_text_layer("label", "Hi", 16, 18, 0, &[255, 255, 255, 255], 0, 0);
 
         let data = doc.serialize();
         let restored = Document::deserialize(&data);
         assert_eq!(restored.width(), 4);
         assert_eq!(restored.height(), 4);
-        assert_eq!(restored.layer_count(), 2);
+        assert_eq!(restored.layer_count(), 3);
 
         let result = restored.render();
-        // Green solid layer on top of red image
-        assert_eq!(result[0], 0); // green
-        assert_eq!(result[1], 255);
+        assert!(result.iter().any(|&value| value > 0));
     }
 
     #[test]

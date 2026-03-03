@@ -17,6 +17,7 @@ quantette-quantize = ["dep:quantette"]
 [dependencies]
 bytemuck = { version = "1.25.0", features = ["derive"] }
 fast_image_resize = { version = "6.0.0", default-features = false, features = ["std", "only_u8x4"] }
+font8x8 = { version = "0.3.1", default-features = false, features = ["unicode"] }
 png = "0.17"
 jpeg-decoder = "0.3"
 jpeg-encoder = "0.6"

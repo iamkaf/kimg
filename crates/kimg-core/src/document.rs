@@ -24,6 +24,7 @@ use crate::layer::{
 };
 use crate::pixel::Rgba;
 use crate::shape::render_shape;
+use crate::text::render_text;
 use crate::transform;
 
 /// Location of a layer within the tree.
@@ -287,6 +288,24 @@ impl Document {
             apply_filter_patch(&mut filter.config, filter_patch);
         }
 
+        if let (LayerKind::Text(text), Some(text_patch)) = (&mut layer.kind, &patch.text) {
+            if let Some(content) = &text_patch.text {
+                text.text = content.clone();
+            }
+            if let Some(color) = text_patch.color {
+                text.color = color;
+            }
+            if let Some(font_size) = text_patch.font_size {
+                text.font_size = font_size.max(1);
+            }
+            if let Some(line_height) = text_patch.line_height {
+                text.line_height = line_height.max(1);
+            }
+            if let Some(letter_spacing) = text_patch.letter_spacing {
+                text.letter_spacing = letter_spacing;
+            }
+        }
+
         true
     }
 
@@ -415,6 +434,7 @@ fn layer_transform_mut(layer: &mut Layer) -> Option<&mut LayerTransform> {
         LayerKind::Image(image) => Some(&mut image.transform),
         LayerKind::Paint(paint) => Some(&mut paint.transform),
         LayerKind::Shape(shape) => Some(&mut shape.transform),
+        LayerKind::Text(text) => Some(&mut text.transform),
         _ => None,
     }
 }
@@ -624,7 +644,7 @@ fn can_render_layer_direct(layer: &Layer) -> bool {
         && layer.common.blend_mode == BlendMode::Normal
         && matches!(
             layer.kind,
-            LayerKind::Image(_) | LayerKind::Paint(_) | LayerKind::Shape(_)
+            LayerKind::Image(_) | LayerKind::Paint(_) | LayerKind::Shape(_) | LayerKind::Text(_)
         )
 }
 
@@ -674,6 +694,23 @@ fn render_layer_direct(layer: &Layer, output: &mut ImageBuffer) -> bool {
                         shape_buf,
                         &layer.common,
                         shape.transform.anchor,
+                    );
+                },
+            );
+            true
+        }
+        LayerKind::Text(text) => {
+            text.with_cached_transformed_raster(
+                || {
+                    let text_buf = text.cached_local_raster(|| render_text(text));
+                    apply_non_destructive_transform(&text_buf, &text.transform)
+                },
+                |text_buf| {
+                    blit_pretransformed_raster_layer(
+                        output,
+                        text_buf,
+                        &layer.common,
+                        text.transform.anchor,
                     );
                 },
             );
@@ -740,6 +777,25 @@ fn capture_direct_layer_alpha(
                         transformed,
                         &layer.common,
                         shape.transform.anchor,
+                    );
+                },
+            );
+            true
+        }
+        LayerKind::Text(text) => {
+            text.with_cached_transformed_raster(
+                || {
+                    let text_buf = text.cached_local_raster(|| render_text(text));
+                    apply_non_destructive_transform(&text_buf, &text.transform)
+                },
+                |transformed| {
+                    capture_pretransformed_alpha_snapshot(
+                        snapshot,
+                        canvas_w,
+                        canvas_h,
+                        transformed,
+                        &layer.common,
+                        text.transform.anchor,
                     );
                 },
             );
@@ -949,6 +1005,27 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
                         shape_buf,
                         &layer.common,
                         shape.transform.anchor,
+                    );
+                },
+            );
+            if let Some(mask) = &layer.common.mask {
+                apply_mask(&mut buf, mask, layer.common.mask_inverted);
+            }
+            buf
+        }
+        LayerKind::Text(text) => {
+            let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
+            text.with_cached_transformed_raster(
+                || {
+                    let text_buf = text.cached_local_raster(|| render_text(text));
+                    apply_non_destructive_transform(&text_buf, &text.transform)
+                },
+                |transformed| {
+                    blit_pretransformed_raster_layer(
+                        &mut buf,
+                        transformed,
+                        &layer.common,
+                        text.transform.anchor,
                     );
                 },
             );
@@ -1308,6 +1385,7 @@ mod tests {
         let paint_id = doc.next_id();
         let shape_id = doc.next_id();
         let filter_id = doc.next_id();
+        let text_id = doc.next_id();
         doc.layers.push(img_layer(
             image_id,
             "img",
@@ -1335,6 +1413,16 @@ mod tests {
             common: LayerCommon::new(filter_id, "filter"),
             kind: LayerKind::Filter(FilterLayerData::new()),
         });
+        doc.layers.push(Layer {
+            common: LayerCommon::new(text_id, "text"),
+            kind: LayerKind::Text(TextLayerData::new(
+                "Hello",
+                Rgba::new(255, 255, 255, 255),
+                16,
+                18,
+                0,
+            )),
+        });
 
         assert!(doc.update_layer(
             image_id,
@@ -1350,6 +1438,21 @@ mod tests {
                 visible: Some(false),
                 x: Some(10),
                 y: Some(20),
+                ..Default::default()
+            },
+        ));
+        assert!(doc.update_layer(
+            text_id,
+            &LayerPatch {
+                text: Some(TextLayerPatch {
+                    text: Some("World".into()),
+                    color: Some(Rgba::new(0, 0, 0, 255)),
+                    font_size: Some(24),
+                    line_height: Some(28),
+                    letter_spacing: Some(2),
+                }),
+                anchor: Some(crate::blit::Anchor::Center),
+                rotation: Some(12.0),
                 ..Default::default()
             },
         ));
@@ -1434,6 +1537,41 @@ mod tests {
             }
             _ => panic!("expected filter layer"),
         }
+
+        match &doc.find_layer(text_id).unwrap().kind {
+            LayerKind::Text(text) => {
+                assert_eq!(text.text, "World");
+                assert_eq!(text.color, Rgba::new(0, 0, 0, 255));
+                assert_eq!(text.font_size, 24);
+                assert_eq!(text.line_height, 28);
+                assert_eq!(text.letter_spacing, 2);
+                assert_eq!(text.transform.anchor, crate::blit::Anchor::Center);
+                assert_eq!(text.transform.rotation_deg, 12.0);
+            }
+            _ => panic!("expected text layer"),
+        }
+    }
+
+    #[test]
+    fn text_layer_renders_visible_pixels() {
+        let mut doc = Document::new(64, 24);
+        let id = doc.next_id();
+        let mut common = LayerCommon::new(id, "text");
+        common.x = 2;
+        common.y = 3;
+        doc.layers.push(Layer {
+            common,
+            kind: LayerKind::Text(TextLayerData::new(
+                "Hi",
+                Rgba::new(255, 0, 0, 255),
+                16,
+                18,
+                0,
+            )),
+        });
+
+        let result = doc.render();
+        assert!(result.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
     #[test]

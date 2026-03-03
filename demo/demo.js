@@ -61,6 +61,12 @@ const SECTION_INFO = {
       "Vector-style shape layers, bucket fill behavior, palette extraction, and quantization outputs that should be visually legible without any interaction.",
     title: "Shape, Fill, and Palette Tools",
   },
+  text: {
+    chip: "Text",
+    description:
+      "Bitmap text layers rendered through the public API. Layout, multiline content, tracking, color, and transform updates should all stay visually obvious.",
+    title: "Text Layer Surface",
+  },
   io: {
     chip: "Formats",
     description:
@@ -825,6 +831,94 @@ function createTests() {
               swatchView("Layer palette", palette),
               swatchView("Top-level palette", topPalette),
             ],
+          };
+        } finally {
+          composition.free();
+        }
+      },
+    },
+    {
+      expectation:
+        "Uppercase bitmap text should render crisply, multiline layout should stack cleanly, and the rotated blue block should pivot around its center with wider tracking.",
+      featured: true,
+      fullSpan: true,
+      previewMin: 250,
+      section: "text",
+      title: "Bitmap Text Layers",
+      async run() {
+        const verify = createVerifier();
+        const composition = await Composition.create({ width: 320, height: 168 });
+
+        try {
+          composition.addSolidColorLayer({ color: [247, 241, 232, 255], name: "paper" });
+          composition.addShapeLayer({
+            fill: [228, 113, 76, 28],
+            height: 112,
+            name: "backplate",
+            stroke: { color: [228, 113, 76, 96], width: 3 },
+            type: "roundedRect",
+            width: 128,
+            x: 14,
+            y: 18,
+          });
+
+          const headlineId = composition.addTextLayer({
+            color: [201, 73, 45, 255],
+            fontSize: 24,
+            letterSpacing: 2,
+            lineHeight: 28,
+            name: "headline",
+            text: "HELLO",
+            x: 28,
+            y: 32,
+          });
+          const badgeId = composition.addTextLayer({
+            color: [24, 77, 163, 255],
+            fontSize: 16,
+            letterSpacing: 1,
+            lineHeight: 20,
+            name: "badge",
+            text: "KIMG\nTEXT",
+            x: 236,
+            y: 98,
+          });
+
+          composition.updateLayer(badgeId, {
+            anchor: "center",
+            rotation: -12,
+            textConfig: {
+              color: [35, 79, 221, 255],
+              fontSize: 24,
+              letterSpacing: 2,
+              lineHeight: 28,
+              text: "KIMG\nTEXT",
+            },
+          });
+
+          const layers = composition.listLayers();
+          const headline = composition.getLayer(headlineId);
+          const badge = composition.getLayer(badgeId);
+          const render = composition.renderRgba();
+
+          verify.equal(
+            layers.filter((layer) => layer.kind === "text").length,
+            2,
+            "expected two text layers in metadata",
+          );
+          verify.equal(headline?.text, "HELLO", "headline text should stay readable in metadata");
+          verify.equal(badge?.anchor, "center", "rotated text should switch to center anchor");
+          verify.equal(badge?.letterSpacing, 2, "textConfig update should widen tracking");
+          verify.ok(render.some((value) => value !== 0), "text composition should render non-empty pixels");
+
+          return {
+            assertions: verify.count,
+            metrics: [
+              ["Text layers", layers.filter((layer) => layer.kind === "text").length],
+              ["headline size", headline?.fontSize ?? "n/a"],
+              ["badge tracking", badge?.letterSpacing ?? "n/a"],
+              ["badge rotation", badge?.rotation?.toFixed(1) ?? "n/a"],
+            ],
+            views: [rgbaView("Text composition", render, composition.width, composition.height)],
           };
         } finally {
           composition.free();

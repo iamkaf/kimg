@@ -104,6 +104,18 @@ export interface ShapeLayerOptions {
   parentId?: number;
 }
 
+export interface TextLayerOptions {
+  name: string;
+  text: string;
+  color: ByteInput;
+  fontSize?: number;
+  lineHeight?: number;
+  letterSpacing?: number;
+  x?: number;
+  y?: number;
+  parentId?: number;
+}
+
 export interface PngLayerOptions {
   name: string;
   png: ByteInput;
@@ -174,6 +186,14 @@ export interface FilterConfigSnapshot {
   sharpen: number;
 }
 
+export interface TextLayerConfig {
+  text?: string;
+  color?: ByteInput;
+  fontSize?: number;
+  lineHeight?: number;
+  letterSpacing?: number;
+}
+
 export interface ExportJpegOptions {
   quality?: number;
 }
@@ -194,6 +214,7 @@ export interface LayerUpdate {
   scaleX?: number;
   scaleY?: number;
   filterConfig?: FilterConfig;
+  textConfig?: TextLayerConfig;
 }
 
 export interface MoveLayerTarget {
@@ -276,6 +297,7 @@ export type LayerKind =
   | "solidColor"
   | "gradient"
   | "shape"
+  | "text"
   | "unknown";
 
 export interface LayerInfo {
@@ -312,6 +334,10 @@ export interface LayerInfo {
   fill?: number[];
   strokeColor?: number[];
   strokeWidth?: number;
+  text?: string;
+  fontSize?: number;
+  lineHeight?: number;
+  letterSpacing?: number;
 }
 
 const PRIVATE_CONSTRUCTOR_TOKEN = Symbol("kimgComposition");
@@ -645,6 +671,31 @@ function normalizeShapeLayerOptions(options) {
   };
 }
 
+function normalizeTextLayerOptions(options) {
+  const layer = requireObject(options, "addTextLayer");
+  const position = normalizePositionArg(layer.x, layer.y, "addTextLayer");
+  const fontSize = normalizePositiveInteger(layer.fontSize ?? 16, "addTextLayer.fontSize");
+  const lineHeight = normalizePositiveInteger(
+    layer.lineHeight ?? Math.max(fontSize + 2, fontSize),
+    "addTextLayer.lineHeight",
+  );
+
+  return {
+    color: normalizeRgbaColor(layer.color, "addTextLayer.color"),
+    fontSize,
+    letterSpacing: normalizeNonNegativeInteger(
+      layer.letterSpacing ?? 0,
+      "addTextLayer.letterSpacing",
+    ),
+    lineHeight,
+    name: normalizeString(layer.name, "addTextLayer.name"),
+    parentId: layer.parentId,
+    text: normalizeString(layer.text, "addTextLayer.text"),
+    x: position.x,
+    y: position.y,
+  };
+}
+
 function normalizeLayerId(id, fieldName = "id") {
   return normalizeInteger(id, fieldName);
 }
@@ -773,6 +824,32 @@ function normalizeFilterConfigPatch(config, what) {
   return normalized;
 }
 
+function normalizeTextConfigPatch(config, what): TextLayerConfig {
+  const object = requireObject(config, what);
+  const normalized: TextLayerConfig = {};
+
+  if ("text" in object && object.text !== undefined) {
+    normalized.text = normalizeString(object.text, `${what}.text`);
+  }
+  if ("color" in object && object.color !== undefined) {
+    normalized.color = normalizeRgbaColor(object.color, `${what}.color`);
+  }
+  if ("fontSize" in object && object.fontSize !== undefined) {
+    normalized.fontSize = normalizePositiveInteger(object.fontSize, `${what}.fontSize`);
+  }
+  if ("lineHeight" in object && object.lineHeight !== undefined) {
+    normalized.lineHeight = normalizePositiveInteger(object.lineHeight, `${what}.lineHeight`);
+  }
+  if ("letterSpacing" in object && object.letterSpacing !== undefined) {
+    normalized.letterSpacing = normalizeNonNegativeInteger(
+      object.letterSpacing,
+      `${what}.letterSpacing`,
+    );
+  }
+
+  return normalized;
+}
+
 function normalizeLayerUpdatePatch(patch) {
   const object = requireObject(patch, "updateLayer");
   const normalized: LayerUpdate = {};
@@ -823,6 +900,9 @@ function normalizeLayerUpdatePatch(patch) {
   const filterConfig = object.filterConfig ?? object.filter;
   if (filterConfig !== undefined) {
     normalized.filterConfig = normalizeFilterConfigPatch(filterConfig, "updateLayer.filterConfig");
+  }
+  if ("textConfig" in object && object.textConfig !== undefined) {
+    normalized.textConfig = normalizeTextConfigPatch(object.textConfig, "updateLayer.textConfig");
   }
 
   return normalized;
@@ -921,6 +1001,7 @@ export interface Composition {
   addSolidColorLayer(options: SolidColorLayerOptions): number;
   addGradientLayer(options: GradientLayerOptions): number;
   addShapeLayer(options: ShapeLayerOptions): number;
+  addTextLayer(options: TextLayerOptions): number;
   addPngLayer(options: PngLayerOptions): number;
   importImage(options: ImportImageOptions): number;
   importJpeg(options: ImportImageOptions): number;
@@ -1161,6 +1242,35 @@ export class Composition {
       layer.strokeColor,
       layer.strokeWidth,
       layer.points,
+      layer.x,
+      layer.y,
+    );
+  }
+
+  addTextLayer(options) {
+    const layer = normalizeTextLayerOptions(options);
+
+    if (layer.parentId !== undefined) {
+      return this._inner.add_text_to_group(
+        normalizeLayerId(layer.parentId, "addTextLayer.parentId"),
+        layer.name,
+        layer.text,
+        layer.fontSize,
+        layer.lineHeight,
+        layer.letterSpacing,
+        layer.color,
+        layer.x,
+        layer.y,
+      );
+    }
+
+    return this._inner.add_text_layer(
+      layer.name,
+      layer.text,
+      layer.fontSize,
+      layer.lineHeight,
+      layer.letterSpacing,
+      layer.color,
       layer.x,
       layer.y,
     );

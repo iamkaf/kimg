@@ -24,7 +24,7 @@ need_cmd() {
 pick_browser() {
     for candidate in "${CHROME_BIN:-}" google-chrome chromium chromium-browser; do
         if [ -n "$candidate" ] && command -v "$candidate" >/dev/null 2>&1; then
-            printf '%s\n' "$candidate"
+            command -v "$candidate"
             return 0
         fi
     done

@@ -113,6 +113,16 @@ struct ShapeStrokeMetadata {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct TextMetadata {
+    text: String,
+    color: [u8; 4],
+    font_size: u32,
+    line_height: u32,
+    letter_spacing: u32,
+    transform: LayerTransformMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum LayerKindMetadata {
     Image {
         buffer: BufferRefMetadata,
@@ -144,6 +154,9 @@ enum LayerKindMetadata {
         stroke: Option<ShapeStrokeMetadata>,
         points: Vec<ShapePointMetadata>,
         transform: LayerTransformMetadata,
+    },
+    Text {
+        text: TextMetadata,
     },
 }
 
@@ -363,6 +376,16 @@ fn build_layer_metadata(
                 .collect(),
             transform: transform_to_metadata(shape.transform),
         },
+        LayerKind::Text(text) => LayerKindMetadata::Text {
+            text: TextMetadata {
+                text: text.text.clone(),
+                color: rgba_to_array(text.color),
+                font_size: text.font_size,
+                line_height: text.line_height,
+                letter_spacing: text.letter_spacing,
+                transform: transform_to_metadata(text.transform),
+            },
+        },
     };
 
     Ok(LayerMetadata { common, kind })
@@ -493,6 +516,17 @@ fn layer_from_metadata(
             );
             shape.transform = transform_from_metadata(transform);
             LayerKind::Shape(shape)
+        }
+        LayerKindMetadata::Text { text } => {
+            let mut layer = TextLayerData::new(
+                text.text,
+                rgba_from_array(text.color),
+                text.font_size,
+                text.line_height,
+                text.letter_spacing,
+            );
+            layer.transform = transform_from_metadata(text.transform);
+            LayerKind::Text(layer)
         }
     };
 
@@ -1470,6 +1504,42 @@ mod tests {
                 );
             }
             _ => panic!("expected shape layer"),
+        }
+    }
+
+    #[test]
+    fn serialize_text_layer() {
+        let mut doc = Document::new(32, 16);
+        let id = doc.next_id();
+        let mut layer = Layer {
+            common: LayerCommon::new(id, "text"),
+            kind: LayerKind::Text(TextLayerData::new(
+                "Hello\nWorld",
+                Rgba::new(12, 34, 56, 255),
+                16,
+                20,
+                2,
+            )),
+        };
+        layer.common.x = 3;
+        layer.common.y = 4;
+        doc.layers.push(layer);
+
+        let data = serialize(&doc).unwrap();
+        let restored = deserialize(&data).unwrap();
+        let layer = &restored.layers[0];
+
+        assert_eq!(layer.common.x, 3);
+        assert_eq!(layer.common.y, 4);
+        match &layer.kind {
+            LayerKind::Text(text) => {
+                assert_eq!(text.text, "Hello\nWorld");
+                assert_eq!(text.color, Rgba::new(12, 34, 56, 255));
+                assert_eq!(text.font_size, 16);
+                assert_eq!(text.line_height, 20);
+                assert_eq!(text.letter_spacing, 2);
+            }
+            _ => panic!("expected text layer"),
         }
     }
 

@@ -14,6 +14,7 @@
 //! | [`LayerKind::SolidColor`] | A flat color fill |
 //! | [`LayerKind::Gradient`] | A linear color gradient fill |
 //! | [`LayerKind::Shape`] | A rasterized vector-style shape primitive |
+//! | [`LayerKind::Text`] | A rasterized text layer |
 
 use crate::blend::BlendMode;
 use crate::blit::Anchor;
@@ -47,6 +48,22 @@ pub struct FilterLayerPatch {
     pub tint: Option<f64>,
     /// Sharpen strength, 0.0 to 1.0.
     pub sharpen: Option<f64>,
+}
+
+/// Patch payload for updating text-layer content and style.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct TextLayerPatch {
+    /// Replace the layer text.
+    pub text: Option<String>,
+    /// Replace the text color.
+    pub color: Option<Rgba>,
+    /// Replace the requested text size in pixels.
+    pub font_size: Option<u32>,
+    /// Replace the line advance in pixels.
+    pub line_height: Option<u32>,
+    /// Replace the letter spacing in pixels.
+    pub letter_spacing: Option<u32>,
 }
 
 /// Patch payload for updating a layer through one stable mutation path.
@@ -83,6 +100,8 @@ pub struct LayerPatch {
     pub scale_y: Option<f64>,
     /// Patch filter-layer configuration values.
     pub filter: Option<FilterLayerPatch>,
+    /// Patch text-layer content and style.
+    pub text: Option<TextLayerPatch>,
 }
 
 /// Common properties shared by all layer types.
@@ -453,6 +472,169 @@ impl GradientLayerData {
     }
 }
 
+/// Text layer data stored as styled content and rasterized at render time.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct TextLayerData {
+    /// Text content. Newlines create multiple lines.
+    pub text: String,
+    /// RGBA text color.
+    pub color: Rgba,
+    /// Requested font size in pixels.
+    pub font_size: u32,
+    /// Line advance in pixels.
+    pub line_height: u32,
+    /// Letter spacing in pixels.
+    pub letter_spacing: u32,
+    /// Shared non-destructive transform state.
+    pub transform: LayerTransform,
+    raster_cache: RefCell<Option<TextRasterCache>>,
+    transformed_cache: RefCell<Option<TextTransformedCache>>,
+}
+
+impl TextLayerData {
+    /// Create a text layer with the provided content and style.
+    pub fn new(
+        text: impl Into<String>,
+        color: Rgba,
+        font_size: u32,
+        line_height: u32,
+        letter_spacing: u32,
+    ) -> Self {
+        let font_size = font_size.max(1);
+        let line_height = line_height.max(font_size);
+        Self {
+            text: text.into(),
+            color,
+            font_size,
+            line_height,
+            letter_spacing,
+            transform: LayerTransform::new(),
+            raster_cache: RefCell::new(None),
+            transformed_cache: RefCell::new(None),
+        }
+    }
+
+    pub(crate) fn cached_local_raster<F>(&self, render: F) -> ImageBuffer
+    where
+        F: FnOnce() -> ImageBuffer,
+    {
+        let key = TextRasterCacheKey::from_text(self);
+        if let Some(cached) = self.raster_cache.borrow().as_ref() {
+            if cached.key == key {
+                return cached.buffer.clone();
+            }
+        }
+
+        let buffer = render();
+        *self.raster_cache.borrow_mut() = Some(TextRasterCache {
+            key,
+            buffer: buffer.clone(),
+        });
+        buffer
+    }
+
+    pub(crate) fn with_cached_transformed_raster<F, R>(
+        &self,
+        render: F,
+        use_buffer: impl FnOnce(&ImageBuffer) -> R,
+    ) -> R
+    where
+        F: FnOnce() -> ImageBuffer,
+    {
+        let key = TextTransformedCacheKey::from_text(self);
+        let needs_refresh = self
+            .transformed_cache
+            .borrow()
+            .as_ref()
+            .is_none_or(|cached| cached.key != key);
+
+        if needs_refresh {
+            let buffer = render();
+            *self.transformed_cache.borrow_mut() = Some(TextTransformedCache { key, buffer });
+        }
+
+        let cached = self.transformed_cache.borrow();
+        let entry = cached
+            .as_ref()
+            .expect("transformed text cache should be populated");
+        use_buffer(&entry.buffer)
+    }
+}
+
+impl Clone for TextLayerData {
+    fn clone(&self) -> Self {
+        Self {
+            text: self.text.clone(),
+            color: self.color,
+            font_size: self.font_size,
+            line_height: self.line_height,
+            letter_spacing: self.letter_spacing,
+            transform: self.transform,
+            raster_cache: RefCell::new(None),
+            transformed_cache: RefCell::new(None),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TextRasterCacheKey {
+    text: String,
+    color: Rgba,
+    font_size: u32,
+    line_height: u32,
+    letter_spacing: u32,
+}
+
+impl TextRasterCacheKey {
+    fn from_text(text: &TextLayerData) -> Self {
+        Self {
+            text: text.text.clone(),
+            color: text.color,
+            font_size: text.font_size,
+            line_height: text.line_height,
+            letter_spacing: text.letter_spacing,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TextTransformedCacheKey {
+    raster: TextRasterCacheKey,
+    anchor: Anchor,
+    flip_x: bool,
+    flip_y: bool,
+    rotation_bits: u64,
+    scale_x_bits: u64,
+    scale_y_bits: u64,
+}
+
+impl TextTransformedCacheKey {
+    fn from_text(text: &TextLayerData) -> Self {
+        Self {
+            raster: TextRasterCacheKey::from_text(text),
+            anchor: text.transform.anchor,
+            flip_x: text.transform.flip_x,
+            flip_y: text.transform.flip_y,
+            rotation_bits: text.transform.rotation_deg.to_bits(),
+            scale_x_bits: text.transform.scale_x.to_bits(),
+            scale_y_bits: text.transform.scale_y.to_bits(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TextRasterCache {
+    key: TextRasterCacheKey,
+    buffer: ImageBuffer,
+}
+
+#[derive(Debug, Clone)]
+struct TextTransformedCache {
+    key: TextTransformedCacheKey,
+    buffer: ImageBuffer,
+}
+
 /// The primitive geometry for a shape layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -756,6 +938,8 @@ pub enum LayerKind {
     Gradient(GradientLayerData),
     /// A rasterized shape primitive.
     Shape(ShapeLayerData),
+    /// A rasterized text layer.
+    Text(TextLayerData),
 }
 
 #[cfg(test)]
@@ -914,6 +1098,65 @@ mod tests {
             || {
                 calls.set(calls.get() + 1);
                 ImageBuffer::new_transparent(24, 12)
+            },
+            Clone::clone,
+        );
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn text_local_cache_reuses_and_invalidates() {
+        let text = TextLayerData::new("Hello", Rgba::new(255, 255, 255, 255), 16, 18, 1);
+        let calls = Cell::new(0);
+
+        let first = text.cached_local_raster(|| {
+            calls.set(calls.get() + 1);
+            ImageBuffer::new_transparent(40, 16)
+        });
+        let second = text.cached_local_raster(|| {
+            calls.set(calls.get() + 1);
+            ImageBuffer::new_transparent(40, 16)
+        });
+
+        assert_eq!(calls.get(), 1);
+        assert_eq!(first.data, second.data);
+
+        let mut changed = text.clone();
+        changed.text = "Hello!".into();
+        changed.cached_local_raster(|| {
+            calls.set(calls.get() + 1);
+            ImageBuffer::new_transparent(48, 16)
+        });
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn text_transformed_cache_reuses_and_invalidates() {
+        let mut text = TextLayerData::new("Hi", Rgba::new(255, 255, 255, 255), 16, 18, 0);
+        text.transform.rotation_deg = 22.0;
+        let calls = Cell::new(0);
+
+        text.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(32, 20)
+            },
+            Clone::clone,
+        );
+        text.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(32, 20)
+            },
+            Clone::clone,
+        );
+        assert_eq!(calls.get(), 1);
+
+        text.transform.scale_x = 1.5;
+        text.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(48, 20)
             },
             Clone::clone,
         );

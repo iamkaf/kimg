@@ -42,6 +42,17 @@ doc.addShapeLayer({
   fill: [255, 0, 0, 255],
   stroke: { color: [255, 255, 255, 255], width: 2 },
 });
+
+doc.addTextLayer({
+  name: "title",
+  text: "HELLO\nKIMG",
+  color: [24, 77, 163, 255],
+  fontSize: 24,
+  lineHeight: 28,
+  letterSpacing: 2,
+  x: 20,
+  y: 20,
+});
 ```
 
 ## Node.js
