@@ -74,6 +74,7 @@ wait_for_url "http://127.0.0.1:${PORT}/demo/"
 CHROME_FLAGS=(
     --headless=new
     --disable-gpu
+    --disable-dev-shm-usage
     --run-all-compositor-stages-before-draw
     --virtual-time-budget=30000
     --dump-dom
