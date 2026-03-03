@@ -761,30 +761,18 @@ impl Document {
     // ── Phase 4: Sprite & Game Dev Tools ──
 
     /// Pack layers by ID into a sprite sheet atlas. Returns RGBA buffer of the atlas.
-    pub fn pack_sprites(
-        &self,
-        layer_ids: &[u32],
-        padding: u32,
-        max_size: u32,
-        power_of_two: bool,
-    ) -> Vec<u8> {
+    pub fn pack_sprites(&self, layer_ids: &[u32], max_width: u32, padding: u32) -> Vec<u8> {
         let buffers = self.collect_layer_buffers(layer_ids);
         let refs: Vec<&ImageBuffer> = buffers.iter().collect();
-        let sheet = sprite::pack_sprites(&refs, padding, max_size, power_of_two);
+        let sheet = sprite::pack_sprites(&refs, padding, max_width, false);
         sheet.buffer.data
     }
 
     /// Pack layers by ID into a sprite sheet. Returns JSON metadata.
-    pub fn pack_sprites_json(
-        &self,
-        layer_ids: &[u32],
-        padding: u32,
-        max_size: u32,
-        power_of_two: bool,
-    ) -> String {
+    pub fn pack_sprites_json(&self, layer_ids: &[u32], max_width: u32, padding: u32) -> String {
         let buffers = self.collect_layer_buffers(layer_ids);
         let refs: Vec<&ImageBuffer> = buffers.iter().collect();
-        let sheet = sprite::pack_sprites(&refs, padding, max_size, power_of_two);
+        let sheet = sprite::pack_sprites(&refs, padding, max_width, false);
 
         let sprites_json: Vec<String> = sheet
             .sprites
@@ -805,19 +793,37 @@ impl Document {
     }
 
     /// Render a contact sheet from layers. Returns RGBA buffer.
+    ///
+    /// Cell dimensions are derived from the largest referenced layer so the JS
+    /// facade only needs to provide `columns`, `padding`, and a background color.
+    #[allow(clippy::too_many_arguments)]
     pub fn contact_sheet(
         &self,
         layer_ids: &[u32],
         columns: u32,
-        cell_w: u32,
-        cell_h: u32,
         padding: u32,
+        bg_r: u8,
+        bg_g: u8,
+        bg_b: u8,
+        bg_a: u8,
     ) -> Vec<u8> {
         let buffers = self.collect_layer_buffers(layer_ids);
+        if buffers.is_empty() {
+            return Vec::new();
+        }
+
         let refs: Vec<&ImageBuffer> = buffers.iter().collect();
+        let cell_w = refs.iter().map(|buf| buf.width).max().unwrap_or(0);
+        let cell_h = refs.iter().map(|buf| buf.height).max().unwrap_or(0);
         let result = sprite::contact_sheet(
             &refs,
-            &sprite::ContactSheetOptions::new(columns, cell_w, cell_h, padding, Rgba::TRANSPARENT),
+            &sprite::ContactSheetOptions::new(
+                columns,
+                cell_w,
+                cell_h,
+                padding,
+                Rgba::new(bg_r, bg_g, bg_b, bg_a),
+            ),
         );
         result.data
     }
@@ -2036,10 +2042,10 @@ mod tests {
         let id1 = doc.add_image_layer("a", &rgba1, 8, 8, 0, 0);
         let id2 = doc.add_image_layer("b", &rgba2, 8, 8, 0, 0);
 
-        let atlas = doc.pack_sprites(&[id1, id2], 0, 4096, false);
+        let atlas = doc.pack_sprites(&[id1, id2], 4096, 0);
         assert!(!atlas.is_empty());
 
-        let json = doc.pack_sprites_json(&[id1, id2], 0, 4096, false);
+        let json = doc.pack_sprites_json(&[id1, id2], 4096, 0);
         assert!(json.contains("\"sprites\""));
         assert!(json.contains("\"width\""));
     }
@@ -2056,7 +2062,7 @@ mod tests {
         let id1 = doc.add_image_layer("a", &rgba, 8, 8, 0, 0);
         let id2 = doc.add_image_layer("b", &rgba, 8, 8, 0, 0);
 
-        let result = doc.contact_sheet(&[id1, id2], 2, 8, 8, 0);
+        let result = doc.contact_sheet(&[id1, id2], 2, 0, 0, 0, 0, 0);
         // 2 columns, 1 row, 8x8 cells, no padding = 16x8 = 512 bytes
         assert_eq!(result.len(), 16 * 8 * 4);
     }

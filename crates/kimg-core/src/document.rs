@@ -570,6 +570,54 @@ fn refresh_alpha_snapshot(snapshot: &mut [u8], buffer: &ImageBuffer) {
     }
 }
 
+fn capture_pretransformed_alpha_snapshot(
+    snapshot: &mut [u8],
+    canvas_w: u32,
+    canvas_h: u32,
+    source: &ImageBuffer,
+    common: &LayerCommon,
+    anchor: Anchor,
+) {
+    snapshot.fill(0);
+
+    let src_w = source.width as i32;
+    let src_h = source.height as i32;
+    let (x0, y0) = match anchor {
+        Anchor::Center => (
+            (common.x as f64 - src_w as f64 / 2.0).round() as i32,
+            (common.y as f64 - src_h as f64 / 2.0).round() as i32,
+        ),
+        Anchor::TopLeft => (common.x, common.y),
+    };
+
+    let opacity = (common.opacity.clamp(0.0, 1.0) * 255.0).round() as u32;
+    if opacity == 0 {
+        return;
+    }
+
+    let dst_w = canvas_w as i32;
+    let dst_h = canvas_h as i32;
+
+    for sy in 0..src_h {
+        for sx in 0..src_w {
+            let si = ((sy * src_w + sx) * 4) as usize;
+            let sa = ((source.data[si + 3] as u32) * opacity + 127) / 255;
+            if sa == 0 {
+                continue;
+            }
+
+            let dx = x0 + sx;
+            let dy = y0 + sy;
+            if dx < 0 || dy < 0 || dx >= dst_w || dy >= dst_h {
+                continue;
+            }
+
+            let di = (dy * dst_w + dx) as usize;
+            snapshot[di] = sa as u8;
+        }
+    }
+}
+
 fn can_render_layer_direct(layer: &Layer) -> bool {
     layer.common.mask.is_none()
         && !layer.common.clip_to_below
@@ -624,6 +672,72 @@ fn render_layer_direct(layer: &Layer, output: &mut ImageBuffer) -> bool {
                     blit_pretransformed_raster_layer(
                         output,
                         shape_buf,
+                        &layer.common,
+                        shape.transform.anchor,
+                    );
+                },
+            );
+            true
+        }
+        _ => false,
+    }
+}
+
+fn capture_direct_layer_alpha(
+    layer: &Layer,
+    canvas_w: u32,
+    canvas_h: u32,
+    snapshot: &mut [u8],
+) -> bool {
+    if !can_render_layer_direct(layer) {
+        return false;
+    }
+
+    match &layer.kind {
+        LayerKind::Image(image) => {
+            image.with_cached_transformed_raster(
+                || apply_non_destructive_transform(&image.buffer, &image.transform),
+                |transformed| {
+                    capture_pretransformed_alpha_snapshot(
+                        snapshot,
+                        canvas_w,
+                        canvas_h,
+                        transformed,
+                        &layer.common,
+                        image.transform.anchor,
+                    );
+                },
+            );
+            true
+        }
+        LayerKind::Paint(paint) => {
+            paint.with_cached_transformed_raster(
+                || apply_non_destructive_transform(&paint.buffer, &paint.transform),
+                |transformed| {
+                    capture_pretransformed_alpha_snapshot(
+                        snapshot,
+                        canvas_w,
+                        canvas_h,
+                        transformed,
+                        &layer.common,
+                        paint.transform.anchor,
+                    );
+                },
+            );
+            true
+        }
+        LayerKind::Shape(shape) => {
+            shape.with_cached_transformed_raster(
+                || {
+                    let shape_buf = render_shape_layer(shape);
+                    apply_non_destructive_transform(&shape_buf, &shape.transform)
+                },
+                |transformed| {
+                    capture_pretransformed_alpha_snapshot(
+                        snapshot,
+                        canvas_w,
+                        canvas_h,
+                        transformed,
                         &layer.common,
                         shape.transform.anchor,
                     );
@@ -874,7 +988,7 @@ fn render_layers(layers: &[Layer], output: &mut ImageBuffer) {
             }
             _ => {
                 if render_layer_direct(layer, output) {
-                    refresh_alpha_snapshot(&mut prev_alpha, output);
+                    capture_direct_layer_alpha(layer, output.width, output.height, &mut prev_alpha);
                     continue;
                 }
 
@@ -886,7 +1000,7 @@ fn render_layers(layers: &[Layer], output: &mut ImageBuffer) {
                 }
 
                 blend(output, &layer_buf, layer.common.blend_mode);
-                refresh_alpha_snapshot(&mut prev_alpha, output);
+                refresh_alpha_snapshot(&mut prev_alpha, &layer_buf);
             }
         }
     }
@@ -917,7 +1031,7 @@ fn render_group(group: &GroupLayerData, output: &mut ImageBuffer, opacity: f64) 
             }
             _ => {
                 if render_layer_direct(layer, &mut group_buf) {
-                    refresh_alpha_snapshot(&mut prev_alpha, &group_buf);
+                    capture_direct_layer_alpha(layer, canvas_w, canvas_h, &mut prev_alpha);
                     continue;
                 }
 
@@ -928,7 +1042,7 @@ fn render_group(group: &GroupLayerData, output: &mut ImageBuffer, opacity: f64) 
                 }
 
                 blend(&mut group_buf, &layer_buf, layer.common.blend_mode);
-                refresh_alpha_snapshot(&mut prev_alpha, &group_buf);
+                refresh_alpha_snapshot(&mut prev_alpha, &layer_buf);
             }
         }
     }
@@ -1574,6 +1688,41 @@ mod tests {
         assert_eq!(p0.g, 0);
         // Right pixel: red clipped to transparent → transparent
         assert_eq!(result.get_pixel(1, 0), Rgba::TRANSPARENT);
+    }
+
+    #[test]
+    fn clipping_mask_ignores_older_opaque_background_layers() {
+        let mut doc = Document::new(2, 1);
+
+        let background_id = doc.next_id();
+        doc.layers.push(img_layer(
+            background_id,
+            "background",
+            solid_buf(2, 1, Rgba::new(240, 240, 240, 255)),
+            0,
+            0,
+        ));
+
+        let below_id = doc.next_id();
+        let mut below_buf = ImageBuffer::new_transparent(2, 1);
+        below_buf.set_pixel(0, 0, Rgba::new(0, 255, 0, 255));
+        doc.layers
+            .push(img_layer(below_id, "below", below_buf, 0, 0));
+
+        let clipped_id = doc.next_id();
+        let mut clipped = img_layer(
+            clipped_id,
+            "clipped",
+            solid_buf(2, 1, Rgba::new(255, 0, 0, 255)),
+            0,
+            0,
+        );
+        clipped.common.clip_to_below = true;
+        doc.layers.push(clipped);
+
+        let result = doc.render();
+        assert_eq!(result.get_pixel(0, 0), Rgba::new(255, 0, 0, 255));
+        assert_eq!(result.get_pixel(1, 0), Rgba::new(240, 240, 240, 255));
     }
 
     #[test]

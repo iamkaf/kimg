@@ -1,6 +1,37 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, test } from "vitest";
 
 import { Composition, detectFormat, hexToRgb, preload, rgbToHex } from "../dist/index.js";
+import { Composition as RawComposition, initSync } from "../dist/raw.js";
+
+const wasm = readFileSync(new URL("../dist/kimg_wasm_bg.wasm", import.meta.url));
+
+async function initBindings() {
+  initSync({ module: wasm });
+  await preload({ module_or_path: wasm });
+}
+
+function spritePixels(fill) {
+  return new Uint8Array([
+    fill[0],
+    fill[1],
+    fill[2],
+    fill[3],
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    fill[0],
+    fill[1],
+    fill[2],
+    fill[3],
+  ]);
+}
 
 describe("main package facade", () => {
   test("preload is idempotent and create returns the JS facade", async () => {
@@ -99,6 +130,241 @@ describe("main package facade", () => {
     expect(await rgbToHex({ r: 255, g: 128, b: 0 })).toBe("#ff8000");
 
     composition.free();
+  });
+
+  test("levelsLayer maps public options to the raw levels API correctly", async () => {
+    await initBindings();
+
+    const publicComposition = await Composition.create({ width: 1, height: 1 });
+    const rawComposition = new RawComposition(1, 1);
+
+    const rgba = new Uint8Array([255, 128, 0, 255]);
+    const publicLayerId = publicComposition.addImageLayer({
+      name: "public",
+      rgba,
+      width: 1,
+      height: 1,
+    });
+    const rawLayerId = rawComposition.add_image_layer("raw", rgba, 1, 1, 0, 0);
+
+    publicComposition.levelsLayer(publicLayerId, {
+      shadows: 0.18,
+      midtones: 0.64,
+      highlights: 0.88,
+    });
+    rawComposition.levels_layer(rawLayerId, 46, 224, 0.64, 0, 255);
+
+    expect(Array.from(publicComposition.getLayerRgba(publicLayerId))).toEqual(
+      Array.from(rawComposition.get_layer_rgba(rawLayerId)),
+    );
+
+    publicComposition.free();
+    rawComposition.free();
+  });
+
+  test("gradientMapLayer matches the raw gradient_map_layer call", async () => {
+    await initBindings();
+
+    const publicComposition = await Composition.create({ width: 2, height: 1 });
+    const rawComposition = new RawComposition(2, 1);
+    const rgba = new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255]);
+
+    const publicLayerId = publicComposition.addImageLayer({
+      name: "public",
+      rgba,
+      width: 2,
+      height: 1,
+    });
+    const rawLayerId = rawComposition.add_image_layer("raw", rgba, 2, 1, 0, 0);
+
+    const stops = [
+      { color: [14, 25, 73, 255], position: 0 },
+      { color: [255, 224, 132, 255], position: 1 },
+    ];
+
+    publicComposition.gradientMapLayer(publicLayerId, { stops });
+    rawComposition.gradient_map_layer(
+      rawLayerId,
+      new Uint8Array([14, 25, 73, 255, 255, 224, 132, 255]),
+      new Float64Array([0, 1]),
+    );
+
+    expect(Array.from(publicComposition.getLayerRgba(publicLayerId))).toEqual(
+      Array.from(rawComposition.get_layer_rgba(rawLayerId)),
+    );
+
+    publicComposition.free();
+    rawComposition.free();
+  });
+
+  test("setLayerMask and inversion match raw mask operations", async () => {
+    await initBindings();
+
+    const publicComposition = await Composition.create({ width: 2, height: 1 });
+    const rawComposition = new RawComposition(2, 1);
+    const rgba = new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255]);
+    const mask = new Uint8Array([255, 255, 255, 255, 0, 0, 0, 255]);
+
+    const publicLayerId = publicComposition.addImageLayer({
+      name: "public",
+      rgba,
+      width: 2,
+      height: 1,
+    });
+    const rawLayerId = rawComposition.add_image_layer("raw", rgba, 2, 1, 0, 0);
+
+    publicComposition.setLayerMask(publicLayerId, {
+      rgba: mask,
+      width: 2,
+      height: 1,
+      inverted: true,
+    });
+    rawComposition.set_layer_mask(rawLayerId, mask, 2, 1);
+    rawComposition.set_mask_inverted(rawLayerId, true);
+
+    expect(publicComposition.getLayer(publicLayerId)).toMatchObject({
+      hasMask: true,
+      maskInverted: true,
+    });
+    expect(rawComposition.get_layer(rawLayerId)).toMatchObject({
+      hasMask: true,
+      maskInverted: true,
+    });
+    expect(Array.from(publicComposition.renderRgba())).toEqual(Array.from(rawComposition.render()));
+
+    publicComposition.free();
+    rawComposition.free();
+  });
+
+  test("updateLayer matches raw update_layer for transform fields", async () => {
+    await initBindings();
+
+    const publicComposition = await Composition.create({ width: 6, height: 6 });
+    const rawComposition = new RawComposition(6, 6);
+    const rgba = new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255]);
+
+    const publicLayerId = publicComposition.addImageLayer({
+      name: "public",
+      rgba,
+      width: 2,
+      height: 2,
+    });
+    const rawLayerId = rawComposition.add_image_layer("raw", rgba, 2, 2, 0, 0);
+
+    const patch = {
+      anchor: "center",
+      flipX: true,
+      flipY: true,
+      opacity: 0.75,
+      rotation: 22.5,
+      scaleX: 1.25,
+      scaleY: 0.8,
+      x: 3,
+      y: 4,
+    };
+
+    expect(publicComposition.updateLayer(publicLayerId, patch)).toBe(true);
+    expect(
+      rawComposition.update_layer(rawLayerId, {
+        anchor: "center",
+        flipX: true,
+        flipY: true,
+        opacity: 0.75,
+        rotation: 22.5,
+        scaleX: 1.25,
+        scaleY: 0.8,
+        x: 3,
+        y: 4,
+      }),
+    ).toBe(true);
+
+    expect(publicComposition.getLayer(publicLayerId)).toMatchObject({
+      anchor: "center",
+      flipX: true,
+      flipY: true,
+      opacity: 0.75,
+      rotation: 22.5,
+      scaleX: 1.25,
+      scaleY: 0.8,
+      x: 3,
+      y: 4,
+    });
+    expect(rawComposition.get_layer(rawLayerId)).toMatchObject({
+      anchor: "center",
+      flipX: true,
+      flipY: true,
+      opacity: 0.75,
+      rotation: 22.5,
+      scaleX: 1.25,
+      scaleY: 0.8,
+      x: 3,
+      y: 4,
+    });
+    expect(Array.from(publicComposition.renderRgba())).toEqual(Array.from(rawComposition.render()));
+
+    publicComposition.free();
+    rawComposition.free();
+  });
+
+  test("packSprites, packSpritesJson, and contactSheet match raw sprite helpers", async () => {
+    await initBindings();
+
+    const publicComposition = await Composition.create({ width: 16, height: 16 });
+    const rawComposition = new RawComposition(16, 16);
+
+    const publicLayerIds = [
+      publicComposition.addImageLayer({
+        name: "red",
+        rgba: spritePixels([255, 0, 0, 255]),
+        width: 2,
+        height: 2,
+        x: 1,
+        y: 1,
+      }),
+      publicComposition.addImageLayer({
+        name: "blue",
+        rgba: spritePixels([0, 0, 255, 255]),
+        width: 2,
+        height: 2,
+        x: 6,
+        y: 2,
+      }),
+    ];
+    const rawLayerIds = new Uint32Array([
+      rawComposition.add_image_layer("red", spritePixels([255, 0, 0, 255]), 2, 2, 1, 1),
+      rawComposition.add_image_layer("blue", spritePixels([0, 0, 255, 255]), 2, 2, 6, 2),
+    ]);
+
+    const publicAtlas = publicComposition.packSprites({
+      layerIds: publicLayerIds,
+      maxWidth: 16,
+      padding: 1,
+    });
+    const rawAtlas = rawComposition.pack_sprites(rawLayerIds, 16, 1);
+
+    expect(Array.from(publicAtlas)).toEqual(Array.from(rawAtlas));
+    expect(
+      JSON.parse(
+        publicComposition.packSpritesJson({
+          layerIds: publicLayerIds,
+          maxWidth: 16,
+          padding: 1,
+        }),
+      ),
+    ).toEqual(JSON.parse(rawComposition.pack_sprites_json(rawLayerIds, 16, 1)));
+
+    const publicSheet = publicComposition.contactSheet({
+      layerIds: publicLayerIds,
+      columns: 2,
+      padding: 2,
+      background: [255, 255, 255, 255],
+    });
+    const rawSheet = rawComposition.contact_sheet(rawLayerIds, 2, 2, 255, 255, 255, 255);
+
+    expect(Array.from(publicSheet)).toEqual(Array.from(rawSheet));
+
+    publicComposition.free();
+    rawComposition.free();
   });
 
   test("bucket fill edits image and paint layers with tolerance controls", async () => {

@@ -9,4 +9,4 @@ echo "    Press Ctrl+C to stop."
 echo ""
 
 cd "$ROOT"
-python3 -m http.server "$PORT"
+python3 -m http.server "$PORT" --directory "$ROOT"

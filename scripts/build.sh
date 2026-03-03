@@ -7,9 +7,16 @@ DIST="$ROOT/dist"
 PACKAGE_JSON="$ROOT/package.json"
 BASELINE_OUT="$(mktemp -d)"
 SIMD_OUT="$(mktemp -d)"
+GENERATED_TYPES=(
+    "$JS_SRC/kimg_wasm_bg.d.ts"
+    "$JS_SRC/kimg_wasm_simd.d.ts"
+    "$JS_SRC/kimg_wasm_bg.js"
+    "$JS_SRC/kimg_wasm_simd.js"
+)
 
 cleanup() {
     rm -rf "$BASELINE_OUT" "$SIMD_OUT"
+    rm -f "${GENERATED_TYPES[@]}"
 }
 
 trap cleanup EXIT
@@ -60,6 +67,12 @@ if ! command -v npx &> /dev/null; then
     echo "ERROR: npx not found; install Node.js/npm to build the TypeScript wrapper."
     exit 1
 fi
+
+echo "==> Staging generated wasm-bindgen types for wrapper compilation..."
+cp "$BASELINE_OUT/kimg_wasm.d.ts" "$JS_SRC/kimg_wasm_bg.d.ts"
+cp "$SIMD_OUT/kimg_wasm_simd.d.ts" "$JS_SRC/kimg_wasm_simd.d.ts"
+cp "$BASELINE_OUT/kimg_wasm.js" "$JS_SRC/kimg_wasm_bg.js"
+cp "$SIMD_OUT/kimg_wasm_simd.js" "$JS_SRC/kimg_wasm_simd.js"
 
 echo "==> Compiling TypeScript wrapper into dist/ with tsgo..."
 npx --no-install tsgo -p "$ROOT/tsconfig.json"

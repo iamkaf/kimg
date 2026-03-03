@@ -409,6 +409,10 @@ function normalizePositiveInteger(value, fieldName) {
   return normalized;
 }
 
+function clamp01(value) {
+  return Math.min(1, Math.max(0, value));
+}
+
 function normalizeString(value, fieldName) {
   if (typeof value !== "string") {
     throw new TypeError(`${fieldName} must be a string.`);
@@ -1495,12 +1499,15 @@ export class Composition {
             shadows: shadowsOrOptions,
           };
 
-    return this._inner.levels_layer(
-      normalizeLayerId(id),
-      normalizeFiniteNumber(levels.shadows, "levelsLayer.shadows"),
-      normalizeFiniteNumber(levels.midtones, "levelsLayer.midtones"),
-      normalizeFiniteNumber(levels.highlights, "levelsLayer.highlights"),
-    );
+    const shadowsValue = normalizeFiniteNumber(levels.shadows, "levelsLayer.shadows");
+    const midtonesValue = normalizeFiniteNumber(levels.midtones, "levelsLayer.midtones");
+    const highlightsValue = normalizeFiniteNumber(levels.highlights, "levelsLayer.highlights");
+
+    const inBlack = Math.round(clamp01(shadowsValue) * 255);
+    const inWhite = Math.max(inBlack + 1, Math.round(clamp01(highlightsValue) * 255));
+    const gamma = Math.max(midtonesValue, Number.EPSILON);
+
+    return this._inner.levels_layer(normalizeLayerId(id), inBlack, inWhite, gamma, 0, 255);
   }
 
   gradientMapLayer(id, stopsOrOptions) {

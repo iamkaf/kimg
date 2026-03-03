@@ -2,6 +2,10 @@
 /dist
 /node_modules
 /*.tgz
+/js/kimg_wasm_bg.d.ts
+/js/kimg_wasm_simd.d.ts
+/js/kimg_wasm_bg.js
+/js/kimg_wasm_simd.js
 *.swp
 *.swo
 *.png

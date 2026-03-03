@@ -3,723 +3,81 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>kimg — WASM Compositor Demo</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      background: #0d1117;
-      color: #c9d1d9;
-      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
-      font-size: 14px;
-      display: flex;
-      justify-content: center;
-      padding: 48px 24px;
-    }
-    .container {
-      max-width: 800px;
-      width: 100%;
-    }
-    h1 {
-      font-size: 24px;
-      font-weight: 600;
-      color: #f0f6fc;
-      margin-bottom: 4px;
-    }
-    .subtitle {
-      color: #8b949e;
-      margin-bottom: 32px;
-    }
-    .canvas-row {
-      display: flex;
-      gap: 24px;
-      margin-bottom: 24px;
-      flex-wrap: wrap;
-    }
-    .canvas-panel {
-      flex: 1;
-      min-width: 240px;
-    }
-    .canvas-panel h2 {
-      font-size: 13px;
-      font-weight: 600;
-      color: #8b949e;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-bottom: 8px;
-    }
-    .canvas-wrap {
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      padding: 16px;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-    canvas {
-      image-rendering: pixelated;
-      image-rendering: crisp-edges;
-    }
-    .panel {
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      padding: 16px 20px;
-      margin-bottom: 16px;
-    }
-    .panel h2 {
-      font-size: 13px;
-      font-weight: 600;
-      color: #8b949e;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-bottom: 10px;
-    }
-    .info-grid {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 4px 16px;
-    }
-    .info-grid .label { color: #8b949e; }
-    .info-grid .value { color: #58a6ff; }
-    .layers {
-      list-style: none;
-    }
-    .layers li {
-      padding: 6px 0;
-      border-bottom: 1px solid #21262d;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .layers li:last-child { border-bottom: none; }
-    .layer-index {
-      color: #484f58;
-      font-size: 12px;
-      width: 18px;
-      text-align: right;
-    }
-    .layer-swatch {
-      width: 14px;
-      height: 14px;
-      border-radius: 3px;
-      border: 1px solid #30363d;
-      flex-shrink: 0;
-    }
-    .layer-name { color: #f0f6fc; }
-    .layer-detail { color: #8b949e; font-size: 12px; }
-    .slider-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 6px;
-    }
-    .slider-row label {
-      color: #8b949e;
-      width: 100px;
-      text-align: right;
-      flex-shrink: 0;
-    }
-    .slider-row input[type="range"] {
-      flex: 1;
-      accent-color: #58a6ff;
-    }
-    .slider-row .slider-val {
-      color: #58a6ff;
-      width: 50px;
-      text-align: right;
-      font-size: 12px;
-    }
-    .color-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 8px 0;
-      border-bottom: 1px solid #21262d;
-    }
-    .color-row:last-child { border-bottom: none; }
-    .color-swatch {
-      width: 32px;
-      height: 32px;
-      border-radius: 4px;
-      border: 1px solid #30363d;
-      flex-shrink: 0;
-    }
-    .color-info { flex: 1; }
-    .color-label { color: #f0f6fc; font-size: 13px; }
-    .color-detail { color: #8b949e; font-size: 12px; }
-    .btn {
-      background: #21262d;
-      color: #c9d1d9;
-      border: 1px solid #30363d;
-      border-radius: 6px;
-      padding: 6px 14px;
-      font-family: inherit;
-      font-size: 13px;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    .btn:hover { background: #30363d; }
-    .btn-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-    #status {
-      color: #8b949e;
-      padding: 16px;
-      text-align: center;
-    }
-    .error { color: #f85149; }
-    .badge {
-      display: inline-block;
-      background: #1f6feb33;
-      color: #58a6ff;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      margin-left: 8px;
-    }
-    .drop-zone {
-      border: 2px dashed #30363d;
-      border-radius: 8px;
-      padding: 24px;
-      text-align: center;
-      color: #8b949e;
-      cursor: pointer;
-      transition: border-color 0.2s, background 0.2s;
-    }
-    .drop-zone:hover, .drop-zone.drag-over {
-      border-color: #58a6ff;
-      background: #1f6feb11;
-    }
-    .import-note {
-      color: #8b949e;
-      font-size: 12px;
-      margin-top: 8px;
-    }
-  </style>
+  <title>kimg Visual Test Suite</title>
+  <link rel="stylesheet" href="./demo.css">
 </head>
 <body>
-  <div class="container">
-    <h1>kimg <span class="badge">Phase 5</span></h1>
-    <p class="subtitle">Rust+WASM compositor — multi-format I/O, serialization, layers, filters, transforms</p>
-
-    <div id="status">Initializing WASM...</div>
-
-    <div id="main-ui" style="display:none">
-
-      <div class="canvas-row">
-        <div class="canvas-panel">
-          <h2>Live render</h2>
-          <div class="canvas-wrap">
-            <canvas id="canvas" width="128" height="128" style="width: 384px; height: 384px;"></canvas>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Static Browser Demo</p>
+        <h1>kimg Visual Test Suite</h1>
+        <p class="hero-note">
+          One page. No manual setup. Scroll and compare. If a render path is wrong,
+          it should look wrong immediately.
+        </p>
+      </div>
+      <div class="hero-meta">
+        <dl class="runtime-grid" id="runtime-grid">
+          <div>
+            <dt>Runtime</dt>
+            <dd id="runtime-status">Booting</dd>
           </div>
-        </div>
+          <div>
+            <dt>SIMD</dt>
+            <dd id="runtime-simd">Checking</dd>
+          </div>
+          <div>
+            <dt>Cards</dt>
+            <dd id="runtime-count">0</dd>
+          </div>
+          <div>
+            <dt>Pass</dt>
+            <dd id="runtime-pass">0</dd>
+          </div>
+          <div>
+            <dt>Fail</dt>
+            <dd id="runtime-fail">0</dd>
+          </div>
+          <div>
+            <dt>Experimental</dt>
+            <dd id="runtime-experimental">0</dd>
+          </div>
+        </dl>
+        <button class="rerun-button" id="rerun-button" type="button">Rerun Suite</button>
       </div>
+    </header>
 
-      <!-- Phase 5: File Import -->
-      <div class="panel" id="import-panel">
-        <h2>Import Image (PNG / JPEG / WebP / GIF / PSD experimental)</h2>
-        <div class="drop-zone" id="drop-zone">
-          Drop an image here or click to browse
-          <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/gif,.psd" style="display:none">
-        </div>
-        <div class="import-note" id="import-note"></div>
-      </div>
+    <div class="layout">
+      <main class="suite" id="suite" aria-live="polite">
+        <section class="section-intro">
+          <p class="eyebrow">Suite Status</p>
+          <h2>Preparing deterministic fixtures and running visual checks.</h2>
+          <p>
+            The page uses the public JS package surface, embedded fixtures, and generated canvases.
+            The imported teapot image lives at <code>demo/assets/teapot.png</code>.
+          </p>
+        </section>
+      </main>
 
-      <!-- Phase 5: Export -->
-      <div class="panel" id="export-panel">
-        <h2>Export</h2>
-        <div class="btn-row">
-          <button class="btn" id="btn-export-png">Export PNG</button>
-          <button class="btn" id="btn-export-jpeg">Export JPEG</button>
-          <button class="btn" id="btn-export-webp">Export WebP</button>
+      <aside class="diagnostics" aria-labelledby="diagnostics-title">
+        <div class="diagnostics-header">
+          <div>
+            <p class="eyebrow">Live Diagnostics</p>
+            <h2 id="diagnostics-title">Console and Runtime Errors</h2>
+          </div>
+          <span class="diagnostic-count" id="diagnostic-count">0</span>
         </div>
-        <div class="slider-row" style="margin-top:8px">
-          <label>JPEG quality</label>
-          <input type="range" id="jpeg-quality" min="1" max="100" value="85">
-          <span class="slider-val" id="jpeg-quality-val">85</span>
-        </div>
-      </div>
-
-      <!-- Phase 5: Serialization -->
-      <div class="panel" id="serial-panel">
-        <h2>Document Serialization</h2>
-        <div class="btn-row">
-          <button class="btn" id="btn-save">Save Document (.kimg)</button>
-          <button class="btn" id="btn-load">Load Document (.kimg)</button>
-          <input type="file" id="load-input" accept=".kimg" style="display:none">
-        </div>
-      </div>
-
-      <div class="panel" id="controls-panel">
-        <h2>Filter Controls (scoped to group)</h2>
-        <div id="sliders"></div>
-        <div class="slider-row" style="margin-top:8px">
-          <label>Checker opacity</label>
-          <input type="range" id="opacity-slider" min="0" max="100" value="100">
-          <span class="slider-val" id="opacity-val">1.00</span>
-        </div>
-        <div class="slider-row">
-          <label>Checker visible</label>
-          <input type="checkbox" id="visible-check" checked>
-          <span class="slider-val"></span>
-        </div>
-        <div class="slider-row">
-          <label>Rotation</label>
-          <input type="range" id="rotation-slider" min="0" max="3" value="0" step="1">
-          <span class="slider-val" id="rotation-val">0</span>
-        </div>
-        <div class="slider-row">
-          <label>Flip X / Y</label>
-          <input type="checkbox" id="flip-x"> X
-          <input type="checkbox" id="flip-y"> Y
-          <span class="slider-val"></span>
-        </div>
-        <div class="btn-row">
-          <button class="btn" id="btn-reimport">PNG round-trip</button>
-        </div>
-      </div>
-
-      <div class="panel" id="timing-panel">
-        <h2>Performance</h2>
-        <div class="info-grid">
-          <span class="label">WASM init</span>
-          <span class="value" id="t-init">-</span>
-          <span class="label">Render</span>
-          <span class="value" id="t-render">-</span>
-          <span class="label">Total layers</span>
-          <span class="value" id="t-layers">-</span>
-        </div>
-      </div>
-
-      <div class="panel" id="color-panel">
-        <h2>Color Utilities</h2>
-        <div id="color-results"></div>
-      </div>
-
-      <div class="panel" id="layers-panel">
-        <h2>Layer Stack (top to bottom)</h2>
-        <ul class="layers" id="layer-list"></ul>
-      </div>
+        <p class="diagnostics-note">
+          This panel mirrors <code>console.error</code>, uncaught exceptions, and rejected promises.
+        </p>
+        <ol class="diagnostic-list" id="diagnostic-list">
+          <li class="diagnostic-empty">No errors captured.</li>
+        </ol>
+      </aside>
     </div>
   </div>
 
-  <script type="module">
-    import {
-      Composition,
-      hexToRgb,
-      rgbToHex,
-      relativeLuminance,
-      contrastRatio,
-      dominantRgbFromRgba,
-      detectFormat,
-    } from '../dist/index.js';
-
-    // --- Pixel data generators ---
-
-    function solidRgba(w, h, r, g, b, a) {
-      const buf = new Uint8Array(w * h * 4);
-      for (let i = 0; i < buf.length; i += 4) {
-        buf[i] = r; buf[i+1] = g; buf[i+2] = b; buf[i+3] = a;
-      }
-      return buf;
-    }
-
-    function gradientRgba(w, h, r, g, b) {
-      const buf = new Uint8Array(w * h * 4);
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const i = (y * w + x) * 4;
-          const t = x / (w - 1);
-          buf[i] = r;
-          buf[i+1] = g;
-          buf[i+2] = b;
-          buf[i+3] = Math.round(t * 255);
-        }
-      }
-      return buf;
-    }
-
-    function checkerRgba(w, h, r, g, b, a, cellSize) {
-      const buf = new Uint8Array(w * h * 4);
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const i = (y * w + x) * 4;
-          const on = ((Math.floor(x / cellSize) + Math.floor(y / cellSize)) % 2) === 0;
-          if (on) {
-            buf[i] = r; buf[i+1] = g; buf[i+2] = b; buf[i+3] = a;
-          }
-        }
-      }
-      return buf;
-    }
-
-    // --- Main ---
-
-    const statusEl = document.getElementById('status');
-
-    try {
-      const t0 = performance.now();
-      const SIZE = 128;
-      let doc = await Composition.create({ width: SIZE, height: SIZE });
-      const tInit = performance.now() - t0;
-
-      // --- Build layer tree ---
-
-      const bgId = doc.addImageLayer({
-        name: 'Background',
-        rgba: solidRgba(128, 128, 59, 130, 246, 255),
-        width: 128,
-        height: 128,
-        x: 0,
-        y: 0,
-      });
-
-      const groupId = doc.addGroupLayer({ name: 'Tinted group' });
-      const gradientId = doc.addImageLayer({
-        name: 'Red gradient',
-        rgba: gradientRgba(128, 128, 239, 68, 68),
-        width: 128,
-        height: 128,
-        x: 0,
-        y: 0,
-        parentId: groupId,
-      });
-      const checkerId = doc.addImageLayer({
-        name: 'Checkerboard',
-        rgba: checkerRgba(64, 64, 34, 197, 94, 200, 8),
-        width: 64,
-        height: 64,
-        x: 32,
-        y: 32,
-        parentId: groupId,
-      });
-      const filterId = doc.addFilterLayer({ name: 'Group filter', parentId: groupId });
-
-      const squareId = doc.addImageLayer({
-        name: 'White square',
-        rgba: solidRgba(16, 16, 255, 255, 255, 255),
-        width: 16,
-        height: 16,
-        x: 56,
-        y: 56,
-      });
-      doc.setLayerAnchor(squareId, 1);
-
-      const layerInfo = [
-        { name: 'White square',   detail: '16x16 center-anchored', swatch: '#ffffff', id: squareId },
-        { name: 'Tinted group',   detail: 'group with scoped filter', swatch: '#8b949e', id: groupId,
-          children: [
-            { name: 'Group filter', detail: 'HSL filter', swatch: '#a855f7', id: filterId },
-            { name: 'Checkerboard', detail: '64x64 @ (32,32)', swatch: '#22c55e', id: checkerId },
-            { name: 'Red gradient', detail: '128x128 alpha', swatch: 'linear-gradient(to right, transparent, #ef4444)', id: gradientId },
-          ],
-        },
-        { name: 'Background',    detail: '128x128 solid', swatch: '#3b82f6', id: bgId },
-      ];
-
-      // --- Filter sliders ---
-
-      const filterDefs = [
-        { key: 'hue',         label: 'Hue',         min: -180, max: 180, step: 1,    init: 0 },
-        { key: 'saturation',  label: 'Saturation',  min: -100, max: 100, step: 1,    init: 0 },
-        { key: 'lightness',   label: 'Lightness',   min: -100, max: 100, step: 1,    init: 0 },
-        { key: 'brightness',  label: 'Brightness',  min: -100, max: 100, step: 1,    init: 0 },
-        { key: 'contrast',    label: 'Contrast',    min: -100, max: 100, step: 1,    init: 0 },
-        { key: 'temperature', label: 'Temperature', min: -100, max: 100, step: 1,    init: 0 },
-        { key: 'tint',        label: 'Tint',        min: -100, max: 100, step: 1,    init: 0 },
-        { key: 'sharpen',     label: 'Sharpen',     min: 0,    max: 100, step: 1,    init: 0 },
-      ];
-
-      const filterState = {};
-      filterDefs.forEach(d => filterState[d.key] = d.init);
-
-      const slidersEl = document.getElementById('sliders');
-      for (const d of filterDefs) {
-        const row = document.createElement('div');
-        row.className = 'slider-row';
-        row.innerHTML = `
-          <label>${d.label}</label>
-          <input type="range" id="f-${d.key}" min="${d.min}" max="${d.max}" step="${d.step}" value="${d.init}">
-          <span class="slider-val" id="fv-${d.key}">${d.init}</span>
-        `;
-        slidersEl.appendChild(row);
-        row.querySelector('input').addEventListener('input', (e) => {
-          filterState[d.key] = Number(e.target.value);
-          row.querySelector('.slider-val').textContent = e.target.value;
-          updateFilter();
-          rerender();
-        });
-      }
-
-      function updateFilter() {
-        doc.setFilterLayerConfig(filterId, {
-          hue: filterState.hue,
-          saturation: filterState.saturation / 100,
-          lightness: filterState.lightness / 100,
-          alpha: 0,
-          brightness: filterState.brightness / 100,
-          contrast: filterState.contrast / 100,
-          temperature: filterState.temperature / 100,
-          tint: filterState.tint / 100,
-          sharpen: filterState.sharpen / 100,
-        });
-      }
-
-      // --- Layer property controls ---
-
-      document.getElementById('opacity-slider').addEventListener('input', (e) => {
-        const v = Number(e.target.value) / 100;
-        document.getElementById('opacity-val').textContent = v.toFixed(2);
-        doc.setLayerOpacity(checkerId, v);
-        rerender();
-      });
-
-      document.getElementById('visible-check').addEventListener('change', (e) => {
-        doc.setLayerVisibility(checkerId, e.target.checked);
-        rerender();
-      });
-
-      document.getElementById('rotation-slider').addEventListener('input', (e) => {
-        const deg = Number(e.target.value) * 90;
-        document.getElementById('rotation-val').textContent = `${deg}`;
-        doc.setLayerRotation(squareId, deg);
-        rerender();
-      });
-
-      document.getElementById('flip-x').addEventListener('change', () => {
-        doc.setLayerFlip(squareId, {
-          flipX: document.getElementById('flip-x').checked,
-          flipY: document.getElementById('flip-y').checked,
-        });
-        rerender();
-      });
-      document.getElementById('flip-y').addEventListener('change', () => {
-        doc.setLayerFlip(squareId, {
-          flipX: document.getElementById('flip-x').checked,
-          flipY: document.getElementById('flip-y').checked,
-        });
-        rerender();
-      });
-
-      // --- Phase 5: File Import ---
-
-      const dropZone = document.getElementById('drop-zone');
-      const fileInput = document.getElementById('file-input');
-      const importNote = document.getElementById('import-note');
-
-      dropZone.addEventListener('click', () => fileInput.click());
-      dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-      dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.classList.remove('drag-over');
-        if (e.dataTransfer.files.length) handleImportFile(e.dataTransfer.files[0]);
-      });
-      fileInput.addEventListener('change', () => {
-        if (fileInput.files.length) handleImportFile(fileInput.files[0]);
-        fileInput.value = '';
-      });
-
-      function handleImportFile(file) {
-        const reader = new FileReader();
-        reader.onload = async () => {
-          const bytes = new Uint8Array(reader.result);
-          const fmt = await detectFormat(bytes);
-          importNote.textContent = `Detected: ${fmt} (${file.name}, ${bytes.length} bytes)`;
-
-          try {
-            if (fmt === 'gif') {
-              const ids = doc.importGifFrames({ bytes });
-              importNote.textContent += ` — ${ids.length} frame(s) imported as layers`;
-            } else if (fmt === 'psd') {
-              const ids = doc.importPsd({ bytes });
-              importNote.textContent += ` — ${ids.length} layer(s) imported (experimental PSD path)`;
-            } else {
-              doc.importImage({ name: file.name, bytes, x: 0, y: 0 });
-              importNote.textContent += ' — added as layer';
-            }
-            updateLayerCount();
-            rerender();
-          } catch (err) {
-            importNote.textContent = `Import error: ${err.message}`;
-          }
-        };
-        reader.readAsArrayBuffer(file);
-      }
-
-      // --- Phase 5: Export ---
-
-      document.getElementById('jpeg-quality').addEventListener('input', (e) => {
-        document.getElementById('jpeg-quality-val').textContent = e.target.value;
-      });
-
-      document.getElementById('btn-export-png').addEventListener('click', () => {
-        const bytes = doc.exportPng();
-        downloadBlob(bytes, 'kimg-export.png', 'image/png');
-      });
-
-      document.getElementById('btn-export-jpeg').addEventListener('click', () => {
-        const quality = Number(document.getElementById('jpeg-quality').value);
-        const bytes = doc.exportJpeg({ quality });
-        downloadBlob(bytes, 'kimg-export.jpg', 'image/jpeg');
-      });
-
-      document.getElementById('btn-export-webp').addEventListener('click', () => {
-        const bytes = doc.exportWebp();
-        downloadBlob(bytes, 'kimg-export.webp', 'image/webp');
-      });
-
-      function downloadBlob(data, filename, mime) {
-        const blob = new Blob([data], { type: mime });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-
-      // --- Phase 5: Serialization ---
-
-      document.getElementById('btn-save').addEventListener('click', () => {
-        const data = doc.serialize();
-        downloadBlob(data, 'document.kimg', 'application/octet-stream');
-      });
-
-      const loadInput = document.getElementById('load-input');
-      document.getElementById('btn-load').addEventListener('click', () => loadInput.click());
-      loadInput.addEventListener('change', () => {
-        if (!loadInput.files.length) return;
-        const reader = new FileReader();
-        reader.onload = async () => {
-          const bytes = new Uint8Array(reader.result);
-          try {
-            doc.free();
-            doc = await Composition.deserialize(bytes);
-            updateLayerCount();
-            rerender();
-            importNote.textContent = `Document loaded (${bytes.length} bytes)`;
-          } catch (err) {
-            importNote.textContent = `Load error: ${err.message}`;
-          }
-        };
-        reader.readAsArrayBuffer(loadInput.files[0]);
-        loadInput.value = '';
-      });
-
-      // --- PNG round-trip ---
-
-      document.getElementById('btn-reimport').addEventListener('click', () => {
-        const pngBytes = doc.exportPng();
-        Composition.create({ width: SIZE, height: SIZE }).then((doc2) => {
-          doc2.addPngLayer({ name: 're-imported', png: pngBytes, x: 0, y: 0 });
-          const rgba2 = doc2.renderRgba();
-          drawToCanvas(rgba2);
-          doc2.free();
-          setTimeout(() => rerender(), 1500);
-        });
-      });
-
-      // --- Render loop ---
-
-      const canvas = document.getElementById('canvas');
-      const ctx = canvas.getContext('2d');
-
-      function drawToCanvas(rgba) {
-        const imageData = new ImageData(new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength), SIZE, SIZE);
-        ctx.putImageData(imageData, 0, 0);
-      }
-
-      function rerender() {
-        const t1 = performance.now();
-        const rgba = doc.renderRgba();
-        const tRender = performance.now() - t1;
-        drawToCanvas(rgba);
-        document.getElementById('t-render').textContent = `${tRender.toFixed(2)} ms`;
-      }
-
-      function updateLayerCount() {
-        document.getElementById('t-layers').textContent = `${doc.layerCount()} top-level`;
-      }
-
-      // Initial render
-      rerender();
-
-      // --- Color utilities demo ---
-
-      const bgHex = '#3b82f6';
-      const whiteHex = '#ffffff';
-      const blackHex = '#000000';
-
-      const bgData = solidRgba(128, 128, 59, 130, 246, 255);
-      const [bgRgb, bgLum, crWhite, crBlack, dominant] = await Promise.all([
-        hexToRgb(bgHex),
-        relativeLuminance(bgHex),
-        contrastRatio(bgHex, whiteHex),
-        contrastRatio(bgHex, blackHex),
-        dominantRgbFromRgba(bgData, 128, 128),
-      ]);
-      const dominantHex = dominant.length === 3 ? await rgbToHex(dominant[0], dominant[1], dominant[2]) : '?';
-
-      const colorResults = document.getElementById('color-results');
-      const colorEntries = [
-        { swatch: bgHex, label: `hexToRgb("${bgHex}")`, detail: `rgb(${bgRgb[0]}, ${bgRgb[1]}, ${bgRgb[2]})` },
-        { swatch: bgHex, label: `relativeLuminance("${bgHex}")`, detail: bgLum.toFixed(4) },
-        { swatch: bgHex, label: `contrastRatio vs white`, detail: `${crWhite.toFixed(2)}:1` },
-        { swatch: bgHex, label: `contrastRatio vs black`, detail: `${crBlack.toFixed(2)}:1` },
-        { swatch: dominantHex, label: `dominantRgbFromRgba (bg)`, detail: `${dominantHex}` },
-        { swatch: dominantHex, label: `rgbToHex(${dominant[0]}, ${dominant[1]}, ${dominant[2]})`, detail: dominantHex },
-      ];
-
-      for (const c of colorEntries) {
-        const row = document.createElement('div');
-        row.className = 'color-row';
-        row.innerHTML = `
-          <div class="color-swatch" style="background: ${c.swatch}"></div>
-          <div class="color-info">
-            <div class="color-label">${c.label}</div>
-            <div class="color-detail">${c.detail}</div>
-          </div>
-        `;
-        colorResults.appendChild(row);
-      }
-
-      // --- Timing / info ---
-
-      document.getElementById('t-init').textContent = `${tInit.toFixed(1)} ms`;
-      updateLayerCount();
-
-      // --- Layer tree display ---
-
-      const listEl = document.getElementById('layer-list');
-      function addLayerRow(info, depth) {
-        const li = document.createElement('li');
-        li.style.paddingLeft = `${depth * 20}px`;
-        li.innerHTML = `
-          <span class="layer-index">${info.id}</span>
-          <span class="layer-swatch" style="background: ${info.swatch}"></span>
-          <span class="layer-name">${info.name}</span>
-          <span class="layer-detail">${info.detail}</span>
-        `;
-        listEl.appendChild(li);
-        if (info.children) {
-          for (const child of info.children) {
-            addLayerRow(child, depth + 1);
-          }
-        }
-      }
-      for (const info of layerInfo) {
-        addLayerRow(info, 0);
-      }
-
-      // Show UI
-      statusEl.style.display = 'none';
-      document.getElementById('main-ui').style.display = '';
-
-    } catch (err) {
-      statusEl.classList.add('error');
-      statusEl.textContent = `Error: ${err.message}`;
-      console.error(err);
-    }
-  </script>
+  <script type="module" src="./demo.js"></script>
 </body>
 </html>
