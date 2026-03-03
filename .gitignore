@@ -6,6 +6,10 @@
 /js/kimg_wasm_simd.d.ts
 /js/kimg_wasm_bg.js
 /js/kimg_wasm_simd.js
+/js/kimg_wasm_text_bg.d.ts
+/js/kimg_wasm_text_simd.d.ts
+/js/kimg_wasm_text_bg.js
+/js/kimg_wasm_text_simd.js
 *.swp
 *.swo
 *.png

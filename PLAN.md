@@ -363,10 +363,10 @@ Exit criteria:
 
 ### Phase 3. WASM and JS font API
 
-- [ ] Add raw wasm font registration functions
-- [ ] Add JS `registerFont()`
-- [ ] Add JS text-style normalization
-- [ ] Add facade tests for text layer creation and updates
+- [x] Add raw wasm font registration functions
+- [x] Add JS `registerFont()`
+- [x] Add JS text-style normalization
+- [x] Add facade tests for text layer creation and updates
 
 Exit criteria:
 
@@ -374,12 +374,12 @@ Exit criteria:
 
 ### Phase 4. Browser Google Fonts integration
 
-- [ ] Add browser-only `loadGoogleFont()`
-- [ ] Fetch and parse CSS2 responses
-- [ ] Fetch font binaries
-- [ ] Decode `woff2` if required
-- [ ] Register fonts into wasm
-- [ ] Cache loaded Google Fonts per session
+- [x] Add browser-only `loadGoogleFont()`
+- [x] Fetch and parse CSS2 responses
+- [x] Fetch font binaries
+- [x] Decode `woff2` if required
+- [x] Register fonts into wasm
+- [x] Cache loaded Google Fonts per session
 
 Exit criteria:
 
@@ -388,9 +388,9 @@ Exit criteria:
 
 ### Phase 5. Demo and docs
 
-- [ ] Replace bitmap-text demo card with real-font cards
+- [x] Replace bitmap-text demo card with real-font cards
 - [ ] Add a Google Fonts demo card
-- [ ] Update README examples
+- [x] Update README examples
 - [ ] Document limitations clearly
 
 Exit criteria:

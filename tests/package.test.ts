@@ -1,22 +1,31 @@
 import { readFileSync } from "node:fs";
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import {
+  clearRegisteredFonts,
   Composition,
   decodeImage,
   detectFormat,
   hexToRgb,
+  loadGoogleFont,
   preload,
+  registerFont,
+  registeredFontCount,
   rgbToHex,
 } from "../dist/index.js";
 import {
   Composition as RawComposition,
   decode_image as rawDecodeImage,
   initSync,
+  initTextSync,
 } from "../dist/raw.js";
 
 const wasm = readFileSync(new URL("../dist/kimg_wasm_bg.wasm", import.meta.url));
+const textWasm = readFileSync(new URL("../dist/kimg_wasm_text_bg.wasm", import.meta.url));
+const INTER_KIMG_WOFF2 = Uint8Array.from(
+  readFileSync(new URL("./fixtures/inter-kimg.woff2", import.meta.url)),
+);
 
 async function initBindings() {
   initSync({ module: wasm });
@@ -142,6 +151,111 @@ describe("main package facade", () => {
     expect(await rgbToHex({ r: 255, g: 128, b: 0 })).toBe("#ff8000");
 
     composition.free();
+  });
+
+  test("registerFont accepts WOFF2 bytes and changes text rendering", async () => {
+    await clearRegisteredFonts();
+
+    const composition = await Composition.create({ width: 192, height: 64 });
+    composition.addTextLayer({
+      name: "headline",
+      text: "KIMG",
+      color: [17, 22, 32, 255],
+      fontFamily: "Inter",
+      fontSize: 28,
+      lineHeight: 32,
+      x: 0,
+      y: 12,
+    });
+
+    const before = Array.from(composition.renderRgba());
+    const loadedFaces = await registerFont({
+      bytes: INTER_KIMG_WOFF2,
+      family: "Inter",
+      style: "normal",
+      weight: 400,
+    });
+    const after = Array.from(composition.renderRgba());
+
+    expect(loadedFaces).toBeGreaterThan(0);
+    expect(await registeredFontCount()).toBeGreaterThan(0);
+    expect(after).not.toEqual(before);
+
+    composition.free();
+    await clearRegisteredFonts();
+    expect(await registeredFontCount()).toBe(0);
+  });
+
+  test("loadGoogleFont parses CSS2 and caches fetched font binaries", async () => {
+    initTextSync({ module: textWasm });
+
+    const originalFetch = globalThis.fetch;
+    const processDescriptor = Object.getOwnPropertyDescriptor(globalThis, "process");
+    const fontUrl =
+      "https://fonts.gstatic.com/l/font?kit=UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuLyfMZ1zifLJ0KI&skey=c491285d6722e4fa&v=v20";
+    const stylesheet = `@font-face {\n  font-family: 'Inter';\n  font-style: normal;\n  font-weight: 400;\n  font-display: swap;\n  src: url(${fontUrl}) format('woff2');\n}`;
+    const fetchMock = vi.fn(async (input, init) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.href : String(input);
+      if (url.startsWith("https://fonts.googleapis.com/css2?")) {
+        return new Response(stylesheet, {
+          headers: { "content-type": "text/css; charset=utf-8" },
+          status: 200,
+        });
+      }
+
+      if (url === fontUrl) {
+        return new Response(INTER_KIMG_WOFF2, {
+          headers: { "content-type": "font/woff2" },
+          status: 200,
+        });
+      }
+
+      return originalFetch(input as never, init);
+    });
+
+    await clearRegisteredFonts();
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+    Object.defineProperty(globalThis, "process", {
+      configurable: true,
+      value: undefined,
+    });
+
+    try {
+      const first = await loadGoogleFont({
+        family: "Inter",
+        text: "KIMG",
+        weights: [400],
+      });
+      const second = await loadGoogleFont({
+        family: "Inter",
+        text: "KIMG",
+        weights: [400],
+      });
+
+      expect(first.registeredFaces).toBeGreaterThan(0);
+      expect(first.faces).toEqual([
+        {
+          family: "Inter",
+          format: "woff2",
+          style: "normal",
+          url: fontUrl,
+          weight: 400,
+        },
+      ]);
+      expect(first.stylesheetUrl).toContain("fonts.googleapis.com/css2?");
+      expect(second).toEqual(first);
+      expect(await registeredFontCount()).toBeGreaterThan(0);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (processDescriptor === undefined) {
+        delete (globalThis as typeof globalThis & { process?: unknown }).process;
+      } else {
+        Object.defineProperty(globalThis, "process", processDescriptor);
+      }
+      await clearRegisteredFonts();
+    }
   });
 
   test("decodeImage strips raw wasm width and height prefix bytes", async () => {

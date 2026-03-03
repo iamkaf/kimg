@@ -11,7 +11,7 @@ categories = ["multimedia::images", "graphics", "wasm"]
 
 [features]
 default = []
-cosmic-text-backend = ["dep:cosmic-text"]
+cosmic-text-backend = ["dep:cosmic-text", "dep:wuff"]
 tiny-skia-shapes = ["dep:tiny-skia"]
 quantette-quantize = ["dep:quantette"]
 
@@ -30,6 +30,7 @@ postcard = { version = "1.1.3", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.228", features = ["derive"] }
 tiny-skia = { version = "0.12.0", default-features = false, features = ["std", "simd"], optional = true }
 quantette = { version = "0.5.1", default-features = false, features = ["std"], optional = true }
+wuff = { version = "0.2.3", default-features = false, features = ["brotli", "z"], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

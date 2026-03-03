@@ -5,7 +5,7 @@ Rust+WASM pixel engine for layer-based image compositing.
 ## Browser
 
 ```js
-import { Composition } from "@iamkaf/kimg";
+import { Composition, loadGoogleFont, registerFont } from "@iamkaf/kimg";
 
 const doc = await Composition.create({ width: 128, height: 128 });
 const layerId = doc.addImageLayer({
@@ -43,15 +43,29 @@ doc.addShapeLayer({
   stroke: { color: [255, 255, 255, 255], width: 2 },
 });
 
+await registerFont({
+  family: "Inter",
+  bytes: interFontBytes,
+  weight: 400,
+  style: "normal",
+});
+
 doc.addTextLayer({
   name: "title",
   text: "HELLO\nKIMG",
+  fontFamily: "Inter",
   color: [24, 77, 163, 255],
   fontSize: 24,
   lineHeight: 28,
   letterSpacing: 2,
   x: 20,
   y: 20,
+});
+
+await loadGoogleFont({
+  family: "Inter",
+  weights: [400, 700],
+  text: "HELLOKIMG",
 });
 ```
 

@@ -1,5 +1,6 @@
 import initRaw, {
   Composition as RawComposition,
+  clear_registered_fonts,
   contrast_ratio,
   decode_image,
   detect_format,
@@ -7,10 +8,14 @@ import initRaw, {
   extract_palette_from_rgba,
   hex_to_rgb,
   histogram_rgba,
+  initText as initTextRaw,
   quantize_rgba,
+  register_font,
+  registered_font_count,
   relative_luminance,
   rgb_to_hex,
   simdSupported,
+  textBackendActive,
 } from "./raw.js";
 import type { InitInput, InitOutput } from "./raw.js";
 
@@ -209,6 +214,38 @@ export interface TextLayerConfig {
   boxWidth?: number | null;
 }
 
+export interface RegisterFontOptions {
+  bytes: ByteInput;
+  family?: string;
+  weight?: number;
+  style?: TextFontStyle;
+}
+
+export type GoogleFontDisplay = "auto" | "block" | "fallback" | "optional" | "swap";
+
+export interface LoadGoogleFontOptions {
+  family: string;
+  weights?: ArrayLike<number>;
+  ital?: ArrayLike<number>;
+  display?: GoogleFontDisplay;
+  text?: string;
+}
+
+export interface LoadedGoogleFontFace {
+  family: string;
+  style: TextFontStyle;
+  weight: number;
+  url: string;
+  format: string | null;
+}
+
+export interface LoadedGoogleFontResult {
+  family: string;
+  registeredFaces: number;
+  faces: LoadedGoogleFontFace[];
+  stylesheetUrl: string;
+}
+
 export interface ExportJpegOptions {
   quality?: number;
 }
@@ -379,6 +416,10 @@ const GRADIENT_DIRECTION_TO_RAW = {
 };
 
 let preloadPromise: Promise<InitOutput> | null = null;
+let textPreloadPromise: Promise<InitOutput> | null = null;
+const liveCompositions = new Set<Composition>();
+const googleFontRequestCache = new Map<string, Promise<LoadedGoogleFontResult>>();
+const googleFontBinaryCache = new Map<string, Promise<number>>();
 
 function isNodeRuntime() {
   const runtime = globalThis as typeof globalThis & {
@@ -579,6 +620,199 @@ function normalizeFontWeight(value, fieldName) {
     throw new RangeError(`${fieldName} must be less than or equal to 1000.`);
   }
   return normalized;
+}
+
+function normalizeGoogleFontDisplay(value, fieldName): GoogleFontDisplay {
+  const normalized = normalizeString(value, fieldName);
+  switch (normalized) {
+    case "auto":
+    case "block":
+    case "fallback":
+    case "optional":
+    case "swap":
+      return normalized;
+    default:
+      throw new TypeError(
+        `${fieldName} must be "auto", "block", "fallback", "optional", or "swap".`,
+      );
+  }
+}
+
+function normalizeGoogleFontFlagArray(
+  value: ArrayLike<number> | undefined,
+  fieldName: string,
+  defaults: number[],
+  allowed: number[],
+): number[] {
+  if (value === undefined) {
+    return defaults;
+  }
+
+  if (
+    !(Array.isArray(value) || (typeof value === "object" && value !== null && "length" in value))
+  ) {
+    throw new TypeError(`${fieldName} must be an array-like collection of numbers.`);
+  }
+
+  const normalized = Array.from(
+    new Set(
+      Array.from(value, (entry, index) => {
+        const parsed = normalizeInteger(entry, `${fieldName}[${index}]`);
+        if (!allowed.includes(parsed)) {
+          throw new RangeError(`${fieldName}[${index}] must be one of ${allowed.join(", ")}.`);
+        }
+        return parsed;
+      }),
+    ),
+  ).sort((a, b) => a - b);
+
+  if (normalized.length === 0) {
+    throw new TypeError(`${fieldName} must contain at least one entry.`);
+  }
+
+  return normalized;
+}
+
+function normalizeGoogleFontWeights(
+  value: ArrayLike<number> | undefined,
+  fieldName: string,
+): number[] {
+  if (value === undefined) {
+    return [400];
+  }
+
+  if (
+    !(Array.isArray(value) || (typeof value === "object" && value !== null && "length" in value))
+  ) {
+    throw new TypeError(`${fieldName} must be an array-like collection of weights.`);
+  }
+
+  const normalized = Array.from(
+    new Set(
+      Array.from(value, (entry, index) => {
+        const parsed = normalizeFontWeight(entry, `${fieldName}[${index}]`);
+        return parsed;
+      }),
+    ),
+  ).sort((a, b) => a - b);
+
+  if (normalized.length === 0) {
+    throw new TypeError(`${fieldName} must contain at least one weight.`);
+  }
+
+  return normalized;
+}
+
+function normalizeRegisterFontOptions(options): RegisterFontOptions & { bytes: Uint8Array } {
+  const object = requireObject(options, "registerFont");
+  const normalized: RegisterFontOptions & { bytes: Uint8Array } = {
+    bytes: normalizeByteInput(object.bytes, "registerFont.bytes"),
+  };
+
+  if ("family" in object && object.family !== undefined) {
+    normalized.family = normalizeString(object.family, "registerFont.family");
+  }
+  if ("weight" in object && object.weight !== undefined) {
+    normalized.weight = normalizeFontWeight(object.weight, "registerFont.weight");
+  }
+  if ("style" in object && object.style !== undefined) {
+    normalized.style = normalizeTextFontStyle(object.style, "registerFont.style");
+  }
+
+  return normalized;
+}
+
+function normalizeLoadGoogleFontOptions(options): Required<LoadGoogleFontOptions> & {
+  ital: number[];
+  weights: number[];
+} {
+  const object = requireObject(options, "loadGoogleFont");
+
+  return {
+    display: normalizeGoogleFontDisplay(object.display ?? "swap", "loadGoogleFont.display"),
+    family: normalizeString(object.family, "loadGoogleFont.family"),
+    ital: normalizeGoogleFontFlagArray(object.ital, "loadGoogleFont.ital", [0], [0, 1]),
+    text: object.text === undefined ? "" : normalizeString(object.text, "loadGoogleFont.text"),
+    weights: normalizeGoogleFontWeights(object.weights, "loadGoogleFont.weights"),
+  };
+}
+
+function buildGoogleFontsStylesheetUrl(
+  options: Required<LoadGoogleFontOptions> & {
+    ital: number[];
+    weights: number[];
+  },
+): string {
+  const params = new URLSearchParams();
+  const familyName = options.family.trim().replace(/\s+/g, " ");
+  const pairTokens: string[] = [];
+
+  if (options.ital.length === 1 && options.ital[0] === 0) {
+    params.set("family", `${familyName}:wght@${options.weights.join(";")}`);
+  } else {
+    for (const ital of options.ital) {
+      for (const weight of options.weights) {
+        pairTokens.push(`${ital},${weight}`);
+      }
+    }
+    params.set("family", `${familyName}:ital,wght@${pairTokens.join(";")}`);
+  }
+
+  params.set("display", options.display);
+  if (options.text.length > 0) {
+    params.set("text", options.text);
+  }
+
+  return `https://fonts.googleapis.com/css2?${params.toString()}`;
+}
+
+function parseCssFontString(value: string): string {
+  const normalized = value.trim();
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"')) ||
+    (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    return normalized.slice(1, -1);
+  }
+  return normalized;
+}
+
+function extractCssProperty(block: string, name: string): string | null {
+  const pattern = new RegExp(`${name}\\s*:\\s*([^;]+);`, "i");
+  const match = block.match(pattern);
+  return match ? match[1].trim() : null;
+}
+
+function parseGoogleFontsStylesheet(css: string): LoadedGoogleFontFace[] {
+  const blocks = css.match(/@font-face\s*\{[^}]*\}/g) ?? [];
+  const faces: LoadedGoogleFontFace[] = [];
+
+  for (const block of blocks) {
+    const family = extractCssProperty(block, "font-family");
+    const style = extractCssProperty(block, "font-style");
+    const weight = extractCssProperty(block, "font-weight");
+    const src = extractCssProperty(block, "src");
+
+    if (family === null || style === null || weight === null || src === null) {
+      continue;
+    }
+
+    const urlMatch = src.match(/url\(([^)]+)\)/i);
+    if (urlMatch === null) {
+      continue;
+    }
+
+    const formatMatch = src.match(/format\(([^)]+)\)/i);
+    faces.push({
+      family: parseCssFontString(family),
+      format: formatMatch ? parseCssFontString(formatMatch[1]) : null,
+      style: normalizeTextFontStyle(parseCssFontString(style), "google font style"),
+      url: parseCssFontString(urlMatch[1]),
+      weight: normalizeFontWeight(Number.parseInt(weight, 10), "google font weight"),
+    });
+  }
+
+  return faces;
 }
 
 function normalizeGradientDirection(direction) {
@@ -925,7 +1159,9 @@ function normalizeTextConfigPatch(config, what): TextLayerConfig {
   }
   if ("boxWidth" in object && object.boxWidth !== undefined) {
     normalized.boxWidth =
-      object.boxWidth === null ? null : normalizePositiveInteger(object.boxWidth, `${what}.boxWidth`);
+      object.boxWidth === null
+        ? null
+        : normalizePositiveInteger(object.boxWidth, `${what}.boxWidth`);
   }
 
   return normalized;
@@ -1021,20 +1257,81 @@ function normalizeLayerIdArray(ids, fieldName) {
   throw new TypeError(`${fieldName} must be a Uint32Array or array-like collection of layer ids.`);
 }
 
-async function getDefaultInitInput(): Promise<Uint8Array | undefined> {
+async function getDefaultInitInput(textBackend = false): Promise<Uint8Array | undefined> {
   if (!isNodeRuntime()) {
     return undefined;
   }
 
   // @ts-ignore Node built-in typing is only available in Node environments.
   const { readFile } = await import("node:fs/promises");
-  const wasmName = simdSupported() ? "kimg_wasm_simd_bg.wasm" : "kimg_wasm_bg.wasm";
+  const wasmName = textBackend
+    ? simdSupported()
+      ? "kimg_wasm_text_simd_bg.wasm"
+      : "kimg_wasm_text_bg.wasm"
+    : simdSupported()
+      ? "kimg_wasm_simd_bg.wasm"
+      : "kimg_wasm_bg.wasm";
   return readFile(new URL(`./${wasmName}`, import.meta.url));
 }
 
 async function withPreload<T>(fn: () => T): Promise<T> {
   await preload();
   return fn();
+}
+
+async function preloadText(
+  module_or_path?:
+    | { module_or_path: InitInput | Promise<InitInput> }
+    | InitInput
+    | Promise<InitInput>,
+): Promise<InitOutput> {
+  if (textPreloadPromise !== null) {
+    return textPreloadPromise;
+  }
+
+  textPreloadPromise = (async () => {
+    if (module_or_path !== undefined) {
+      return initTextRaw(module_or_path);
+    }
+
+    const defaultInput = await getDefaultInitInput(true);
+    if (defaultInput !== undefined) {
+      return initTextRaw({ module_or_path: defaultInput });
+    }
+
+    return initTextRaw();
+  })().catch((error) => {
+    textPreloadPromise = null;
+    throw error;
+  });
+
+  preloadPromise = textPreloadPromise;
+  return textPreloadPromise;
+}
+
+function upgradeCompositionToTextBackend(composition: Composition): void {
+  const serialized = composition._inner.serialize();
+  composition._inner.free();
+  composition._inner = RawComposition.deserialize(serialized);
+  composition._backendKind = textBackendActive() ? "text" : "base";
+}
+
+function refreshLiveCompositions(): void {
+  for (const composition of liveCompositions) {
+    upgradeCompositionToTextBackend(composition);
+  }
+}
+
+async function ensureTextBackendReady(): Promise<void> {
+  if (!textBackendActive()) {
+    await preloadText();
+  }
+
+  for (const composition of liveCompositions) {
+    if (composition._backendKind !== "text") {
+      upgradeCompositionToTextBackend(composition);
+    }
+  }
 }
 
 export function preload(
@@ -1054,11 +1351,15 @@ export async function preload(
   }
 
   preloadPromise = (async () => {
+    if (isNodeRuntime() && module_or_path === undefined) {
+      return preloadText();
+    }
+
     if (module_or_path !== undefined) {
       return initRaw(module_or_path);
     }
 
-    const defaultInput = await getDefaultInitInput();
+    const defaultInput = await getDefaultInitInput(false);
     if (defaultInput !== undefined) {
       return initRaw({ module_or_path: defaultInput });
     }
@@ -1070,6 +1371,118 @@ export async function preload(
   });
 
   return preloadPromise;
+}
+
+export async function registerFont(options: RegisterFontOptions): Promise<number> {
+  const normalized = normalizeRegisterFontOptions(options);
+  await ensureTextBackendReady();
+  const loadedFaces = register_font(normalized.bytes);
+
+  if (loadedFaces === 0) {
+    const familyHint = normalized.family ? ` for ${normalized.family}` : "";
+    throw new Error(`registerFont could not parse any usable font faces${familyHint}.`);
+  }
+
+  refreshLiveCompositions();
+  return loadedFaces;
+}
+
+export async function clearRegisteredFonts(): Promise<void> {
+  googleFontRequestCache.clear();
+  googleFontBinaryCache.clear();
+
+  if (!textBackendActive() && textPreloadPromise === null && !isNodeRuntime()) {
+    return;
+  }
+
+  await ensureTextBackendReady();
+  clear_registered_fonts();
+  refreshLiveCompositions();
+}
+
+export async function registeredFontCount(): Promise<number> {
+  if (!textBackendActive() && textPreloadPromise === null && !isNodeRuntime()) {
+    return 0;
+  }
+
+  await ensureTextBackendReady();
+  return registered_font_count();
+}
+
+export async function loadGoogleFont(
+  options: LoadGoogleFontOptions,
+): Promise<LoadedGoogleFontResult> {
+  if (isNodeRuntime()) {
+    throw new Error("loadGoogleFont() is browser-only. Use registerFont() with raw bytes on Node.");
+  }
+
+  const normalized = normalizeLoadGoogleFontOptions(options);
+  const stylesheetUrl = buildGoogleFontsStylesheetUrl(normalized);
+
+  const cacheKey = JSON.stringify({
+    display: normalized.display,
+    family: normalized.family,
+    ital: normalized.ital,
+    text: normalized.text,
+    weights: normalized.weights,
+  });
+  const cached = googleFontRequestCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const request = (async () => {
+    await ensureTextBackendReady();
+
+    const stylesheetResponse = await fetch(stylesheetUrl);
+    if (!stylesheetResponse.ok) {
+      throw new Error(`Google Fonts stylesheet request failed: ${stylesheetResponse.status}`);
+    }
+
+    const css = await stylesheetResponse.text();
+    const faces = parseGoogleFontsStylesheet(css);
+    if (faces.length === 0) {
+      throw new Error("Google Fonts stylesheet did not contain any usable @font-face rules.");
+    }
+
+    let registeredFaces = 0;
+    for (const face of faces) {
+      let fontLoad = googleFontBinaryCache.get(face.url);
+      if (fontLoad === undefined) {
+        fontLoad = (async () => {
+          const fontResponse = await fetch(face.url);
+          if (!fontResponse.ok) {
+            throw new Error(
+              `Google Fonts font request failed: ${fontResponse.status} for ${face.url}`,
+            );
+          }
+
+          return registerFont({
+            bytes: new Uint8Array(await fontResponse.arrayBuffer()),
+            family: face.family,
+            style: face.style,
+            weight: face.weight,
+          });
+        })();
+        googleFontBinaryCache.set(face.url, fontLoad);
+      }
+
+      registeredFaces += await fontLoad;
+    }
+
+    return {
+      faces,
+      family: normalized.family,
+      registeredFaces,
+      stylesheetUrl,
+    };
+  })().catch((error) => {
+    googleFontRequestCache.delete(cacheKey);
+    throw error;
+  });
+
+  googleFontRequestCache.set(cacheKey, request);
+  return request;
 }
 
 export interface Composition {
@@ -1166,13 +1579,14 @@ export interface Composition {
 }
 
 export class Composition {
-  readonly _inner!: RawComposition;
+  _inner!: RawComposition;
+  _backendKind!: "base" | "text";
 
   static #fromInner(inner: RawComposition) {
-    return new Composition(inner, PRIVATE_CONSTRUCTOR_TOKEN);
+    return new Composition(inner, PRIVATE_CONSTRUCTOR_TOKEN, textBackendActive() ? "text" : "base");
   }
 
-  private constructor(inner: RawComposition, token: symbol) {
+  private constructor(inner: RawComposition, token: symbol, backendKind: "base" | "text") {
     if (token !== PRIVATE_CONSTRUCTOR_TOKEN) {
       throw new TypeError("Use await Composition.create(...) instead of new Composition(...).");
     }
@@ -1181,8 +1595,16 @@ export class Composition {
       configurable: false,
       enumerable: false,
       value: inner,
-      writable: false,
+      writable: true,
     });
+    Object.defineProperty(this, "_backendKind", {
+      configurable: false,
+      enumerable: false,
+      value: backendKind,
+      writable: true,
+    });
+
+    liveCompositions.add(this);
   }
 
   static async create(width: number, height: number): Promise<Composition>;
@@ -1210,6 +1632,7 @@ export class Composition {
   }
 
   free(): void {
+    liveCompositions.delete(this);
     return this._inner.free();
   }
 
@@ -1333,26 +1756,26 @@ export class Composition {
     const textId =
       layer.parentId !== undefined
         ? this._inner.add_text_to_group(
-        normalizeLayerId(layer.parentId, "addTextLayer.parentId"),
-        layer.name,
-        layer.text,
-        layer.fontSize,
-        layer.lineHeight,
-        layer.letterSpacing,
-        layer.color,
-        layer.x,
-        layer.y,
-      )
+            normalizeLayerId(layer.parentId, "addTextLayer.parentId"),
+            layer.name,
+            layer.text,
+            layer.fontSize,
+            layer.lineHeight,
+            layer.letterSpacing,
+            layer.color,
+            layer.x,
+            layer.y,
+          )
         : this._inner.add_text_layer(
-        layer.name,
-        layer.text,
-        layer.fontSize,
-        layer.lineHeight,
-        layer.letterSpacing,
-        layer.color,
-        layer.x,
-        layer.y,
-      );
+            layer.name,
+            layer.text,
+            layer.fontSize,
+            layer.lineHeight,
+            layer.letterSpacing,
+            layer.color,
+            layer.x,
+            layer.y,
+          );
 
     if (
       layer.fontFamily !== "sans-serif" ||

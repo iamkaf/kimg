@@ -13,19 +13,32 @@ use crate::layer::{TextAlign, TextLayerData, TextWrap};
 use crate::pixel::Rgba;
 #[cfg(feature = "cosmic-text-backend")]
 use cosmic_text::{
-    fontdb::Source, Align as CosmicAlign, Attrs, Buffer, Color as CosmicColor, Family, FontSystem,
-    Metrics, Shaping, Style as CosmicStyle, SwashCache, Weight as CosmicWeight, Wrap as CosmicWrap,
+    fontdb::{
+        Database, Query, Source, Stretch as FontStretch, Style as FontDbStyle,
+        Weight as FontDbWeight,
+    },
+    Align as CosmicAlign, Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics,
+    Shaping, Style as CosmicStyle, SwashCache, Weight as CosmicWeight, Wrap as CosmicWrap,
 };
 use font8x8::{UnicodeFonts, MISC_FONTS};
 use font8x8::{BASIC_FONTS, BLOCK_FONTS, BOX_FONTS, GREEK_FONTS, HIRAGANA_FONTS, LATIN_FONTS};
 #[cfg(feature = "cosmic-text-backend")]
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(feature = "cosmic-text-backend")]
+use wuff::{decompress_woff1, decompress_woff2};
 
 const GLYPH_WIDTH: u32 = 8;
 const GLYPH_HEIGHT: u32 = 8;
 
 #[cfg(feature = "cosmic-text-backend")]
-static REGISTERED_FONTS: OnceLock<Mutex<Vec<Arc<Vec<u8>>>>> = OnceLock::new();
+static REGISTERED_FONTS: OnceLock<Mutex<Vec<RegisteredFont>>> = OnceLock::new();
+
+#[cfg(feature = "cosmic-text-backend")]
+#[derive(Clone)]
+struct RegisteredFont {
+    bytes: Arc<Vec<u8>>,
+    families: Vec<String>,
+}
 
 fn pixel_scale(font_size: u32) -> u32 {
     font_size.max(1).div_ceil(GLYPH_HEIGHT).max(1)
@@ -52,8 +65,21 @@ fn fallback_glyph() -> [u8; 8] {
 }
 
 #[cfg(feature = "cosmic-text-backend")]
-fn registered_fonts() -> &'static Mutex<Vec<Arc<Vec<u8>>>> {
+fn registered_fonts() -> &'static Mutex<Vec<RegisteredFont>> {
     REGISTERED_FONTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[cfg(feature = "cosmic-text-backend")]
+fn decode_runtime_font_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
+    if bytes.starts_with(b"wOF2") {
+        return decompress_woff2(&bytes).ok();
+    }
+
+    if bytes.starts_with(b"wOFF") {
+        return decompress_woff1(&bytes).ok();
+    }
+
+    Some(bytes)
 }
 
 /// Register raw font bytes for the `cosmic-text` backend.
@@ -62,19 +88,34 @@ fn registered_fonts() -> &'static Mutex<Vec<Arc<Vec<u8>>>> {
 /// unsupported font data returns `0` and is not retained.
 #[cfg(feature = "cosmic-text-backend")]
 pub fn register_font_bytes(bytes: Vec<u8>) -> usize {
-    let bytes = Arc::new(bytes);
-    let mut font_system = FontSystem::new();
-    let ids = font_system
-        .db_mut()
-        .load_font_source(Source::Binary(bytes.clone()));
+    let bytes = match decode_runtime_font_bytes(bytes) {
+        Some(bytes) => Arc::new(bytes),
+        None => return 0,
+    };
+    let mut db = Database::new();
+    let ids = db.load_font_source(Source::Binary(bytes.clone()));
     if ids.is_empty() {
         return 0;
+    }
+
+    let mut families: Vec<String> = Vec::new();
+    for id in &ids {
+        if let Some(face) = db.face(*id) {
+            for (family, _) in &face.families {
+                if !families
+                    .iter()
+                    .any(|known| known.eq_ignore_ascii_case(family))
+                {
+                    families.push(family.clone());
+                }
+            }
+        }
     }
 
     registered_fonts()
         .lock()
         .expect("font registry poisoned")
-        .push(bytes);
+        .push(RegisteredFont { bytes, families });
     ids.len()
 }
 
@@ -98,15 +139,101 @@ pub fn registered_font_count() -> usize {
 
 #[cfg(feature = "cosmic-text-backend")]
 fn build_font_system() -> FontSystem {
-    let mut font_system = FontSystem::new();
+    let mut db = Database::new();
+    db.load_system_fonts();
     let fonts = registered_fonts()
         .lock()
         .expect("font registry poisoned")
         .clone();
-    for bytes in fonts {
-        font_system.db_mut().load_font_source(Source::Binary(bytes));
+    let mut primary_family = None::<String>;
+    for font in fonts {
+        if primary_family.is_none() {
+            primary_family = font.families.first().cloned();
+        }
+        db.load_font_source(Source::Binary(font.bytes));
     }
+    if let Some(primary_family) = primary_family {
+        db.set_sans_serif_family(primary_family.clone());
+        db.set_serif_family(primary_family.clone());
+        db.set_monospace_family(primary_family);
+    }
+    FontSystem::new_with_locale_and_db("en-US".to_string(), db)
+}
+
+#[cfg(feature = "cosmic-text-backend")]
+fn resolve_registered_family(font_family: &str) -> Option<String> {
+    let fonts = registered_fonts()
+        .lock()
+        .expect("font registry poisoned")
+        .clone();
+    let mut families: Vec<String> = Vec::new();
+    for font in fonts {
+        for family in font.families {
+            if !families
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(&family))
+            {
+                families.push(family);
+            }
+        }
+    }
+
+    if let Some(found) = families
+        .iter()
+        .find(|family| family.eq_ignore_ascii_case(font_family))
+    {
+        return Some(found.clone());
+    }
+
+    families.into_iter().next()
+}
+
+#[cfg(all(feature = "cosmic-text-backend", test))]
+fn registered_family_names() -> Vec<String> {
+    let fonts = registered_fonts()
+        .lock()
+        .expect("font registry poisoned")
+        .clone();
+    let mut families: Vec<String> = Vec::new();
+    for font in fonts {
+        for family in font.families {
+            if !families
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(&family))
+            {
+                families.push(family);
+            }
+        }
+    }
+    families
+}
+
+#[cfg(feature = "cosmic-text-backend")]
+fn text_font_style_to_fontdb(style: TextFontStyle) -> FontDbStyle {
+    match style {
+        TextFontStyle::Normal => FontDbStyle::Normal,
+        TextFontStyle::Italic => FontDbStyle::Italic,
+        TextFontStyle::Oblique => FontDbStyle::Oblique,
+    }
+}
+
+#[cfg(feature = "cosmic-text-backend")]
+fn has_cosmic_font_match(
+    font_system: &FontSystem,
+    family_name: &str,
+    weight: u16,
+    style: TextFontStyle,
+) -> bool {
+    let families = [text_family_to_cosmic(family_name)];
     font_system
+        .db()
+        .query(&Query {
+            families: &families,
+            weight: FontDbWeight(weight),
+            stretch: FontStretch::Normal,
+            style: text_font_style_to_fontdb(style),
+        })
+        .is_some()
 }
 
 fn glyph_width_for_line(line: &str, glyph_w: u32, spacing_x: u32) -> u32 {
@@ -298,6 +425,16 @@ fn draw_glyph(
 #[cfg(feature = "cosmic-text-backend")]
 fn measure_text_cosmic(text: &TextLayerData) -> Option<(u32, u32)> {
     let mut font_system = build_font_system();
+    let family_name =
+        resolve_registered_family(&text.font_family).unwrap_or_else(|| text.font_family.clone());
+    if !has_cosmic_font_match(
+        &font_system,
+        &family_name,
+        text.font_weight.max(1),
+        text.font_style,
+    ) {
+        return None;
+    }
     let metrics = Metrics::new(text.font_size as f32, text.line_height as f32);
     let mut buffer = Buffer::new(&mut font_system, metrics);
     let mut buffer = buffer.borrow_with(&mut font_system);
@@ -305,7 +442,7 @@ fn measure_text_cosmic(text: &TextLayerData) -> Option<(u32, u32)> {
     buffer.set_size(text.box_width.map(|width| width as f32), None);
 
     let mut attrs = Attrs::new()
-        .family(text_family_to_cosmic(&text.font_family))
+        .family(text_family_to_cosmic(&family_name))
         .weight(CosmicWeight(text.font_weight.max(1)))
         .style(text_font_style_to_cosmic(text.font_style));
     if text.letter_spacing > 0 {
@@ -345,8 +482,18 @@ fn measure_text_cosmic(text: &TextLayerData) -> Option<(u32, u32)> {
 
 #[cfg(feature = "cosmic-text-backend")]
 fn render_text_cosmic(text: &TextLayerData) -> Option<ImageBuffer> {
-    let (measure_width, measure_height) = measure_text_cosmic(text)?;
     let mut font_system = build_font_system();
+    let family_name =
+        resolve_registered_family(&text.font_family).unwrap_or_else(|| text.font_family.clone());
+    if !has_cosmic_font_match(
+        &font_system,
+        &family_name,
+        text.font_weight.max(1),
+        text.font_style,
+    ) {
+        return None;
+    }
+    let (measure_width, measure_height) = measure_text_cosmic(text)?;
     let metrics = Metrics::new(text.font_size as f32, text.line_height as f32);
     let mut buffer = Buffer::new(&mut font_system, metrics);
     let mut buffer = buffer.borrow_with(&mut font_system);
@@ -354,7 +501,7 @@ fn render_text_cosmic(text: &TextLayerData) -> Option<ImageBuffer> {
     buffer.set_size(text.box_width.map(|width| width as f32), None);
 
     let mut attrs = Attrs::new()
-        .family(text_family_to_cosmic(&text.font_family))
+        .family(text_family_to_cosmic(&family_name))
         .weight(CosmicWeight(text.font_weight.max(1)))
         .style(text_font_style_to_cosmic(text.font_style));
     if text.letter_spacing > 0 {
@@ -484,5 +631,16 @@ mod tests {
         clear_registered_fonts();
         assert_eq!(register_font_bytes(vec![1, 2, 3, 4]), 0);
         assert_eq!(registered_font_count(), 0);
+    }
+
+    #[cfg(feature = "cosmic-text-backend")]
+    #[test]
+    fn google_subset_font_reports_family_names() {
+        clear_registered_fonts();
+        let bytes = include_bytes!("../../../tests/fixtures/inter-kimg.woff2");
+        assert!(register_font_bytes(bytes.to_vec()) > 0);
+        let families = registered_family_names();
+        println!("registered families: {families:?}");
+        assert!(!families.is_empty());
     }
 }

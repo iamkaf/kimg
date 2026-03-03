@@ -8,6 +8,7 @@ import preload, {
   hexToRgb,
   histogramRgba,
   quantizeRgba,
+  registerFont,
   relativeLuminance,
   rgbToHex,
   simdSupported,
@@ -64,7 +65,7 @@ const SECTION_INFO = {
   text: {
     chip: "Text",
     description:
-      "Bitmap text layers rendered through the public API. Layout, multiline content, tracking, color, and transform updates should all stay visually obvious.",
+      "Registered real-font text layers rendered through the public API. Registration, multiline layout, tracking, color, and transform updates should all stay visually obvious.",
     title: "Text Layer Surface",
   },
   io: {
@@ -839,17 +840,43 @@ function createTests() {
     },
     {
       expectation:
-        "Uppercase bitmap text should render crisply, multiline layout should stack cleanly, and the rotated blue block should pivot around its center with wider tracking.",
+        "The first sheet should show tracked headline text plus centered rotation. The second sheet should make weight, italic style, and left/center/right alignment obvious with wrapped cupcake ipsum.",
       featured: true,
       fullSpan: true,
       previewMin: 250,
       section: "text",
-      title: "Bitmap Text Layers",
-      async run() {
+      title: "Registered Font Text Layers",
+      async run(context) {
         const verify = createVerifier();
         const composition = await Composition.create({ width: 320, height: 168 });
+        const styleComposition = await Composition.create({ width: 320, height: 176 });
 
         try {
+          const loadedFaces =
+            (await registerFont({
+              bytes: context.interFontWoff2,
+              family: "Inter",
+              style: "normal",
+              weight: 400,
+            })) +
+            (await registerFont({
+              bytes: context.interCupcakeRegularWoff2,
+              family: "Inter",
+              style: "normal",
+              weight: 400,
+            })) +
+            (await registerFont({
+              bytes: context.interCupcakeBoldWoff2,
+              family: "Inter",
+              style: "normal",
+              weight: 700,
+            })) +
+            (await registerFont({
+              bytes: context.interCupcakeItalicWoff2,
+              family: "Inter",
+              style: "italic",
+              weight: 400,
+            }));
           composition.addSolidColorLayer({ color: [247, 241, 232, 255], name: "paper" });
           composition.addShapeLayer({
             fill: [228, 113, 76, 28],
@@ -900,28 +927,119 @@ function createTests() {
           const badge = composition.getLayer(badgeId);
           const render = composition.renderRgba();
 
+          styleComposition.addSolidColorLayer({ color: [247, 241, 232, 255], name: "paper" });
+          const cupcakeText = "Cupcake ipsum\ndolor sit amet\nfrosting";
+          const panelSpecs = [
+            {
+              align: "left",
+              color: [201, 73, 45, 255],
+              fontStyle: "normal",
+              fontWeight: 400,
+              label: "left / 400",
+              x: 16,
+            },
+            {
+              align: "center",
+              color: [35, 79, 221, 255],
+              fontStyle: "normal",
+              fontWeight: 700,
+              label: "center / 700",
+              x: 116,
+            },
+            {
+              align: "right",
+              color: [24, 119, 92, 255],
+              fontStyle: "italic",
+              fontWeight: 400,
+              label: "right / italic",
+              x: 216,
+            },
+          ];
+
+          const styleLayerIds = [];
+          for (const spec of panelSpecs) {
+            styleComposition.addShapeLayer({
+              fill: [0, 0, 0, 0],
+              height: 136,
+              name: `${spec.label}-panel`,
+              stroke: { color: [120, 112, 101, 90], width: 2 },
+              type: "roundedRect",
+              width: 88,
+              x: spec.x,
+              y: 16,
+            });
+            styleLayerIds.push(
+              styleComposition.addTextLayer({
+                align: spec.align,
+                boxWidth: 72,
+                color: spec.color,
+                fontFamily: "Inter",
+                fontSize: 16,
+                fontStyle: spec.fontStyle,
+                fontWeight: spec.fontWeight,
+                lineHeight: 22,
+                name: spec.label,
+                text: cupcakeText,
+                wrap: "word",
+                x: spec.x + 8,
+                y: 28,
+              }),
+            );
+          }
+
+          const styleLayers = styleComposition.listLayers();
+          const styleRender = styleComposition.renderRgba();
+          const [leftText, centerText, rightText] = styleLayerIds.map((id) => styleComposition.getLayer(id));
+
           verify.equal(
             layers.filter((layer) => layer.kind === "text").length,
             2,
             "expected two text layers in metadata",
           );
+          verify.ok(loadedFaces > 0, "registerFont should load at least one usable face");
           verify.equal(headline?.text, "HELLO", "headline text should stay readable in metadata");
           verify.equal(badge?.anchor, "center", "rotated text should switch to center anchor");
           verify.equal(badge?.letterSpacing, 2, "textConfig update should widen tracking");
+          verify.equal(
+            styleLayers.filter((layer) => layer.kind === "text").length,
+            3,
+            "expected three styled text layers in the second composition",
+          );
+          verify.equal(leftText?.align, "left", "left panel should keep left alignment");
+          verify.equal(centerText?.fontWeight, 700, "center panel should use heavier weight");
+          verify.equal(rightText?.fontStyle, "italic", "right panel should keep italic style");
           verify.ok(render.some((value) => value !== 0), "text composition should render non-empty pixels");
+          verify.ok(styleRender.some((value) => value !== 0), "styled text composition should render non-empty pixels");
 
           return {
             assertions: verify.count,
             metrics: [
-              ["Text layers", layers.filter((layer) => layer.kind === "text").length],
+              [
+                "Text layers",
+                `${
+                  layers.filter((layer) => layer.kind === "text").length +
+                  styleLayers.filter((layer) => layer.kind === "text").length
+                }`,
+              ],
+              ["Registered faces", loadedFaces],
               ["headline size", headline?.fontSize ?? "n/a"],
               ["badge tracking", badge?.letterSpacing ?? "n/a"],
               ["badge rotation", badge?.rotation?.toFixed(1) ?? "n/a"],
+              ["styled columns", `${leftText?.align} / ${centerText?.fontWeight} / ${rightText?.fontStyle}`],
             ],
-            views: [rgbaView("Text composition", render, composition.width, composition.height)],
+            views: [
+              rgbaView("Transform and tracking", render, composition.width, composition.height),
+              rgbaView(
+                "Weight, italics, and alignment",
+                styleRender,
+                styleComposition.width,
+                styleComposition.height,
+              ),
+            ],
           };
         } finally {
           composition.free();
+          styleComposition.free();
         }
       },
     },
@@ -1211,6 +1329,10 @@ async function buildContext() {
   const glyph = createGlyphFixture();
   const borderedGlyph = createBorderedFixture(glyph);
   const clipPattern = createClipPatternFixture();
+  const interCupcakeBoldWoff2 = await loadBinaryFixture("../tests/fixtures/inter-cupcake-bold.woff2");
+  const interCupcakeItalicWoff2 = await loadBinaryFixture("../tests/fixtures/inter-cupcake-italic.woff2");
+  const interCupcakeRegularWoff2 = await loadBinaryFixture("../tests/fixtures/inter-cupcake-regular.woff2");
+  const interFontWoff2 = await loadBinaryFixture("../tests/fixtures/inter-kimg.woff2");
   const utilityTile = createUtilityTile();
 
   return {
@@ -1219,6 +1341,10 @@ async function buildContext() {
     filterFixture,
     fixture,
     glyph,
+    interCupcakeBoldWoff2,
+    interCupcakeItalicWoff2,
+    interCupcakeRegularWoff2,
+    interFontWoff2,
     runtime: {
       simd: simdSupported(),
     },
@@ -2833,6 +2959,15 @@ function fixtureFromCanvas(canvas) {
     rgba: new Uint8Array(imageData.data),
     width: canvas.width,
   };
+}
+
+async function loadBinaryFixture(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to load ${url}: ${response.status}`);
+  }
+
+  return new Uint8Array(await response.arrayBuffer());
 }
 
 async function loadTeapotFixture(url, maxEdge) {

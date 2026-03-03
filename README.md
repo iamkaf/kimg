@@ -106,9 +106,17 @@ const badgeId = doc.addShapeLayer({
 ### Text layers
 
 ```js
+await registerFont({
+  family: "Inter",
+  bytes: interFontBytes,
+  weight: 400,
+  style: "normal",
+});
+
 const titleId = doc.addTextLayer({
   name: "Title",
   text: "HELLO\nKIMG",
+  fontFamily: "Inter",
   color: [24, 77, 163, 255],
   fontSize: 24,
   lineHeight: 28,
@@ -124,6 +132,16 @@ doc.updateLayer(titleId, {
     text: "HELLO\nTEXT",
     color: [201, 73, 45, 255],
   },
+});
+```
+
+Browser Google Fonts helper:
+
+```js
+await loadGoogleFont({
+  family: "Inter",
+  weights: [400, 700],
+  text: "HELLOKIMGTEXT",
 });
 ```
 
@@ -238,10 +256,12 @@ cargo install wasm-bindgen-cli
 
 Output goes to `dist/`. The demo page at `demo/index.html` loads from there.
 
-The build emits two wasm binaries:
+The build emits four wasm binaries:
 
 - `kimg_wasm_bg.wasm` for the baseline target
 - `kimg_wasm_simd_bg.wasm` for runtimes with `wasm32` SIMD (`simd128`)
+- `kimg_wasm_text_bg.wasm` for the text-enabled baseline target
+- `kimg_wasm_text_simd_bg.wasm` for text-enabled runtimes with `wasm32` SIMD (`simd128`)
 
 ## Running tests
 
@@ -296,7 +316,7 @@ The benchmarks cover:
 | `transform` | Nearest, bilinear, and Lanczos3 resize; crop; trim; arbitrary rotation |
 | `convolution` | 3×3 and 5×5 kernels; box blur; Gaussian blur |
 | `filter` | HSL pipeline, invert, levels, posterize, gradient map |
-| `document` | Full render pipeline at 1–10 layers, shape-heavy scenes, clipping/masking overhead, and non-destructive transform render costs |
+| `document` | Full render pipeline at 1–10 layers, shape-heavy scenes, clipping/masking overhead, non-destructive transform render costs, and text cold/cached render cost |
 | `codec` | PNG / JPEG / WebP encode and decode of a 512×512 buffer |
 | `sprite` | Sprite sheet packing, palette extraction, quantization, pixel-art scale |
 | `fill` | Contiguous and non-contiguous bucket fill, plus alpha-aware tolerance matching |
@@ -306,6 +326,7 @@ Notes on the harnesses:
 
 - Very expensive resize cases use reduced flat-sampled Criterion groups so `cargo bench -p kimg-core` stays practical while still reporting worst-case medians.
 - RGBA bilinear and Lanczos3 resize paths use `fast_image_resize`, so native builds pick up host SIMD and the browser `Composition.create()` path can load the separate `simd128` wasm artifact.
+- Text benches run with `--features cosmic-text-backend` and split cold-path rasterization/layout from warm-cache rerender cost, since those are materially different workloads.
 - Codec benchmarks use a deterministic textured 512×512 image instead of a flat fill, which avoids unrealistically optimistic compression timings.
 - `render/repeated_transformed_layer/512` performs two back-to-back renders of the same transformed document in one iteration to measure transform-cache wins directly.
 - Standalone shape benches instantiate a fresh shape per sample so they continue to measure rasterization work instead of the document-level layer cache.
@@ -329,6 +350,11 @@ Representative medians from recent local runs on March 3, 2026. These are hardwa
 | `render/transformed_shape/512` | `861.31 µs` |
 | `render/10_layers_with_transforms/512` | `7.98 ms` |
 | `render/repeated_transformed_layer/512` | `1.56 ms` |
+| `render/text_registered_cold/320x168` | `20.46 ms` |
+| `render/text_registered_cached/320x168` | `228.52 µs` |
+| `render/text_styles_cold/320x176` | `31.30 ms` |
+| `render/text_styles_cached/320x176` | `195.54 µs` |
+| `render/repeated_text_styles/320x176` | `389.61 µs` |
 | `serialize_deserialize/10_layers` | `762.54 µs` |
 | `apply_hsl_filter/512` | `5.31 ms` |
 | `bucket_fill/contiguous/512` | `945.14 µs` |
@@ -367,7 +393,7 @@ Tracked for later:
 Possible follow-up work if those areas become important:
 
 - Keep PSD import experimental unless it becomes a priority again
-- Evaluate a richer text engine such as `cosmic-text`
+- Finish the real-font text rollout and keep browser text loading lazy by default
 
 ## License
 

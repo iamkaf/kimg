@@ -1,12 +1,15 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use kimg_core::buffer::ImageBuffer;
 use kimg_core::document::Document;
 use kimg_core::layer::{
     FilterLayerData, GroupLayerData, ImageLayerData, Layer, LayerCommon, LayerKind, LayerTransform,
-    PaintLayerData, ShapeLayerData, ShapeStroke, ShapeType,
+    PaintLayerData, ShapeLayerData, ShapeStroke, ShapeType, TextAlign, TextFontStyle,
+    TextLayerData, TextWrap,
 };
 use kimg_core::pixel::Rgba;
 use kimg_core::serialize::{deserialize, serialize};
+#[cfg(feature = "cosmic-text-backend")]
+use std::sync::Once;
 
 fn solid_buf(size: u32) -> ImageBuffer {
     let mut buf = ImageBuffer::new_transparent(size, size);
@@ -129,6 +132,37 @@ fn transformed_shape_layer(id: u32, size: u32) -> Layer {
     }
     layer
 }
+
+fn text_layer(id: u32, name: &str, text: &str, color: Rgba, x: i32, y: i32) -> Layer {
+    let mut common = LayerCommon::new(id, name);
+    common.x = x;
+    common.y = y;
+    Layer::new(
+        common,
+        LayerKind::Text(TextLayerData::new(text, color, 16, 20, 0)),
+    )
+}
+
+#[cfg(feature = "cosmic-text-backend")]
+fn prepare_text_bench_fonts() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let fixtures = [
+            include_bytes!("../../../tests/fixtures/inter-kimg.woff2").as_slice(),
+            include_bytes!("../../../tests/fixtures/inter-cupcake-regular.woff2").as_slice(),
+            include_bytes!("../../../tests/fixtures/inter-cupcake-bold.woff2").as_slice(),
+            include_bytes!("../../../tests/fixtures/inter-cupcake-italic.woff2").as_slice(),
+        ];
+
+        for bytes in fixtures {
+            let loaded = kimg_core::text::register_font_bytes(bytes.to_vec());
+            assert!(loaded > 0, "expected bench font fixture to load");
+        }
+    });
+}
+
+#[cfg(not(feature = "cosmic-text-backend"))]
+fn prepare_text_bench_fonts() {}
 
 fn make_doc_single_image(size: u32) -> Document {
     let mut doc = Document::new(size, size);
@@ -258,6 +292,150 @@ fn make_doc_transformed_mix(size: u32) -> Document {
     doc
 }
 
+fn make_doc_registered_text() -> Document {
+    prepare_text_bench_fonts();
+
+    let mut doc = Document::new(320, 168);
+    let paper_id = doc.next_id();
+    doc.layers.push(Layer::new(
+        LayerCommon::new(paper_id, "paper"),
+        LayerKind::SolidColor(kimg_core::layer::SolidColorLayerData::new(Rgba::new(
+            247, 241, 232, 255,
+        ))),
+    ));
+    let backplate_id = doc.next_id();
+    doc.layers.push(Layer::new(
+        {
+            let mut common = LayerCommon::new(backplate_id, "backplate");
+            common.x = 14;
+            common.y = 18;
+            common
+        },
+        LayerKind::Shape(ShapeLayerData::new(
+            ShapeType::RoundedRect,
+            128,
+            112,
+            14,
+            Some(Rgba::new(228, 113, 76, 28)),
+            Some(ShapeStroke::new(Rgba::new(228, 113, 76, 96), 3)),
+            Vec::new(),
+        )),
+    ));
+
+    let mut headline = text_layer(
+        doc.next_id(),
+        "headline",
+        "HELLO",
+        Rgba::new(201, 73, 45, 255),
+        28,
+        32,
+    );
+    if let LayerKind::Text(text) = &mut headline.kind {
+        text.font_family = "Inter".to_string();
+        text.font_size = 24;
+        text.line_height = 28;
+        text.letter_spacing = 2;
+    }
+    doc.layers.push(headline);
+
+    let mut badge = text_layer(
+        doc.next_id(),
+        "badge",
+        "KIMG\nTEXT",
+        Rgba::new(35, 79, 221, 255),
+        236,
+        98,
+    );
+    if let LayerKind::Text(text) = &mut badge.kind {
+        text.font_family = "Inter".to_string();
+        text.font_size = 24;
+        text.line_height = 28;
+        text.letter_spacing = 2;
+        text.transform.anchor = kimg_core::blit::Anchor::Center;
+        text.transform.rotation_deg = -12.0;
+    }
+    doc.layers.push(badge);
+
+    doc
+}
+
+fn make_doc_styled_text_columns() -> Document {
+    prepare_text_bench_fonts();
+
+    let mut doc = Document::new(320, 176);
+    let paper_id = doc.next_id();
+    doc.layers.push(Layer::new(
+        LayerCommon::new(paper_id, "paper"),
+        LayerKind::SolidColor(kimg_core::layer::SolidColorLayerData::new(Rgba::new(
+            247, 241, 232, 255,
+        ))),
+    ));
+
+    let panel_specs = [
+        (
+            "left / 400",
+            16,
+            TextAlign::Left,
+            TextFontStyle::Normal,
+            400,
+            Rgba::new(201, 73, 45, 255),
+        ),
+        (
+            "center / 700",
+            116,
+            TextAlign::Center,
+            TextFontStyle::Normal,
+            700,
+            Rgba::new(35, 79, 221, 255),
+        ),
+        (
+            "right / italic",
+            216,
+            TextAlign::Right,
+            TextFontStyle::Italic,
+            400,
+            Rgba::new(24, 119, 92, 255),
+        ),
+    ];
+    let cupcake = "Cupcake ipsum\ndolor sit amet\nfrosting";
+
+    for (name, x, align, font_style, font_weight, color) in panel_specs {
+        let panel_id = doc.next_id();
+        doc.layers.push(Layer::new(
+            {
+                let mut common = LayerCommon::new(panel_id, format!("{name}-panel"));
+                common.x = x;
+                common.y = 16;
+                common
+            },
+            LayerKind::Shape(ShapeLayerData::new(
+                ShapeType::RoundedRect,
+                88,
+                136,
+                10,
+                Some(Rgba::new(0, 0, 0, 0)),
+                Some(ShapeStroke::new(Rgba::new(120, 112, 101, 90), 2)),
+                Vec::new(),
+            )),
+        ));
+
+        let mut text = text_layer(doc.next_id(), name, cupcake, color, x + 8, 28);
+        if let LayerKind::Text(text_data) = &mut text.kind {
+            text_data.font_family = "Inter".to_string();
+            text_data.font_size = 16;
+            text_data.line_height = 22;
+            text_data.align = align;
+            text_data.wrap = TextWrap::Word;
+            text_data.box_width = Some(72);
+            text_data.font_style = font_style;
+            text_data.font_weight = font_weight;
+        }
+        doc.layers.push(text);
+    }
+
+    doc
+}
+
 fn bench_render_single_image(c: &mut Criterion) {
     let doc = make_doc_single_image(512);
     c.bench_function("render/single_image/512", |b| {
@@ -374,6 +552,50 @@ fn bench_render_repeated_transformed_layer(c: &mut Criterion) {
     });
 }
 
+fn bench_render_registered_text_cold(c: &mut Criterion) {
+    c.bench_function("render/text_registered_cold/320x168", |b| {
+        b.iter_batched(
+            make_doc_registered_text,
+            |doc| black_box(doc.render()),
+            BatchSize::SmallInput,
+        )
+    });
+}
+
+fn bench_render_registered_text_cached(c: &mut Criterion) {
+    let doc = make_doc_registered_text();
+    c.bench_function("render/text_registered_cached/320x168", |b| {
+        b.iter(|| black_box(doc.render()))
+    });
+}
+
+fn bench_render_text_styles_cold(c: &mut Criterion) {
+    c.bench_function("render/text_styles_cold/320x176", |b| {
+        b.iter_batched(
+            make_doc_styled_text_columns,
+            |doc| black_box(doc.render()),
+            BatchSize::SmallInput,
+        )
+    });
+}
+
+fn bench_render_text_styles_cached(c: &mut Criterion) {
+    let doc = make_doc_styled_text_columns();
+    c.bench_function("render/text_styles_cached/320x176", |b| {
+        b.iter(|| black_box(doc.render()))
+    });
+}
+
+fn bench_render_repeated_text(c: &mut Criterion) {
+    let doc = make_doc_styled_text_columns();
+    c.bench_function("render/repeated_text_styles/320x176", |b| {
+        b.iter(|| {
+            black_box(doc.render());
+            black_box(doc.render())
+        })
+    });
+}
+
 fn bench_serialize_deserialize(c: &mut Criterion) {
     let doc = make_doc_10_layers(512);
     c.bench_function("serialize_deserialize/10_layers", |b| {
@@ -402,6 +624,11 @@ criterion_group!(
     bench_render_clipped_layer_stack,
     bench_render_masked_layer_stack,
     bench_render_repeated_transformed_layer,
+    bench_render_registered_text_cold,
+    bench_render_registered_text_cached,
+    bench_render_text_styles_cold,
+    bench_render_text_styles_cached,
+    bench_render_repeated_text,
     bench_serialize_deserialize
 );
 criterion_main!(benches);
