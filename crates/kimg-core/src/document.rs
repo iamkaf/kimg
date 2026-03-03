@@ -19,8 +19,8 @@ use crate::buffer::ImageBuffer;
 use crate::fill;
 use crate::filter::{apply_hsl_filter, HslFilterConfig};
 use crate::layer::{
-    FilterLayerPatch, GradientDirection, GradientLayerData, GroupLayerData, Layer, LayerCommon,
-    LayerKind, LayerPatch, LayerTransform, ShapeLayerData, SolidColorLayerData,
+    FillKind, FillLayerData, FilterLayerPatch, GradientDirection, GroupLayerData, Layer,
+    LayerCommon, LayerKind, LayerPatch, LayerTransform, RasterLayerData, ShapeLayerData,
 };
 use crate::pixel::Rgba;
 use crate::shape::render_shape;
@@ -327,10 +327,10 @@ impl Document {
         true
     }
 
-    /// Flatten a group layer into a single image layer in-place.
+    /// Flatten a group layer into a single raster layer in-place.
     ///
     /// The group is rendered to a canvas-sized buffer, then replaced with an
-    /// `Image` layer that preserves the group's common properties (id, name,
+    /// `Raster` layer that preserves the group's common properties (id, name,
     /// opacity, blend mode, etc.).  The position is reset to (0, 0) because the
     /// rendered buffer is already in canvas coordinates.
     ///
@@ -351,14 +351,14 @@ impl Document {
 
         // Now replace the layer kind
         let layer = self.find_layer_mut(group_id).unwrap();
-        layer.kind = LayerKind::Image(crate::layer::ImageLayerData::new(buf));
+        layer.kind = LayerKind::Raster(RasterLayerData::new(buf));
         // Reset position since the buffer is already at canvas coordinates
         layer.common.x = 0;
         layer.common.y = 0;
         true
     }
 
-    /// Bucket-fill an image or paint layer using layer-local coordinates.
+    /// Bucket-fill a raster layer using layer-local coordinates.
     ///
     /// Matching is alpha-aware and uses per-channel tolerance across RGBA.
     /// Returns `false` when the layer does not exist, is not a pixel layer, or
@@ -378,10 +378,7 @@ impl Document {
         };
 
         match &mut layer.kind {
-            LayerKind::Image(image) => image.mutate_buffer(|buffer| {
-                fill::bucket_fill(buffer, x, y, color, contiguous, tolerance)
-            }),
-            LayerKind::Paint(paint) => paint.mutate_buffer(|buffer| {
+            LayerKind::Raster(paint) => paint.mutate_buffer(|buffer| {
                 fill::bucket_fill(buffer, x, y, color, contiguous, tolerance)
             }),
             _ => false,
@@ -399,17 +396,29 @@ impl Document {
     }
 }
 
-/// Render a solid color fill to a full-canvas buffer.
-fn render_solid_color(color: &SolidColorLayerData, width: u32, height: u32) -> ImageBuffer {
-    let mut buf = ImageBuffer::new_transparent(width, height);
-    buf.fill(color.color);
-    buf
+/// Render a fill layer to a full-canvas buffer.
+fn render_fill(fill: &FillLayerData, width: u32, height: u32) -> ImageBuffer {
+    match &fill.kind {
+        FillKind::Solid { color } => {
+            let mut buf = ImageBuffer::new_transparent(width, height);
+            buf.fill(*color);
+            buf
+        }
+        FillKind::Gradient { stops, direction } => {
+            render_gradient(stops, *direction, width, height)
+        }
+    }
 }
 
 /// Render a gradient to a full-canvas buffer.
-fn render_gradient(grad: &GradientLayerData, width: u32, height: u32) -> ImageBuffer {
+fn render_gradient(
+    stops: &[crate::layer::GradientStop],
+    direction: GradientDirection,
+    width: u32,
+    height: u32,
+) -> ImageBuffer {
     let mut buf = ImageBuffer::new_transparent(width, height);
-    if grad.stops.is_empty() || width == 0 || height == 0 {
+    if stops.is_empty() || width == 0 || height == 0 {
         return buf;
     }
 
@@ -418,7 +427,7 @@ fn render_gradient(grad: &GradientLayerData, width: u32, height: u32) -> ImageBu
 
     for y in 0..h {
         for x in 0..w {
-            let t = match grad.direction {
+            let t = match direction {
                 GradientDirection::Horizontal => x as f64 / (w - 1).max(1) as f64,
                 GradientDirection::Vertical => y as f64 / (h - 1).max(1) as f64,
                 GradientDirection::DiagonalDown => {
@@ -430,7 +439,7 @@ fn render_gradient(grad: &GradientLayerData, width: u32, height: u32) -> ImageBu
                 }
             };
 
-            let color = sample_gradient(&grad.stops, t);
+            let color = sample_gradient(stops, t);
             let i = (y * w + x) * 4;
             buf.data[i] = color.r;
             buf.data[i + 1] = color.g;
@@ -449,8 +458,7 @@ fn render_shape_layer(shape: &ShapeLayerData) -> ImageBuffer {
 
 fn layer_transform_mut(layer: &mut Layer) -> Option<&mut LayerTransform> {
     match &mut layer.kind {
-        LayerKind::Image(image) => Some(&mut image.transform),
-        LayerKind::Paint(paint) => Some(&mut paint.transform),
+        LayerKind::Raster(raster) => Some(&mut raster.transform),
         LayerKind::Shape(shape) => Some(&mut shape.transform),
         LayerKind::Text(text) => Some(&mut text.transform),
         _ => None,
@@ -662,7 +670,7 @@ fn can_render_layer_direct(layer: &Layer) -> bool {
         && layer.common.blend_mode == BlendMode::Normal
         && matches!(
             layer.kind,
-            LayerKind::Image(_) | LayerKind::Paint(_) | LayerKind::Shape(_) | LayerKind::Text(_)
+            LayerKind::Raster(_) | LayerKind::Shape(_) | LayerKind::Text(_)
         )
 }
 
@@ -672,29 +680,15 @@ fn render_layer_direct(layer: &Layer, output: &mut ImageBuffer) -> bool {
     }
 
     match &layer.kind {
-        LayerKind::Image(image) => {
-            image.with_cached_transformed_raster(
-                || apply_non_destructive_transform(&image.buffer, &image.transform),
+        LayerKind::Raster(raster) => {
+            raster.with_cached_transformed_raster(
+                || apply_non_destructive_transform(&raster.buffer, &raster.transform),
                 |transformed| {
                     blit_pretransformed_raster_layer(
                         output,
                         transformed,
                         &layer.common,
-                        image.transform.anchor,
-                    );
-                },
-            );
-            true
-        }
-        LayerKind::Paint(paint) => {
-            paint.with_cached_transformed_raster(
-                || apply_non_destructive_transform(&paint.buffer, &paint.transform),
-                |transformed| {
-                    blit_pretransformed_raster_layer(
-                        output,
-                        transformed,
-                        &layer.common,
-                        paint.transform.anchor,
+                        raster.transform.anchor,
                     );
                 },
             );
@@ -749,9 +743,9 @@ fn capture_direct_layer_alpha(
     }
 
     match &layer.kind {
-        LayerKind::Image(image) => {
-            image.with_cached_transformed_raster(
-                || apply_non_destructive_transform(&image.buffer, &image.transform),
+        LayerKind::Raster(raster) => {
+            raster.with_cached_transformed_raster(
+                || apply_non_destructive_transform(&raster.buffer, &raster.transform),
                 |transformed| {
                     capture_pretransformed_alpha_snapshot(
                         snapshot,
@@ -759,23 +753,7 @@ fn capture_direct_layer_alpha(
                         canvas_h,
                         transformed,
                         &layer.common,
-                        image.transform.anchor,
-                    );
-                },
-            );
-            true
-        }
-        LayerKind::Paint(paint) => {
-            paint.with_cached_transformed_raster(
-                || apply_non_destructive_transform(&paint.buffer, &paint.transform),
-                |transformed| {
-                    capture_pretransformed_alpha_snapshot(
-                        snapshot,
-                        canvas_w,
-                        canvas_h,
-                        transformed,
-                        &layer.common,
-                        paint.transform.anchor,
+                        raster.transform.anchor,
                     );
                 },
             );
@@ -958,16 +936,16 @@ fn apply_clipping_mask(layer_buf: &mut ImageBuffer, below_alpha: &[u8]) {
 /// Render a single layer to an isolated canvas-sized RGBA buffer.
 fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageBuffer {
     match &layer.kind {
-        LayerKind::Image(img) => {
+        LayerKind::Raster(raster) => {
             let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
-            img.with_cached_transformed_raster(
-                || apply_non_destructive_transform(&img.buffer, &img.transform),
+            raster.with_cached_transformed_raster(
+                || apply_non_destructive_transform(&raster.buffer, &raster.transform),
                 |transformed| {
                     blit_pretransformed_raster_layer(
                         &mut buf,
                         transformed,
                         &layer.common,
-                        img.transform.anchor,
+                        raster.transform.anchor,
                     );
                 },
             );
@@ -976,34 +954,8 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
             }
             buf
         }
-        LayerKind::Paint(paint) => {
-            let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
-            paint.with_cached_transformed_raster(
-                || apply_non_destructive_transform(&paint.buffer, &paint.transform),
-                |transformed| {
-                    blit_pretransformed_raster_layer(
-                        &mut buf,
-                        transformed,
-                        &layer.common,
-                        paint.transform.anchor,
-                    );
-                },
-            );
-            if let Some(mask) = &layer.common.mask {
-                apply_mask(&mut buf, mask, layer.common.mask_inverted);
-            }
-            buf
-        }
-        LayerKind::SolidColor(sc) => {
-            let mut fill = render_solid_color(sc, canvas_w, canvas_h);
-            scale_alpha(&mut fill, layer.common.opacity);
-            if let Some(mask) = &layer.common.mask {
-                apply_mask(&mut fill, mask, layer.common.mask_inverted);
-            }
-            fill
-        }
-        LayerKind::Gradient(grad) => {
-            let mut fill = render_gradient(grad, canvas_w, canvas_h);
+        LayerKind::Fill(fill) => {
+            let mut fill = render_fill(fill, canvas_w, canvas_h);
             scale_alpha(&mut fill, layer.common.opacity);
             if let Some(mask) = &layer.common.mask {
                 apply_mask(&mut fill, mask, layer.common.mask_inverted);
@@ -1105,7 +1057,7 @@ fn render_layers(layers: &[Layer], output: &mut ImageBuffer) {
 /// then blend onto the output.
 ///
 /// Two-pass approach matching Spriteform's `renderSmartVariantScoped`:
-/// - Pass 1: render non-filter layers (Image, Paint, nested Group, etc.) back-to-front
+/// - Pass 1: render non-filter layers (Raster, nested Group, etc.) back-to-front
 /// - Pass 2: apply all filter layers in order to the composited group buffer
 fn render_group(group: &GroupLayerData, output: &mut ImageBuffer, opacity: f64) {
     let canvas_w = output.width;
@@ -1166,7 +1118,7 @@ mod tests {
                 y,
                 ..LayerCommon::new(id, name)
             },
-            kind: LayerKind::Image(ImageLayerData::new(buf)),
+            kind: LayerKind::Raster(RasterLayerData::new(buf)),
         }
     }
 
@@ -1413,7 +1365,7 @@ mod tests {
         ));
         doc.layers.push(Layer {
             common: LayerCommon::new(paint_id, "paint"),
-            kind: LayerKind::Paint(PaintLayerData::new(ImageBuffer::new_transparent(2, 2))),
+            kind: LayerKind::Raster(RasterLayerData::new(ImageBuffer::new_transparent(2, 2))),
         });
         doc.layers.push(Layer {
             common: LayerCommon::new(shape_id, "shape"),
@@ -1523,24 +1475,24 @@ mod tests {
         assert_eq!(image_layer.common.blend_mode, BlendMode::Multiply);
         assert!(image_layer.common.clip_to_below);
         match &image_layer.kind {
-            LayerKind::Image(image) => {
-                assert!(image.transform.flip_x);
-                assert_eq!(image.transform.rotation_deg, 90.0);
-                assert_eq!(image.transform.scale_x, 1.5);
-                assert_eq!(image.transform.scale_y, 2.0);
+            LayerKind::Raster(raster) => {
+                assert!(raster.transform.flip_x);
+                assert_eq!(raster.transform.rotation_deg, 90.0);
+                assert_eq!(raster.transform.scale_x, 1.5);
+                assert_eq!(raster.transform.scale_y, 2.0);
             }
-            _ => panic!("expected image layer"),
+            _ => panic!("expected raster layer"),
         }
 
         match &doc.find_layer(paint_id).unwrap().kind {
-            LayerKind::Paint(paint) => {
-                assert_eq!(paint.transform.anchor, crate::blit::Anchor::Center);
-                assert!(paint.transform.flip_y);
-                assert_eq!(paint.transform.rotation_deg, 15.0);
-                assert_eq!(paint.transform.scale_x, 2.0);
-                assert_eq!(paint.transform.scale_y, 0.5);
+            LayerKind::Raster(raster) => {
+                assert_eq!(raster.transform.anchor, crate::blit::Anchor::Center);
+                assert!(raster.transform.flip_y);
+                assert_eq!(raster.transform.rotation_deg, 15.0);
+                assert_eq!(raster.transform.scale_x, 2.0);
+                assert_eq!(raster.transform.scale_y, 0.5);
             }
-            _ => panic!("expected paint layer"),
+            _ => panic!("expected raster layer"),
         }
 
         match &doc.find_layer(shape_id).unwrap().kind {
@@ -1623,7 +1575,7 @@ mod tests {
         doc.layers.push(img_layer(image_id, "img", image, 0, 0));
         doc.layers.push(Layer {
             common: LayerCommon::new(paint_id, "paint"),
-            kind: LayerKind::Paint(PaintLayerData::new(ImageBuffer::new_transparent(2, 2))),
+            kind: LayerKind::Raster(RasterLayerData::new(ImageBuffer::new_transparent(2, 2))),
         });
         doc.layers.push(Layer {
             common: LayerCommon::new(group_id, "group"),
@@ -1635,19 +1587,19 @@ mod tests {
         assert!(!doc.bucket_fill_layer(group_id, 0, 0, Rgba::new(255, 255, 255, 255), true, 0,));
 
         match &doc.find_layer(image_id).unwrap().kind {
-            LayerKind::Image(image) => {
-                assert_eq!(image.buffer.get_pixel(0, 0), Rgba::new(0, 255, 0, 255));
-                assert_eq!(image.buffer.get_pixel(1, 1), Rgba::new(200, 0, 0, 255));
+            LayerKind::Raster(raster) => {
+                assert_eq!(raster.buffer.get_pixel(0, 0), Rgba::new(0, 255, 0, 255));
+                assert_eq!(raster.buffer.get_pixel(1, 1), Rgba::new(200, 0, 0, 255));
             }
-            _ => panic!("expected image layer"),
+            _ => panic!("expected raster layer"),
         }
 
         match &doc.find_layer(paint_id).unwrap().kind {
-            LayerKind::Paint(paint) => {
-                assert_eq!(paint.buffer.get_pixel(0, 0), Rgba::new(0, 0, 255, 255));
-                assert_eq!(paint.buffer.get_pixel(1, 1), Rgba::new(0, 0, 255, 255));
+            LayerKind::Raster(raster) => {
+                assert_eq!(raster.buffer.get_pixel(0, 0), Rgba::new(0, 0, 255, 255));
+                assert_eq!(raster.buffer.get_pixel(1, 1), Rgba::new(0, 0, 255, 255));
             }
-            _ => panic!("expected paint layer"),
+            _ => panic!("expected raster layer"),
         }
     }
 
@@ -1669,7 +1621,7 @@ mod tests {
         paint.fill(Rgba::new(0, 0, 255, 255));
         let mut paint_layer = Layer {
             common: LayerCommon::new(paint_id, "paint"),
-            kind: LayerKind::Paint(PaintLayerData::new(paint)),
+            kind: LayerKind::Raster(RasterLayerData::new(paint)),
         };
         paint_layer.common.x = 4;
         doc.layers.push(paint_layer);
@@ -1899,9 +1851,7 @@ mod tests {
         let id = doc.next_id();
         doc.layers.push(Layer {
             common: LayerCommon::new(id, "fill"),
-            kind: LayerKind::SolidColor(SolidColorLayerData {
-                color: Rgba::new(100, 200, 50, 255),
-            }),
+            kind: LayerKind::Fill(FillLayerData::solid(Rgba::new(100, 200, 50, 255))),
         });
         let result = doc.render();
         assert_eq!(result.get_pixel(0, 0), Rgba::new(100, 200, 50, 255));
@@ -1914,8 +1864,8 @@ mod tests {
         let id = doc.next_id();
         doc.layers.push(Layer {
             common: LayerCommon::new(id, "gradient"),
-            kind: LayerKind::Gradient(GradientLayerData {
-                stops: vec![
+            kind: LayerKind::Fill(FillLayerData::gradient(
+                vec![
                     GradientStop {
                         position: 0.0,
                         color: Rgba::new(0, 0, 0, 255),
@@ -1925,8 +1875,8 @@ mod tests {
                         color: Rgba::new(255, 255, 255, 255),
                     },
                 ],
-                direction: GradientDirection::Horizontal,
-            }),
+                GradientDirection::Horizontal,
+            )),
         });
         let result = doc.render();
         let p0 = result.get_pixel(0, 0);
@@ -2004,7 +1954,7 @@ mod tests {
     }
 
     #[test]
-    fn flatten_group_produces_image() {
+    fn flatten_group_produces_raster() {
         let mut doc = Document::new(2, 2);
         let group_id = doc.next_id();
         let child_id = doc.next_id();
@@ -2024,9 +1974,9 @@ mod tests {
 
         assert!(doc.flatten_group(group_id));
 
-        // Should now be an image layer
+        // Should now be a raster layer
         let layer = doc.find_layer(group_id).unwrap();
-        assert!(matches!(layer.kind, LayerKind::Image(_)));
+        assert!(matches!(layer.kind, LayerKind::Raster(_)));
 
         let result = doc.render();
         assert_eq!(result.get_pixel(0, 0), Rgba::new(255, 0, 0, 255));
@@ -2038,9 +1988,7 @@ mod tests {
         let id = doc.next_id();
         let mut layer = Layer {
             common: LayerCommon::new(id, "fill"),
-            kind: LayerKind::SolidColor(SolidColorLayerData {
-                color: Rgba::new(255, 0, 0, 255),
-            }),
+            kind: LayerKind::Fill(FillLayerData::solid(Rgba::new(255, 0, 0, 255))),
         };
         layer.common.opacity = 0.5;
         doc.layers.push(layer);

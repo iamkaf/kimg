@@ -7,12 +7,10 @@
 //!
 //! | Variant | Description |
 //! |---------|-------------|
-//! | [`LayerKind::Image`] | An RGBA buffer with optional flip/rotation/anchor |
-//! | [`LayerKind::Paint`] | An editable RGBA buffer |
+//! | [`LayerKind::Raster`] | An RGBA buffer with optional flip/rotation/anchor |
 //! | [`LayerKind::Filter`] | Non-destructive HSL/brightness/contrast adjustment |
 //! | [`LayerKind::Group`] | A folder containing child layers |
-//! | [`LayerKind::SolidColor`] | A flat color fill |
-//! | [`LayerKind::Gradient`] | A linear color gradient fill |
+//! | [`LayerKind::Fill`] | A generated fill layer (solid or gradient) |
 //! | [`LayerKind::Shape`] | A rasterized vector-style shape primitive |
 //! | [`LayerKind::Text`] | A rasterized text layer |
 
@@ -98,17 +96,17 @@ pub struct LayerPatch {
     pub mask_inverted: Option<bool>,
     /// Set whether the layer clips to the layer below it.
     pub clip_to_below: Option<bool>,
-    /// Set the anchor for image/paint/shape layers.
+    /// Set the anchor for raster/shape/text layers.
     pub anchor: Option<Anchor>,
-    /// Set horizontal flip for image/paint/shape layers.
+    /// Set horizontal flip for raster/shape/text layers.
     pub flip_x: Option<bool>,
-    /// Set vertical flip for image/paint/shape layers.
+    /// Set vertical flip for raster/shape/text layers.
     pub flip_y: Option<bool>,
-    /// Set non-destructive rotation in degrees for image/paint/shape layers.
+    /// Set non-destructive rotation in degrees for raster/shape/text layers.
     pub rotation: Option<f64>,
-    /// Set horizontal scale for image/paint/shape layers.
+    /// Set horizontal scale for raster/shape/text layers.
     pub scale_x: Option<f64>,
-    /// Set vertical scale for image/paint/shape layers.
+    /// Set vertical scale for raster/shape/text layers.
     pub scale_y: Option<f64>,
     /// Patch filter-layer configuration values.
     pub filter: Option<FilterLayerPatch>,
@@ -198,11 +196,11 @@ impl Default for LayerTransform {
     }
 }
 
-/// Image layer with transform properties.
+/// Raster layer with transform properties.
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct ImageLayerData {
-    /// The source image buffer.
+pub struct RasterLayerData {
+    /// The source raster buffer.
     pub buffer: ImageBuffer,
     /// Shared non-destructive transform state.
     pub transform: LayerTransform,
@@ -210,8 +208,8 @@ pub struct ImageLayerData {
     transformed_cache: RefCell<Option<RasterTransformCache>>,
 }
 
-impl ImageLayerData {
-    /// Create an image layer with default transform properties (TopLeft anchor, no flip, no rotation).
+impl RasterLayerData {
+    /// Create a raster layer with default transform properties.
     pub fn new(buffer: ImageBuffer) -> Self {
         Self {
             buffer,
@@ -221,7 +219,7 @@ impl ImageLayerData {
         }
     }
 
-    /// Create an image layer with explicit transform properties.
+    /// Create a raster layer with explicit transform properties.
     pub fn with_transform(buffer: ImageBuffer, transform: LayerTransform) -> Self {
         let mut layer = Self::new(buffer);
         layer.transform = transform;
@@ -265,7 +263,7 @@ impl ImageLayerData {
         let cached = self.transformed_cache.borrow();
         let entry = cached
             .as_ref()
-            .expect("image transform cache should be populated");
+            .expect("raster transform cache should be populated");
         use_buffer(&entry.buffer)
     }
 
@@ -275,95 +273,7 @@ impl ImageLayerData {
     }
 }
 
-impl Clone for ImageLayerData {
-    fn clone(&self) -> Self {
-        Self {
-            buffer: self.buffer.clone(),
-            transform: self.transform,
-            revision: self.revision,
-            transformed_cache: RefCell::new(None),
-        }
-    }
-}
-
-/// Paint layer — an editable RGBA buffer.
-#[derive(Debug)]
-#[non_exhaustive]
-pub struct PaintLayerData {
-    /// The editable pixel buffer.
-    pub buffer: ImageBuffer,
-    /// Shared non-destructive transform state.
-    pub transform: LayerTransform,
-    revision: u64,
-    transformed_cache: RefCell<Option<RasterTransformCache>>,
-}
-
-impl PaintLayerData {
-    /// Create a paint layer with a TopLeft anchor.
-    pub fn new(buffer: ImageBuffer) -> Self {
-        Self {
-            buffer,
-            transform: LayerTransform::new(),
-            revision: 0,
-            transformed_cache: RefCell::new(None),
-        }
-    }
-
-    /// Create a paint layer with explicit transform properties.
-    pub fn with_transform(buffer: ImageBuffer, transform: LayerTransform) -> Self {
-        let mut layer = Self::new(buffer);
-        layer.transform = transform;
-        layer
-    }
-
-    /// Replace the source buffer and invalidate any cached transformed raster.
-    pub fn set_buffer(&mut self, buffer: ImageBuffer) {
-        self.buffer = buffer;
-        self.bump_revision();
-    }
-
-    /// Mutate the source buffer in place and invalidate any cached transformed raster.
-    pub fn mutate_buffer<R>(&mut self, mutate: impl FnOnce(&mut ImageBuffer) -> R) -> R {
-        let result = mutate(&mut self.buffer);
-        self.bump_revision();
-        result
-    }
-
-    /// Reuse or refresh the transformed raster for the current source buffer and transform.
-    pub fn with_cached_transformed_raster<F, R>(
-        &self,
-        render: F,
-        use_buffer: impl FnOnce(&ImageBuffer) -> R,
-    ) -> R
-    where
-        F: FnOnce() -> ImageBuffer,
-    {
-        let key = RasterTransformCacheKey::new(self.revision, self.transform);
-        let needs_refresh = self
-            .transformed_cache
-            .borrow()
-            .as_ref()
-            .is_none_or(|cached| cached.key != key);
-
-        if needs_refresh {
-            let buffer = render();
-            *self.transformed_cache.borrow_mut() = Some(RasterTransformCache { key, buffer });
-        }
-
-        let cached = self.transformed_cache.borrow();
-        let entry = cached
-            .as_ref()
-            .expect("paint transform cache should be populated");
-        use_buffer(&entry.buffer)
-    }
-
-    fn bump_revision(&mut self) {
-        self.revision = self.revision.wrapping_add(1);
-        self.transformed_cache.get_mut().take();
-    }
-}
-
-impl Clone for PaintLayerData {
+impl Clone for RasterLayerData {
     fn clone(&self) -> Self {
         Self {
             buffer: self.buffer.clone(),
@@ -420,21 +330,6 @@ impl Default for GroupLayerData {
     }
 }
 
-/// Solid color fill layer.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct SolidColorLayerData {
-    /// The RGBA color to fill.
-    pub color: Rgba,
-}
-
-impl SolidColorLayerData {
-    /// Create a solid color layer with the given fill color.
-    pub fn new(color: Rgba) -> Self {
-        Self { color }
-    }
-}
-
 /// A stop in a linear gradient.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
@@ -467,20 +362,45 @@ pub enum GradientDirection {
     DiagonalUp,
 }
 
-/// Linear gradient fill layer.
+/// Generated fill source for a fill layer.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct GradientLayerData {
-    /// The list of color stops.
-    pub stops: Vec<GradientStop>,
-    /// The direction of the linear gradient.
-    pub direction: GradientDirection,
+pub enum FillKind {
+    /// A flat RGBA fill.
+    Solid {
+        /// The fill color.
+        color: Rgba,
+    },
+    /// A linear gradient fill.
+    Gradient {
+        /// The list of color stops.
+        stops: Vec<GradientStop>,
+        /// The direction of the linear gradient.
+        direction: GradientDirection,
+    },
 }
 
-impl GradientLayerData {
-    /// Create a gradient layer with the given stops and direction.
-    pub fn new(stops: Vec<GradientStop>, direction: GradientDirection) -> Self {
-        Self { stops, direction }
+/// Fill layer data.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct FillLayerData {
+    /// The generated fill source.
+    pub kind: FillKind,
+}
+
+impl FillLayerData {
+    /// Create a solid fill layer.
+    pub fn solid(color: Rgba) -> Self {
+        Self {
+            kind: FillKind::Solid { color },
+        }
+    }
+
+    /// Create a gradient fill layer.
+    pub fn gradient(stops: Vec<GradientStop>, direction: GradientDirection) -> Self {
+        Self {
+            kind: FillKind::Gradient { stops, direction },
+        }
     }
 }
 
@@ -781,8 +701,6 @@ struct TextTransformedCache {
 pub enum ShapeType {
     /// An axis-aligned rectangle.
     Rectangle,
-    /// An axis-aligned rounded rectangle.
-    RoundedRect,
     /// An axis-aligned ellipse.
     Ellipse,
     /// A straight line from the top-left to the bottom-right of the local bounds.
@@ -796,7 +714,6 @@ impl ShapeType {
     pub fn as_str(self) -> &'static str {
         match self {
             ShapeType::Rectangle => "rectangle",
-            ShapeType::RoundedRect => "rounded_rect",
             ShapeType::Ellipse => "ellipse",
             ShapeType::Line => "line",
             ShapeType::Polygon => "polygon",
@@ -848,7 +765,7 @@ pub struct ShapeLayerData {
     pub width: u32,
     /// Local raster height in pixels.
     pub height: u32,
-    /// Corner radius for rounded rectangles.
+    /// Corner radius for rectangles. `0` means sharp corners.
     pub radius: u32,
     /// Optional fill color.
     pub fill: Option<Rgba>,
@@ -1064,18 +981,14 @@ impl Layer {
 #[allow(clippy::large_enum_variant)]
 #[non_exhaustive]
 pub enum LayerKind {
-    /// An image buffer with transform properties.
-    Image(ImageLayerData),
-    /// An editable paint buffer.
-    Paint(PaintLayerData),
+    /// A raster buffer with transform properties.
+    Raster(RasterLayerData),
     /// An adjustment layer.
     Filter(FilterLayerData),
     /// A folder for organizing child layers.
     Group(GroupLayerData),
-    /// A solid color fill.
-    SolidColor(SolidColorLayerData),
-    /// A linear gradient fill.
-    Gradient(GradientLayerData),
+    /// A generated fill layer.
+    Fill(FillLayerData),
     /// A rasterized shape primitive.
     Shape(ShapeLayerData),
     /// A rasterized text layer.
@@ -1102,19 +1015,19 @@ mod tests {
     }
 
     #[test]
-    fn image_transformed_cache_reuses_and_invalidates() {
-        let mut image = ImageLayerData::new(ImageBuffer::new_transparent(8, 8));
-        image.transform.rotation_deg = 45.0;
+    fn raster_transformed_cache_reuses_and_invalidates() {
+        let mut raster = RasterLayerData::new(ImageBuffer::new_transparent(8, 8));
+        raster.transform.rotation_deg = 45.0;
         let calls = Cell::new(0);
 
-        image.with_cached_transformed_raster(
+        raster.with_cached_transformed_raster(
             || {
                 calls.set(calls.get() + 1);
                 ImageBuffer::new_transparent(12, 12)
             },
             Clone::clone,
         );
-        image.with_cached_transformed_raster(
+        raster.with_cached_transformed_raster(
             || {
                 calls.set(calls.get() + 1);
                 ImageBuffer::new_transparent(12, 12)
@@ -1123,46 +1036,13 @@ mod tests {
         );
         assert_eq!(calls.get(), 1);
 
-        image.mutate_buffer(|buffer| {
+        raster.mutate_buffer(|buffer| {
             buffer.set_pixel(0, 0, Rgba::new(255, 0, 0, 255));
         });
-        image.with_cached_transformed_raster(
+        raster.with_cached_transformed_raster(
             || {
                 calls.set(calls.get() + 1);
                 ImageBuffer::new_transparent(12, 12)
-            },
-            Clone::clone,
-        );
-        assert_eq!(calls.get(), 2);
-    }
-
-    #[test]
-    fn paint_transformed_cache_reuses_and_invalidates() {
-        let mut paint = PaintLayerData::new(ImageBuffer::new_transparent(8, 8));
-        paint.transform.scale_x = 1.5;
-        let calls = Cell::new(0);
-
-        paint.with_cached_transformed_raster(
-            || {
-                calls.set(calls.get() + 1);
-                ImageBuffer::new_transparent(12, 8)
-            },
-            Clone::clone,
-        );
-        paint.with_cached_transformed_raster(
-            || {
-                calls.set(calls.get() + 1);
-                ImageBuffer::new_transparent(12, 8)
-            },
-            Clone::clone,
-        );
-        assert_eq!(calls.get(), 1);
-
-        paint.set_buffer(ImageBuffer::new_transparent(10, 10));
-        paint.with_cached_transformed_raster(
-            || {
-                calls.set(calls.get() + 1);
-                ImageBuffer::new_transparent(15, 10)
             },
             Clone::clone,
         );

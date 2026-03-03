@@ -2,8 +2,8 @@ use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion
 use kimg_core::buffer::ImageBuffer;
 use kimg_core::document::Document;
 use kimg_core::layer::{
-    FilterLayerData, GroupLayerData, ImageLayerData, Layer, LayerCommon, LayerKind, LayerTransform,
-    PaintLayerData, ShapeLayerData, ShapeStroke, ShapeType, TextAlign, TextFontStyle,
+    FillLayerData, FilterLayerData, GroupLayerData, Layer, LayerCommon, LayerKind, LayerTransform,
+    RasterLayerData, ShapeLayerData, ShapeStroke, ShapeType, TextAlign, TextFontStyle,
     TextLayerData, TextWrap,
 };
 use kimg_core::pixel::Rgba;
@@ -50,14 +50,14 @@ fn mask_buf(size: u32) -> ImageBuffer {
 fn image_layer(id: u32, buf: ImageBuffer) -> Layer {
     Layer::new(
         LayerCommon::new(id, format!("layer-{id}")),
-        LayerKind::Image(ImageLayerData::new(buf)),
+        LayerKind::Raster(RasterLayerData::new(buf)),
     )
 }
 
 fn paint_layer(id: u32, buf: ImageBuffer) -> Layer {
     Layer::new(
         LayerCommon::new(id, format!("paint-{id}")),
-        LayerKind::Paint(PaintLayerData::new(buf)),
+        LayerKind::Raster(RasterLayerData::new(buf)),
     )
 }
 
@@ -65,7 +65,7 @@ fn shape_layer(id: u32, size: u32) -> Layer {
     Layer::new(
         LayerCommon::new(id, format!("shape-{id}")),
         LayerKind::Shape(ShapeLayerData::new(
-            ShapeType::RoundedRect,
+            ShapeType::Rectangle,
             size,
             size,
             24,
@@ -96,8 +96,8 @@ fn make_transform(
 
 fn transformed_image_layer(id: u32, size: u32) -> Layer {
     let mut layer = image_layer(id, solid_buf(size));
-    if let LayerKind::Image(image) = &mut layer.kind {
-        image.transform = make_transform(
+    if let LayerKind::Raster(raster) = &mut layer.kind {
+        raster.transform = make_transform(
             kimg_core::blit::Anchor::Center,
             false,
             false,
@@ -111,8 +111,8 @@ fn transformed_image_layer(id: u32, size: u32) -> Layer {
 
 fn transformed_paint_layer(id: u32, size: u32) -> Layer {
     let mut layer = paint_layer(id, solid_buf(size));
-    if let LayerKind::Paint(paint) = &mut layer.kind {
-        paint.transform =
+    if let LayerKind::Raster(raster) = &mut layer.kind {
+        raster.transform =
             make_transform(kimg_core::blit::Anchor::Center, false, true, 15.0, 1.5, 0.8);
     }
     layer
@@ -299,9 +299,7 @@ fn make_doc_registered_text() -> Document {
     let paper_id = doc.next_id();
     doc.layers.push(Layer::new(
         LayerCommon::new(paper_id, "paper"),
-        LayerKind::SolidColor(kimg_core::layer::SolidColorLayerData::new(Rgba::new(
-            247, 241, 232, 255,
-        ))),
+        LayerKind::Fill(FillLayerData::solid(Rgba::new(247, 241, 232, 255))),
     ));
     let backplate_id = doc.next_id();
     doc.layers.push(Layer::new(
@@ -312,7 +310,7 @@ fn make_doc_registered_text() -> Document {
             common
         },
         LayerKind::Shape(ShapeLayerData::new(
-            ShapeType::RoundedRect,
+            ShapeType::Rectangle,
             128,
             112,
             14,
@@ -366,9 +364,7 @@ fn make_doc_styled_text_columns() -> Document {
     let paper_id = doc.next_id();
     doc.layers.push(Layer::new(
         LayerCommon::new(paper_id, "paper"),
-        LayerKind::SolidColor(kimg_core::layer::SolidColorLayerData::new(Rgba::new(
-            247, 241, 232, 255,
-        ))),
+        LayerKind::Fill(FillLayerData::solid(Rgba::new(247, 241, 232, 255))),
     ));
 
     let panel_specs = [
@@ -409,7 +405,7 @@ fn make_doc_styled_text_columns() -> Document {
                 common
             },
             LayerKind::Shape(ShapeLayerData::new(
-                ShapeType::RoundedRect,
+                ShapeType::Rectangle,
                 88,
                 136,
                 10,

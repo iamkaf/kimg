@@ -86,7 +86,7 @@ export interface GradientLayerOptions {
   parentId?: number;
 }
 
-export type ShapeLayerType = "rectangle" | "roundedRect" | "ellipse" | "line" | "polygon";
+export type ShapeLayerType = "rectangle" | "ellipse" | "line" | "polygon";
 
 export interface ShapePoint {
   x: number;
@@ -341,16 +341,7 @@ export interface RgbColor {
   b: number;
 }
 
-export type LayerKind =
-  | "image"
-  | "paint"
-  | "filter"
-  | "group"
-  | "solidColor"
-  | "gradient"
-  | "shape"
-  | "text"
-  | "unknown";
+export type LayerKind = "raster" | "filter" | "group" | "fill" | "shape" | "text" | "unknown";
 
 export interface LayerInfo {
   id: number;
@@ -377,6 +368,7 @@ export interface LayerInfo {
   scaleY?: number;
   filterConfig?: FilterConfigSnapshot;
   childCount?: number;
+  fillType?: "solid" | "gradient";
   color?: number[];
   direction?: Exclude<GradientDirection, 0 | 1 | 2 | 3>;
   stopCount?: number;
@@ -860,15 +852,14 @@ function normalizeGradientStops(stops) {
 function normalizeShapeType(shapeType) {
   switch (shapeType) {
     case "rectangle":
-    case "roundedRect":
     case "ellipse":
     case "line":
     case "polygon":
       return shapeType;
+    case "roundedRect":
+      return "rectangle";
     default:
-      throw new TypeError(
-        'type must be "rectangle", "roundedRect", "ellipse", "line", or "polygon".',
-      );
+      throw new TypeError('type must be "rectangle", "ellipse", "line", or "polygon".');
   }
 }
 
@@ -939,8 +930,7 @@ function normalizeShapeLayerOptions(options) {
     height = normalizePositiveInteger(layer.height, "addShapeLayer.height");
   }
 
-  const radius =
-    type === "roundedRect" ? normalizeInteger(layer.radius ?? 0, "addShapeLayer.radius") : 0;
+  const radius = normalizeInteger(layer.radius ?? 0, "addShapeLayer.radius");
 
   return {
     fill,

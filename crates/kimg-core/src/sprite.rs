@@ -1015,16 +1015,16 @@ mod tests {
         let id1 = doc1.next_id();
         doc1.layers.push(crate::layer::Layer {
             common: crate::layer::LayerCommon::new(id1, "fill"),
-            kind: crate::layer::LayerKind::SolidColor(crate::layer::SolidColorLayerData {
-                color: Rgba::new(255, 0, 0, 255),
-            }),
+            kind: crate::layer::LayerKind::Fill(crate::layer::FillLayerData::solid(Rgba::new(
+                255, 0, 0, 255,
+            ))),
         });
         let id2 = doc2.next_id();
         doc2.layers.push(crate::layer::Layer {
             common: crate::layer::LayerCommon::new(id2, "fill"),
-            kind: crate::layer::LayerKind::SolidColor(crate::layer::SolidColorLayerData {
-                color: Rgba::new(0, 255, 0, 255),
-            }),
+            kind: crate::layer::LayerKind::Fill(crate::layer::FillLayerData::solid(Rgba::new(
+                0, 255, 0, 255,
+            ))),
         });
 
         let items = vec![

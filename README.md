@@ -68,8 +68,8 @@ const doc = await Composition.create({ width: 64, height: 64 });
 
 ## What it can do
 
-**Layers** — Image, Paint, Filter, Group, SolidColor, Gradient, Shape, Text. Nested groups with scoped filter application.
-Shape layers cover rectangle, rounded rectangle, ellipse, line, and polygon primitives with fill/stroke styling. Text layers support real font rendering with weight, style, wrapping, alignment, transforms, runtime font registration, and browser Google Fonts loading.
+**Layers** — Raster, Filter, Group, Fill, Shape, Text. Nested groups with scoped filter application.
+Shape layers cover rectangles with optional corner radius, ellipses, lines, and polygons with fill/stroke styling. Text layers support real font rendering with weight, style, wrapping, alignment, transforms, runtime font registration, and browser Google Fonts loading.
 
 **16 blend modes** — Normal, Multiply, Screen, Overlay, Darken, Lighten, ColorDodge, ColorBurn, HardLight, SoftLight, Difference, Exclusion, Hue, Saturation, Color, Luminosity.
 
@@ -77,22 +77,22 @@ Shape layers cover rectangle, rounded rectangle, ellipse, line, and polygon prim
 
 **Filters** — HSL adjustments, brightness/contrast, temperature/tint, sharpen. Invert, posterize, threshold, levels, gradient map. Box blur, Gaussian blur, edge detect, emboss (all as convolution kernels).
 
-**Transforms** — Non-destructive per-layer translate / scale / rotate / flip for image, paint, and shape layers, plus destructive resize (nearest-neighbor, bilinear, Lanczos3), crop, trim alpha.
+**Transforms** — Non-destructive per-layer translate / scale / rotate / flip for raster, shape, and text layers, plus destructive resize (nearest-neighbor, bilinear, Lanczos3), crop, trim alpha.
 
-**Paint tools** — Bucket fill for image and paint layers with contiguous/non-contiguous modes and alpha-aware RGBA tolerance matching.
+**Paint tools** — Bucket fill for raster layers with contiguous/non-contiguous modes and alpha-aware RGBA tolerance matching.
 
 **Sprite tools** — Sprite sheet packer (shelf bin-packing), contact sheet grids, pixel-art upscale, color quantization, batch render pipeline.
 
 **Format support** — PNG, JPEG, WebP, GIF (animated frames → layers), and experimental PSD layer import. Auto-detection via magic bytes.
 
-**Serialization** — Save/load full documents as `.kimg` files (versioned binary metadata + raw pixel data, with legacy JSON metadata still accepted on load).
+**Serialization** — Save/load full documents as `.kimg` files (versioned binary metadata + raw pixel data).
 
 ### Shape layers
 
 ```js
 const badgeId = doc.addShapeLayer({
   name: "Badge",
-  type: "roundedRect",
+  type: "rectangle",
   x: 24,
   y: 24,
   width: 96,
@@ -236,7 +236,7 @@ kimg/
 │   │   │   ├── color.rs       # RGB/HSL conversion, luminance, contrast
 │   │   │   ├── convolution.rs # Blur, sharpen, edge detect, emboss kernels
 │   │   │   ├── document.rs    # Document struct, layer tree, render pipeline
-│   │   │   ├── fill.rs        # Bucket fill for image/paint pixel layers
+│   │   │   ├── fill.rs        # Bucket fill for raster layers
 │   │   │   ├── filter.rs      # HSL filters, invert, posterize, threshold, levels
 │   │   │   ├── layer.rs       # Layer types and common properties
 │   │   │   ├── serialize.rs   # Document save/load
@@ -284,7 +284,7 @@ npm run test:pack
 npm run test:all
 ```
 
-154 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, text layers, bucket fill, and shared per-layer transforms.
+150 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, text layers, bucket fill, and shared per-layer transforms.
 
 The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
 
@@ -336,7 +336,7 @@ Notes on the harnesses:
 
 - Very expensive resize cases use reduced flat-sampled Criterion groups so `cargo bench -p kimg-core` stays practical while still reporting worst-case medians.
 - RGBA bilinear and Lanczos3 resize paths use `fast_image_resize`, so native builds pick up host SIMD and the browser `Composition.create()` path can load the separate `simd128` wasm artifact.
-- Text benches run with `--features cosmic-text-backend` and split cold-path rasterization/layout from warm-cache rerender cost, since those are materially different workloads.
+- The full suite runs with default features. The text medians below were refreshed separately with `cargo bench -p kimg-core --bench document --features cosmic-text-backend -- 'render/(text|repeated_text)'` so they reflect the shipped text renderer instead of the lean fallback path.
 - Codec benchmarks use a deterministic textured 512×512 image instead of a flat fill, which avoids unrealistically optimistic compression timings.
 - `render/repeated_transformed_layer/512` performs two back-to-back renders of the same transformed document in one iteration to measure transform-cache wins directly.
 - Standalone shape benches instantiate a fresh shape per sample so they continue to measure rasterization work instead of the document-level layer cache.
@@ -345,53 +345,53 @@ Representative medians from recent local runs on March 3, 2026. These are hardwa
 
 | Operation | Median |
 |------|------:|
-| `render/single_image/512` | `5.29 ms` |
-| `render/10_layers/512` | `8.31 ms` |
-| `render/10_normal_layers/512` | `17.78 ms` |
-| `render/10_layers_with_filter/512` | `14.05 ms` |
-| `render/single_shape/512` | `739.04 µs` |
-| `render/10_shapes/512` | `7.30 ms` |
-| `render/10_shapes_with_filter/512` | `14.79 ms` |
-| `render/group_of_5/512` | `28.08 ms` |
-| `render/clipped_layer_stack/512` | `18.40 ms` |
-| `render/masked_layer_stack/512` | `10.59 ms` |
-| `render/transformed_image/512` | `774.35 µs` |
-| `render/transformed_paint/512` | `889.75 µs` |
-| `render/transformed_shape/512` | `861.31 µs` |
-| `render/10_layers_with_transforms/512` | `7.98 ms` |
-| `render/repeated_transformed_layer/512` | `1.56 ms` |
-| `render/text_registered_cold/320x168` | `20.46 ms` |
-| `render/text_registered_cached/320x168` | `228.52 µs` |
-| `render/text_styles_cold/320x176` | `31.30 ms` |
-| `render/text_styles_cached/320x176` | `195.54 µs` |
-| `render/repeated_text_styles/320x176` | `389.61 µs` |
-| `serialize_deserialize/10_layers` | `762.54 µs` |
-| `apply_hsl_filter/512` | `5.31 ms` |
-| `bucket_fill/contiguous/512` | `945.14 µs` |
-| `bucket_fill/non_contiguous/512` | `808.98 µs` |
-| `bucket_fill/tolerance/512` | `1.19 ms` |
-| `encode_png/512` | `1.25 ms` |
-| `decode_png/512` | `1.24 ms` |
-| `encode_jpeg/512` | `2.18 ms` |
+| `render/single_image/512` | `966.44 µs` |
+| `render/10_layers/512` | `9.63 ms` |
+| `render/10_normal_layers/512` | `19.04 ms` |
+| `render/10_layers_with_filter/512` | `15.21 ms` |
+| `render/single_shape/512` | `973.94 µs` |
+| `render/10_shapes/512` | `9.60 ms` |
+| `render/10_shapes_with_filter/512` | `17.06 ms` |
+| `render/group_of_5/512` | `5.16 ms` |
+| `render/clipped_layer_stack/512` | `18.39 ms` |
+| `render/masked_layer_stack/512` | `10.32 ms` |
+| `render/transformed_image/512` | `996.86 µs` |
+| `render/transformed_paint/512` | `1.16 ms` |
+| `render/transformed_shape/512` | `1.13 ms` |
+| `render/10_layers_with_transforms/512` | `10.30 ms` |
+| `render/repeated_transformed_layer/512` | `2.00 ms` |
+| `render/text_registered_cold/320x168` | `20.51 ms` |
+| `render/text_registered_cached/320x168` | `228.84 µs` |
+| `render/text_styles_cold/320x176` | `31.22 ms` |
+| `render/text_styles_cached/320x176` | `195.31 µs` |
+| `render/repeated_text_styles/320x176` | `392.28 µs` |
+| `serialize_deserialize/10_layers` | `775.90 µs` |
+| `apply_hsl_filter/512` | `5.09 ms` |
+| `bucket_fill/contiguous/512` | `685.52 µs` |
+| `bucket_fill/non_contiguous/512` | `280.61 µs` |
+| `bucket_fill/tolerance/512` | `390.72 µs` |
+| `encode_png/512` | `1.26 ms` |
+| `decode_png/512` | `1.27 ms` |
+| `encode_jpeg/512` | `2.09 ms` |
 | `decode_jpeg/512` | `1.21 ms` |
-| `encode_webp/512` | `1.41 ms` |
-| `decode_webp/512` | `2.65 ms` |
-| `extract_palette/512/16colors` | `20.45 ms` |
-| `shape/rasterize_rectangle/512` | `869.95 µs` |
-| `shape/rasterize_polygon/512` | `12.64 ms` |
-| `resize_nearest/512→1024` | `1.63 ms` |
-| `resize_bilinear/512→1024` | `1.01 ms` |
-| `resize_lanczos3/512→1024` | `1.59 ms` |
-| `resize_lanczos3/2048→4096` | `52.69 ms` |
+| `encode_webp/512` | `1.43 ms` |
+| `decode_webp/512` | `2.70 ms` |
+| `extract_palette/512/16colors` | `20.85 ms` |
+| `shape/rasterize_rectangle/512` | `879.04 µs` |
+| `shape/rasterize_polygon/512` | `12.02 ms` |
+| `resize_nearest/512→1024` | `1.64 ms` |
+| `resize_bilinear/512→1024` | `1.03 ms` |
+| `resize_lanczos3/512→1024` | `1.61 ms` |
+| `resize_lanczos3/2048→4096` | `53.55 ms` |
 
 ## WASM binary size
 
 Current local release build sizes:
 
-- `dist/kimg_wasm_bg.wasm`: `934 KB` uncompressed, `346,582` bytes gzipped
-- `dist/kimg_wasm_simd_bg.wasm`: `1.1 MB` uncompressed, `385,388` bytes gzipped
-- `dist/kimg_wasm_text_bg.wasm`: `3.1 MB` uncompressed
-- `dist/kimg_wasm_text_simd_bg.wasm`: `3.4 MB` uncompressed
+- `dist/kimg_wasm_bg.wasm`: `1.0 MB` uncompressed, `370,869` bytes gzipped
+- `dist/kimg_wasm_simd_bg.wasm`: `1.2 MB` uncompressed, `409,572` bytes gzipped
+- `dist/kimg_wasm_text_bg.wasm`: `3.2 MB` uncompressed, `1,076,325` bytes gzipped
+- `dist/kimg_wasm_text_simd_bg.wasm`: `3.5 MB` uncompressed, `1,178,561` bytes gzipped
 
 These vary slightly with toolchain and optimization settings.
 

@@ -33,7 +33,7 @@ const png = doc.exportPng();
 
 doc.addShapeLayer({
   name: "badge",
-  type: "roundedRect",
+  type: "rectangle",
   x: 16,
   y: 16,
   width: 48,

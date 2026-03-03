@@ -27,10 +27,10 @@ use kimg_core::convolution;
 use kimg_core::document::Document as CoreDocument;
 use kimg_core::filter;
 use kimg_core::layer::{
-    FilterLayerData, FilterLayerPatch, GradientDirection, GradientLayerData, GradientStop,
-    GroupLayerData, ImageLayerData, Layer, LayerCommon, LayerKind, LayerPatch, LayerTransform,
-    PaintLayerData, ShapeLayerData, ShapePoint, ShapeStroke, ShapeType, SolidColorLayerData,
-    TextAlign, TextFontStyle, TextLayerData, TextLayerPatch, TextWrap,
+    FillKind, FillLayerData, FilterLayerData, FilterLayerPatch, GradientDirection, GradientStop,
+    GroupLayerData, Layer, LayerCommon, LayerKind, LayerPatch, LayerTransform, RasterLayerData,
+    ShapeLayerData, ShapePoint, ShapeStroke, ShapeType, TextAlign, TextFontStyle, TextLayerData,
+    TextLayerPatch, TextWrap,
 };
 use kimg_core::pixel::Rgba;
 use kimg_core::serialize;
@@ -45,14 +45,14 @@ pub struct Document {
     inner: CoreDocument,
 }
 
-fn mutate_image_layer(
+fn mutate_raster_layer(
     document: &mut CoreDocument,
     id: u32,
-    mutate: impl FnOnce(&mut ImageLayerData),
+    mutate: impl FnOnce(&mut RasterLayerData),
 ) {
     if let Some(layer) = document.find_layer_mut(id) {
-        if let LayerKind::Image(image) = &mut layer.kind {
-            mutate(image);
+        if let LayerKind::Raster(raster) = &mut layer.kind {
+            mutate(raster);
         }
     }
 }
@@ -138,7 +138,7 @@ impl Document {
         common.y = y;
         self.inner.layers.push(Layer::new(
             common,
-            LayerKind::Image(ImageLayerData::new(buffer)),
+            LayerKind::Raster(RasterLayerData::new(buffer)),
         ));
         id
     }
@@ -148,7 +148,7 @@ impl Document {
         let id = self.inner.next_id();
         self.inner.layers.push(Layer::new(
             LayerCommon::new(id, name),
-            LayerKind::Paint(PaintLayerData::new(ImageBuffer::new_transparent(
+            LayerKind::Raster(RasterLayerData::new(ImageBuffer::new_transparent(
                 width, height,
             ))),
         ));
@@ -180,7 +180,7 @@ impl Document {
         let id = self.inner.next_id();
         self.inner.layers.push(Layer::new(
             LayerCommon::new(id, name),
-            LayerKind::SolidColor(SolidColorLayerData::new(Rgba::new(r, g, b, a))),
+            LayerKind::Fill(FillLayerData::solid(Rgba::new(r, g, b, a))),
         ));
         id
     }
@@ -223,7 +223,7 @@ impl Document {
         let id = self.inner.next_id();
         self.inner.layers.push(Layer::new(
             LayerCommon::new(id, name),
-            LayerKind::Gradient(GradientLayerData::new(stops, dir)),
+            LayerKind::Fill(FillLayerData::gradient(stops, dir)),
         ));
         id
     }
@@ -357,7 +357,7 @@ impl Document {
 
     // ── Image-specific setters ──
 
-    /// Set flip on an image, paint, or shape layer.
+    /// Set flip on a raster, shape, or text layer.
     pub fn set_flip(&mut self, id: u32, flip_x: bool, flip_y: bool) {
         let mut patch = LayerPatch::default();
         patch.flip_x = Some(flip_x);
@@ -365,14 +365,14 @@ impl Document {
         let _ = self.inner.update_layer(id, &patch);
     }
 
-    /// Set non-destructive rotation on an image, paint, or shape layer.
+    /// Set non-destructive rotation on a raster, shape, or text layer.
     pub fn set_rotation(&mut self, id: u32, degrees: f64) {
         let mut patch = LayerPatch::default();
         patch.rotation = Some(degrees);
         let _ = self.inner.update_layer(id, &patch);
     }
 
-    /// Set anchor on an image, paint, or shape layer. 0 = TopLeft, 1 = Center.
+    /// Set anchor on a raster, shape, or text layer. 0 = TopLeft, 1 = Center.
     pub fn set_anchor(&mut self, id: u32, anchor: u8) {
         let a = match anchor {
             1 => Anchor::Center,
@@ -435,7 +435,7 @@ impl Document {
         let mut common = LayerCommon::new(id, name);
         common.x = x;
         common.y = y;
-        let child = Layer::new(common, LayerKind::Image(ImageLayerData::new(buffer)));
+        let child = Layer::new(common, LayerKind::Raster(RasterLayerData::new(buffer)));
         self.inner
             .add_child_to_group(group_id, child)
             .expect("group not found");
@@ -642,7 +642,7 @@ impl Document {
         common.y = y;
         self.inner.layers.push(Layer::new(
             common,
-            LayerKind::Image(ImageLayerData::new(buf)),
+            LayerKind::Raster(RasterLayerData::new(buf)),
         ));
         id
     }
@@ -653,12 +653,11 @@ impl Document {
         codec::encode_png(&result).expect("failed to encode PNG")
     }
 
-    /// Get a layer's raw RGBA pixel buffer. Returns empty vec if not an image/paint layer.
+    /// Get a layer's raw RGBA pixel buffer. Returns empty vec if not a rasterizable layer.
     pub fn get_layer_rgba(&self, id: u32) -> Vec<u8> {
         match self.inner.find_layer(id) {
             Some(layer) => match &layer.kind {
-                LayerKind::Image(img) => img.buffer.data.clone(),
-                LayerKind::Paint(paint) => paint.buffer.data.clone(),
+                LayerKind::Raster(raster) => raster.buffer.data.clone(),
                 LayerKind::Shape(shape) => render_shape(shape).data,
                 LayerKind::Text(text) => render_text(text).data,
                 _ => Vec::new(),
@@ -667,7 +666,7 @@ impl Document {
         }
     }
 
-    /// Bucket-fill an image or paint layer using layer-local coordinates.
+    /// Bucket-fill a raster layer using layer-local coordinates.
     ///
     /// Matching is alpha-aware and uses per-channel tolerance across RGBA.
     #[allow(clippy::too_many_arguments)]
@@ -704,9 +703,9 @@ impl Document {
 
     /// Resize a layer's buffer using nearest-neighbor (good for pixel art).
     pub fn resize_layer_nearest(&mut self, id: u32, new_width: u32, new_height: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
-            img.set_buffer(transform::resize_nearest(
-                &img.buffer,
+        mutate_raster_layer(&mut self.inner, id, |raster| {
+            raster.set_buffer(transform::resize_nearest(
+                &raster.buffer,
                 new_width,
                 new_height,
             ));
@@ -715,9 +714,9 @@ impl Document {
 
     /// Resize a layer's buffer using bilinear interpolation.
     pub fn resize_layer_bilinear(&mut self, id: u32, new_width: u32, new_height: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
-            img.set_buffer(transform::resize_bilinear(
-                &img.buffer,
+        mutate_raster_layer(&mut self.inner, id, |raster| {
+            raster.set_buffer(transform::resize_bilinear(
+                &raster.buffer,
                 new_width,
                 new_height,
             ));
@@ -726,9 +725,9 @@ impl Document {
 
     /// Resize a layer's buffer using Lanczos3 interpolation (high quality).
     pub fn resize_layer_lanczos3(&mut self, id: u32, new_width: u32, new_height: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
-            img.set_buffer(transform::resize_lanczos3(
-                &img.buffer,
+        mutate_raster_layer(&mut self.inner, id, |raster| {
+            raster.set_buffer(transform::resize_lanczos3(
+                &raster.buffer,
                 new_width,
                 new_height,
             ));
@@ -737,22 +736,22 @@ impl Document {
 
     /// Crop a layer's buffer to the given rectangle.
     pub fn crop_layer(&mut self, id: u32, x: u32, y: u32, width: u32, height: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
-            img.set_buffer(transform::crop(&img.buffer, x, y, width, height));
+        mutate_raster_layer(&mut self.inner, id, |raster| {
+            raster.set_buffer(transform::crop(&raster.buffer, x, y, width, height));
         });
     }
 
     /// Trim transparent edges from a layer's buffer.
     pub fn trim_layer_alpha(&mut self, id: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
-            img.set_buffer(transform::trim_alpha(&img.buffer));
+        mutate_raster_layer(&mut self.inner, id, |raster| {
+            raster.set_buffer(transform::trim_alpha(&raster.buffer));
         });
     }
 
     /// Rotate a layer's buffer by an arbitrary angle (degrees) with bilinear interpolation.
     pub fn rotate_layer(&mut self, id: u32, angle_deg: f64) {
-        mutate_image_layer(&mut self.inner, id, |img| {
-            img.set_buffer(transform::rotate_bilinear(&img.buffer, angle_deg));
+        mutate_raster_layer(&mut self.inner, id, |raster| {
+            raster.set_buffer(transform::rotate_bilinear(&raster.buffer, angle_deg));
         });
     }
 
@@ -760,21 +759,21 @@ impl Document {
 
     /// Apply a box blur to a layer. Radius 0 = no-op.
     pub fn box_blur_layer(&mut self, id: u32, radius: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
+        mutate_raster_layer(&mut self.inner, id, |img| {
             img.set_buffer(convolution::box_blur(&img.buffer, radius));
         });
     }
 
     /// Apply a Gaussian blur to a layer. Radius 0 = no-op.
     pub fn gaussian_blur_layer(&mut self, id: u32, radius: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
+        mutate_raster_layer(&mut self.inner, id, |img| {
             img.set_buffer(convolution::gaussian_blur(&img.buffer, radius));
         });
     }
 
     /// Apply a sharpen convolution to a layer.
     pub fn sharpen_layer(&mut self, id: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
+        mutate_raster_layer(&mut self.inner, id, |img| {
             img.set_buffer(convolution::convolve(
                 &img.buffer,
                 &convolution::Kernel::sharpen(),
@@ -784,7 +783,7 @@ impl Document {
 
     /// Apply edge detection (Laplacian) to a layer.
     pub fn edge_detect_layer(&mut self, id: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
+        mutate_raster_layer(&mut self.inner, id, |img| {
             img.set_buffer(convolution::convolve(
                 &img.buffer,
                 &convolution::Kernel::edge_detect(),
@@ -794,7 +793,7 @@ impl Document {
 
     /// Apply emboss effect to a layer.
     pub fn emboss_layer(&mut self, id: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
+        mutate_raster_layer(&mut self.inner, id, |img| {
             img.set_buffer(convolution::convolve(
                 &img.buffer,
                 &convolution::Kernel::emboss(),
@@ -806,21 +805,21 @@ impl Document {
 
     /// Invert RGB channels of a layer.
     pub fn invert_layer(&mut self, id: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
+        mutate_raster_layer(&mut self.inner, id, |img| {
             img.mutate_buffer(filter::invert);
         });
     }
 
     /// Posterize a layer (reduce color levels per channel).
     pub fn posterize_layer(&mut self, id: u32, levels: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
+        mutate_raster_layer(&mut self.inner, id, |img| {
             img.mutate_buffer(|buffer| filter::posterize(buffer, levels));
         });
     }
 
     /// Convert a layer to black/white based on luminance threshold (0–255).
     pub fn threshold_layer(&mut self, id: u32, thresh: u8) {
-        mutate_image_layer(&mut self.inner, id, |img| {
+        mutate_raster_layer(&mut self.inner, id, |img| {
             img.mutate_buffer(|buffer| filter::threshold(buffer, thresh));
         });
     }
@@ -836,7 +835,7 @@ impl Document {
         out_black: u8,
         out_white: u8,
     ) {
-        mutate_image_layer(&mut self.inner, id, |img| {
+        mutate_raster_layer(&mut self.inner, id, |img| {
             img.mutate_buffer(|buffer| {
                 filter::levels(buffer, in_black, in_white, gamma, out_black, out_white);
             });
@@ -862,7 +861,7 @@ impl Document {
                 ));
             }
         }
-        mutate_image_layer(&mut self.inner, id, |img| {
+        mutate_raster_layer(&mut self.inner, id, |img| {
             img.mutate_buffer(|buffer| filter::gradient_map(buffer, &stops));
         });
     }
@@ -938,8 +937,8 @@ impl Document {
 
     /// Scale a layer in-place by an integer factor using nearest-neighbor.
     pub fn pixel_scale_layer(&mut self, id: u32, factor: u32) {
-        mutate_image_layer(&mut self.inner, id, |img| {
-            img.set_buffer(sprite::pixel_scale(&img.buffer, factor));
+        mutate_raster_layer(&mut self.inner, id, |raster| {
+            raster.set_buffer(sprite::pixel_scale(&raster.buffer, factor));
         });
     }
 
@@ -948,8 +947,7 @@ impl Document {
         match self.inner.find_layer(id) {
             Some(layer) => {
                 let buf = match &layer.kind {
-                    LayerKind::Image(img) => &img.buffer,
-                    LayerKind::Paint(paint) => &paint.buffer,
+                    LayerKind::Raster(raster) => &raster.buffer,
                     LayerKind::Shape(_) => {
                         let rasterized = match &layer.kind {
                             LayerKind::Shape(shape) => render_shape(shape),
@@ -971,8 +969,8 @@ impl Document {
     /// `palette_colors` is flat [r,g,b,a, r,g,b,a, ...].
     pub fn quantize_layer(&mut self, id: u32, palette_colors: &[u8]) {
         let palette = flat_to_palette(palette_colors);
-        mutate_image_layer(&mut self.inner, id, |img| {
-            img.set_buffer(sprite::quantize(&img.buffer, &palette));
+        mutate_raster_layer(&mut self.inner, id, |raster| {
+            raster.set_buffer(sprite::quantize(&raster.buffer, &palette));
         });
     }
 
@@ -1017,7 +1015,7 @@ impl Document {
             common.visible = psd_layer.visible;
             self.inner.layers.push(Layer::new(
                 common,
-                LayerKind::Image(ImageLayerData::new(psd_layer.buffer)),
+                LayerKind::Raster(RasterLayerData::new(psd_layer.buffer)),
             ));
             ids.push(id);
         }
@@ -1064,7 +1062,7 @@ impl Document {
         common.y = y;
         self.inner.layers.push(Layer::new(
             common,
-            LayerKind::Image(ImageLayerData::new(buf)),
+            LayerKind::Raster(RasterLayerData::new(buf)),
         ));
         id
     }
@@ -1076,8 +1074,7 @@ impl Document {
                 self.inner
                     .find_layer(id)
                     .and_then(|layer| match &layer.kind {
-                        LayerKind::Image(img) => Some(img.buffer.clone()),
-                        LayerKind::Paint(paint) => Some(paint.buffer.clone()),
+                        LayerKind::Raster(raster) => Some(raster.buffer.clone()),
                         LayerKind::Shape(shape) => Some(render_shape(shape)),
                         LayerKind::Text(text) => Some(render_text(text)),
                         _ => None,
@@ -1122,7 +1119,6 @@ fn parse_shape_points(points_xy: &[i32]) -> Vec<ShapePoint> {
 
 fn parse_shape_type(shape_type: &str) -> ShapeType {
     match shape_type {
-        "roundedRect" | "rounded_rect" => ShapeType::RoundedRect,
         "ellipse" => ShapeType::Ellipse,
         "line" => ShapeType::Line,
         "polygon" => ShapeType::Polygon,
@@ -1227,7 +1223,6 @@ fn gradient_direction_name(direction: GradientDirection) -> &'static str {
 fn shape_type_name(shape_type: ShapeType) -> &'static str {
     match shape_type {
         ShapeType::Rectangle => "rectangle",
-        ShapeType::RoundedRect => "roundedRect",
         ShapeType::Ellipse => "ellipse",
         ShapeType::Line => "line",
         ShapeType::Polygon => "polygon",
@@ -1271,33 +1266,19 @@ fn layer_snapshot(layer: &Layer, parent_id: Option<u32>, index: usize, depth: us
     );
 
     match &layer.kind {
-        LayerKind::Image(image) => {
-            set_prop(&object, "kind", JsValue::from_str("image"));
+        LayerKind::Raster(raster) => {
+            set_prop(&object, "kind", JsValue::from_str("raster"));
             set_prop(
                 &object,
                 "width",
-                JsValue::from_f64(image.buffer.width as f64),
+                JsValue::from_f64(raster.buffer.width as f64),
             );
             set_prop(
                 &object,
                 "height",
-                JsValue::from_f64(image.buffer.height as f64),
+                JsValue::from_f64(raster.buffer.height as f64),
             );
-            set_transform_snapshot(&object, &image.transform);
-        }
-        LayerKind::Paint(paint) => {
-            set_prop(&object, "kind", JsValue::from_str("paint"));
-            set_prop(
-                &object,
-                "width",
-                JsValue::from_f64(paint.buffer.width as f64),
-            );
-            set_prop(
-                &object,
-                "height",
-                JsValue::from_f64(paint.buffer.height as f64),
-            );
-            set_transform_snapshot(&object, &paint.transform);
+            set_transform_snapshot(&object, &raster.transform);
         }
         LayerKind::Filter(filter) => {
             set_prop(&object, "kind", JsValue::from_str("filter"));
@@ -1341,27 +1322,29 @@ fn layer_snapshot(layer: &Layer, parent_id: Option<u32>, index: usize, depth: us
                 JsValue::from_f64(group.children.len() as f64),
             );
         }
-        LayerKind::SolidColor(color) => {
-            set_prop(&object, "kind", JsValue::from_str("solidColor"));
-            let rgba = Array::new();
-            rgba.push(&JsValue::from_f64(color.color.r as f64));
-            rgba.push(&JsValue::from_f64(color.color.g as f64));
-            rgba.push(&JsValue::from_f64(color.color.b as f64));
-            rgba.push(&JsValue::from_f64(color.color.a as f64));
-            set_prop(&object, "color", rgba.into());
-        }
-        LayerKind::Gradient(gradient) => {
-            set_prop(&object, "kind", JsValue::from_str("gradient"));
-            set_prop(
-                &object,
-                "direction",
-                JsValue::from_str(gradient_direction_name(gradient.direction)),
-            );
-            set_prop(
-                &object,
-                "stopCount",
-                JsValue::from_f64(gradient.stops.len() as f64),
-            );
+        LayerKind::Fill(fill) => {
+            set_prop(&object, "kind", JsValue::from_str("fill"));
+            match &fill.kind {
+                FillKind::Solid { color } => {
+                    set_prop(&object, "fillType", JsValue::from_str("solid"));
+                    let rgba = Array::new();
+                    rgba.push(&JsValue::from_f64(color.r as f64));
+                    rgba.push(&JsValue::from_f64(color.g as f64));
+                    rgba.push(&JsValue::from_f64(color.b as f64));
+                    rgba.push(&JsValue::from_f64(color.a as f64));
+                    set_prop(&object, "color", rgba.into());
+                }
+                FillKind::Gradient { direction, stops } => {
+                    set_prop(&object, "fillType", JsValue::from_str("gradient"));
+                    set_prop(
+                        &object,
+                        "direction",
+                        JsValue::from_str(gradient_direction_name(*direction)),
+                    );
+                    set_prop(&object, "stopCount", JsValue::from_f64(stops.len() as f64));
+                }
+                _ => {}
+            }
         }
         LayerKind::Shape(shape) => {
             set_prop(&object, "kind", JsValue::from_str("shape"));
@@ -1766,23 +1749,23 @@ mod tests {
         assert_eq!(layer.common.x, 10);
         assert_eq!(layer.common.y, 20);
         assert_eq!(layer.common.blend_mode, BlendMode::Multiply);
-        if let LayerKind::Image(img) = &layer.kind {
-            assert!(img.transform.flip_x);
-            assert!(!img.transform.flip_y);
-            assert_eq!(img.transform.rotation_deg, 22.5);
-            assert_eq!(img.transform.anchor, Anchor::Center);
+        if let LayerKind::Raster(raster) = &layer.kind {
+            assert!(raster.transform.flip_x);
+            assert!(!raster.transform.flip_y);
+            assert_eq!(raster.transform.rotation_deg, 22.5);
+            assert_eq!(raster.transform.anchor, Anchor::Center);
         } else {
-            panic!("expected image layer");
+            panic!("expected raster layer");
         }
 
         match &doc.inner.find_layer(paint_id).unwrap().kind {
-            LayerKind::Paint(paint) => {
-                assert!(!paint.transform.flip_x);
-                assert!(paint.transform.flip_y);
-                assert_eq!(paint.transform.rotation_deg, 15.0);
-                assert_eq!(paint.transform.anchor, Anchor::Center);
+            LayerKind::Raster(raster) => {
+                assert!(!raster.transform.flip_x);
+                assert!(raster.transform.flip_y);
+                assert_eq!(raster.transform.rotation_deg, 15.0);
+                assert_eq!(raster.transform.anchor, Anchor::Center);
             }
-            _ => panic!("expected paint layer"),
+            _ => panic!("expected raster layer"),
         }
 
         match &doc.inner.find_layer(shape_id).unwrap().kind {
@@ -2046,7 +2029,7 @@ mod tests {
         let mut doc = Document::new(6, 6);
         let id = doc.add_shape_layer(
             "shape",
-            "roundedRect",
+            "rectangle",
             4,
             3,
             1,
@@ -2061,7 +2044,7 @@ mod tests {
         let layer = doc.inner.find_layer(id).unwrap();
         match &layer.kind {
             LayerKind::Shape(shape) => {
-                assert_eq!(shape.shape_type, ShapeType::RoundedRect);
+                assert_eq!(shape.shape_type, ShapeType::Rectangle);
                 assert_eq!(shape.width, 4);
                 assert_eq!(shape.height, 3);
             }
@@ -2103,7 +2086,7 @@ mod tests {
         assert!(doc.flatten_group(gid));
 
         let layer = doc.inner.find_layer(gid).unwrap();
-        assert!(matches!(layer.kind, LayerKind::Image(_)));
+        assert!(matches!(layer.kind, LayerKind::Raster(_)));
     }
 
     // ── Phase 3 tests ──

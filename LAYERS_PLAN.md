@@ -132,39 +132,22 @@ Behavior:
 
 ## Compatibility Strategy
 
-### 1. Serialized documents
+This cleanup shipped as a pre-release canonical rewrite.
 
-Existing `.kimg` files should continue to load.
-
-Compatibility rules:
-
-- legacy `Image` and `Paint` decode into `Raster`
-- legacy `SolidColor` and `Gradient` decode into `Fill`
-- legacy `rounded_rect` decodes into `rectangle` with `radius`
-
-Write path:
-
-- new saves should write only the canonical forms
-
-### 2. Raw wasm / JS API
-
-Recommended direction:
-
-- keep current helper names for compatibility where reasonable
-- normalize snapshots and list/get responses to the canonical kinds
-
-That means callers may still create a raster layer via an image-oriented or paint-oriented helper, but the returned layer kind should no longer pretend they are fundamentally different engine entities.
+- no old `.kimg` migration layer was kept
+- helper creation methods such as `addImageLayer()`, `addPaintLayer()`, `addSolidColorLayer()`, and `addGradientLayer()` remain for ergonomics
+- layer snapshots and serialization now use the canonical kinds only
 
 ## Work Plan
 
 ### Phase 1. Raster merge
 
-- [ ] Introduce `RasterLayerData`
-- [ ] Replace `LayerKind::Image` and `LayerKind::Paint` with `LayerKind::Raster`
-- [ ] Migrate document render, transforms, fill, flatten, and destructive ops
-- [ ] Update serialization to decode old forms and write new form
-- [ ] Update wasm snapshots / patches
-- [ ] Update JS facade types and helpers
+- [x] Introduce `RasterLayerData`
+- [x] Replace `LayerKind::Image` and `LayerKind::Paint` with `LayerKind::Raster`
+- [x] Migrate document render, transforms, fill, flatten, and destructive ops
+- [x] Rewrite serialization to only encode/decode the canonical form
+- [x] Update wasm snapshots / patches
+- [x] Update JS facade types and helpers
 
 Exit criteria:
 
@@ -173,12 +156,12 @@ Exit criteria:
 
 ### Phase 2. Fill merge
 
-- [ ] Introduce `FillLayerData` and `FillKind`
-- [ ] Replace `LayerKind::SolidColor` and `LayerKind::Gradient` with `LayerKind::Fill`
-- [ ] Preserve current render behavior for solid and gradient fills
-- [ ] Update serialization compatibility
-- [ ] Update wasm snapshots / patches
-- [ ] Update JS facade types and helpers
+- [x] Introduce `FillLayerData` and `FillKind`
+- [x] Replace `LayerKind::SolidColor` and `LayerKind::Gradient` with `LayerKind::Fill`
+- [x] Preserve current render behavior for solid and gradient fills
+- [x] Rewrite serialization to only encode/decode the canonical form
+- [x] Update wasm snapshots / patches
+- [x] Update JS facade types and helpers
 
 Exit criteria:
 
@@ -187,10 +170,10 @@ Exit criteria:
 
 ### Phase 3. Shape cleanup
 
-- [ ] Remove `ShapeType::RoundedRect`
-- [ ] Keep `ShapeType::Rectangle` with `radius`
-- [ ] Update shape renderer and serde compatibility
-- [ ] Update demo/docs/tests to use `rectangle + radius`
+- [x] Remove `ShapeType::RoundedRect`
+- [x] Keep `ShapeType::Rectangle` with `radius`
+- [x] Update shape renderer and serialization
+- [x] Update demo/docs/tests to use `rectangle + radius`
 
 Exit criteria:
 
@@ -199,9 +182,9 @@ Exit criteria:
 
 ### Phase 4. Polish and cleanup
 
-- [ ] Simplify docs to describe fewer layer families
-- [ ] Update benchmark/demo labels if needed
-- [ ] Remove dead compatibility shims that are no longer used internally
+- [x] Simplify docs to describe fewer layer families
+- [x] Update benchmark/demo labels if needed
+- [x] Remove dead compatibility shims that are no longer used internally
 
 Exit criteria:
 

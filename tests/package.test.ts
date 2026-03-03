@@ -612,7 +612,7 @@ describe("main package facade", () => {
     });
     const shapeId = composition.addShapeLayer({
       name: "badge",
-      type: "roundedRect",
+      type: "rectangle",
       x: 1,
       y: 1,
       width: 4,
@@ -653,7 +653,7 @@ describe("main package facade", () => {
       rotation: 30,
       scaleX: 1.25,
       scaleY: 0.75,
-      shapeType: "roundedRect",
+      shapeType: "rectangle",
       width: 4,
       height: 3,
       radius: 1,
@@ -662,7 +662,7 @@ describe("main package facade", () => {
     expect(composition.getLayer(paintId)).toMatchObject({
       anchor: "center",
       flipY: true,
-      kind: "paint",
+      kind: "raster",
       rotation: 15,
       scaleX: 2,
       scaleY: 0.5,

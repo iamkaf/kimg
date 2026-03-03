@@ -318,7 +318,7 @@ function createTests() {
 
           verify.equal(composition.layerCount(), 6, "layerCount should track top-level layers");
           verify.equal(layers.length, 8, "recursive listLayers should return every layer");
-          verify.equal(imageLayer?.kind, "image", "getLayer should describe the teapot as an image layer");
+          verify.equal(imageLayer?.kind, "raster", "getLayer should describe the teapot as a raster layer");
           verify.ok(layers.some((layer) => layer.name === "hidden-bar" && layer.visible === false), "hidden layer should remain in metadata but stay invisible");
 
           return {
@@ -684,7 +684,7 @@ function createTests() {
             name: "rounded",
             radius: 14,
             stroke: { color: [35, 79, 221, 255], width: 4 },
-            type: "roundedRect",
+            type: "rectangle",
             width: 90,
             x: 130,
             y: 24,
@@ -879,7 +879,7 @@ function createTests() {
             height: 112,
             name: "backplate",
             stroke: { color: [228, 113, 76, 96], width: 3 },
-            type: "roundedRect",
+            type: "rectangle",
             width: 128,
             x: 14,
             y: 18,
@@ -962,7 +962,7 @@ function createTests() {
               height: 136,
               name: `${spec.label}-panel`,
               stroke: { color: [120, 112, 101, 90], width: 2 },
-              type: "roundedRect",
+              type: "rectangle",
               width: 88,
               x: spec.x,
               y: 16,
@@ -1117,7 +1117,7 @@ function createTests() {
             height: 92,
             name: "regular-panel",
             stroke: { color: [120, 112, 101, 90], width: 2 },
-            type: "roundedRect",
+            type: "rectangle",
             width: 132,
             x: 16,
             y: 16,
@@ -1127,7 +1127,7 @@ function createTests() {
             height: 92,
             name: "italic-panel",
             stroke: { color: [120, 112, 101, 90], width: 2 },
-            type: "roundedRect",
+            type: "rectangle",
             width: 132,
             x: 172,
             y: 16,

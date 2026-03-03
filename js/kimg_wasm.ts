@@ -34,7 +34,7 @@ export interface RawLayerSnapshot {
   parentId: number | null;
   index: number;
   depth: number;
-  kind: "image" | "paint" | "filter" | "group" | "solidColor" | "gradient" | "shape" | "unknown";
+  kind: "raster" | "filter" | "group" | "fill" | "shape" | "text" | "unknown";
   name: string;
   visible: boolean;
   opacity: number;
@@ -64,10 +64,11 @@ export interface RawLayerSnapshot {
     sharpen: number;
   };
   childCount?: number;
+  fillType?: "solid" | "gradient";
   color?: number[];
   direction?: "horizontal" | "vertical" | "diagonalDown" | "diagonalUp";
   stopCount?: number;
-  shapeType?: "rectangle" | "roundedRect" | "ellipse" | "line" | "polygon";
+  shapeType?: "rectangle" | "ellipse" | "line" | "polygon";
   radius?: number;
   pointCount?: number;
   fill?: number[];

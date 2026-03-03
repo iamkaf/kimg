@@ -35,8 +35,13 @@ fn render_shape_manual(shape: &ShapeLayerData) -> ImageBuffer {
             let sample_y = y as f64 + 0.5;
 
             let pixel = match shape.shape_type {
-                ShapeType::Rectangle => sample_rect(shape, sample_x, sample_y),
-                ShapeType::RoundedRect => sample_rounded_rect(shape, sample_x, sample_y),
+                ShapeType::Rectangle => {
+                    if shape.radius > 0 {
+                        sample_rounded_rect(shape, sample_x, sample_y)
+                    } else {
+                        sample_rect(shape, sample_x, sample_y)
+                    }
+                }
                 ShapeType::Ellipse => sample_ellipse(shape, sample_x, sample_y),
                 ShapeType::Line => sample_line(shape, sample_x, sample_y),
                 ShapeType::Polygon => sample_polygon(shape, sample_x, sample_y),
@@ -59,12 +64,12 @@ fn render_shape_tiny_skia(shape: &ShapeLayerData) -> Option<ImageBuffer> {
 
     match shape.shape_type {
         ShapeType::Rectangle => {
-            let rect = Rect::from_xywh(0.0, 0.0, width as f32, height as f32)?;
-            let path = PathBuilder::from_rect(rect);
-            render_path_shape(shape, &path, &mut pixmap);
-        }
-        ShapeType::RoundedRect => {
-            let path = build_rounded_rect_path(width, height, shape.radius)?;
+            let path = if shape.radius > 0 {
+                build_rounded_rect_path(width, height, shape.radius)?
+            } else {
+                let rect = Rect::from_xywh(0.0, 0.0, width as f32, height as f32)?;
+                PathBuilder::from_rect(rect)
+            };
             render_path_shape(shape, &path, &mut pixmap);
         }
         ShapeType::Ellipse => {
@@ -513,7 +518,7 @@ mod tests {
     #[test]
     fn rounded_rect_respects_corner_radius() {
         let shape = ShapeLayerData::new(
-            ShapeType::RoundedRect,
+            ShapeType::Rectangle,
             6,
             6,
             2,
