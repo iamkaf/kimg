@@ -116,9 +116,15 @@ struct ShapeStrokeMetadata {
 struct TextMetadata {
     text: String,
     color: [u8; 4],
+    font_family: String,
+    font_weight: u16,
+    font_style: u8,
     font_size: u32,
     line_height: u32,
     letter_spacing: u32,
+    align: u8,
+    wrap: u8,
+    box_width: Option<u32>,
     transform: LayerTransformMetadata,
 }
 
@@ -380,9 +386,15 @@ fn build_layer_metadata(
             text: TextMetadata {
                 text: text.text.clone(),
                 color: rgba_to_array(text.color),
+                font_family: text.font_family.clone(),
+                font_weight: text.font_weight,
+                font_style: text_font_style_to_code(text.font_style),
                 font_size: text.font_size,
                 line_height: text.line_height,
                 letter_spacing: text.letter_spacing,
+                align: text_align_to_code(text.align),
+                wrap: text_wrap_to_code(text.wrap),
+                box_width: text.box_width,
                 transform: transform_to_metadata(text.transform),
             },
         },
@@ -525,6 +537,12 @@ fn layer_from_metadata(
                 text.line_height,
                 text.letter_spacing,
             );
+            layer.font_family = text.font_family;
+            layer.font_weight = text.font_weight.max(1);
+            layer.font_style = text_font_style_from_code(text.font_style);
+            layer.align = text_align_from_code(text.align);
+            layer.wrap = text_wrap_from_code(text.wrap);
+            layer.box_width = text.box_width.map(|width| width.max(1));
             layer.transform = transform_from_metadata(text.transform);
             LayerKind::Text(layer)
         }
@@ -726,6 +744,52 @@ fn shape_type_from_code(code: u8) -> ShapeType {
         3 => ShapeType::Line,
         4 => ShapeType::Polygon,
         _ => ShapeType::Rectangle,
+    }
+}
+
+fn text_font_style_to_code(style: TextFontStyle) -> u8 {
+    match style {
+        TextFontStyle::Normal => 0,
+        TextFontStyle::Italic => 1,
+        TextFontStyle::Oblique => 2,
+    }
+}
+
+fn text_font_style_from_code(code: u8) -> TextFontStyle {
+    match code {
+        1 => TextFontStyle::Italic,
+        2 => TextFontStyle::Oblique,
+        _ => TextFontStyle::Normal,
+    }
+}
+
+fn text_align_to_code(align: TextAlign) -> u8 {
+    match align {
+        TextAlign::Left => 0,
+        TextAlign::Center => 1,
+        TextAlign::Right => 2,
+    }
+}
+
+fn text_align_from_code(code: u8) -> TextAlign {
+    match code {
+        1 => TextAlign::Center,
+        2 => TextAlign::Right,
+        _ => TextAlign::Left,
+    }
+}
+
+fn text_wrap_to_code(wrap: TextWrap) -> u8 {
+    match wrap {
+        TextWrap::None => 0,
+        TextWrap::Word => 1,
+    }
+}
+
+fn text_wrap_from_code(code: u8) -> TextWrap {
+    match code {
+        1 => TextWrap::Word,
+        _ => TextWrap::None,
     }
 }
 
@@ -1521,6 +1585,14 @@ mod tests {
                 2,
             )),
         };
+        if let LayerKind::Text(text) = &mut layer.kind {
+            text.font_family = "Inter".into();
+            text.font_weight = 700;
+            text.font_style = TextFontStyle::Italic;
+            text.align = TextAlign::Center;
+            text.wrap = TextWrap::Word;
+            text.box_width = Some(64);
+        }
         layer.common.x = 3;
         layer.common.y = 4;
         doc.layers.push(layer);
@@ -1535,9 +1607,15 @@ mod tests {
             LayerKind::Text(text) => {
                 assert_eq!(text.text, "Hello\nWorld");
                 assert_eq!(text.color, Rgba::new(12, 34, 56, 255));
+                assert_eq!(text.font_family, "Inter");
+                assert_eq!(text.font_weight, 700);
+                assert_eq!(text.font_style, TextFontStyle::Italic);
                 assert_eq!(text.font_size, 16);
                 assert_eq!(text.line_height, 20);
                 assert_eq!(text.letter_spacing, 2);
+                assert_eq!(text.align, TextAlign::Center);
+                assert_eq!(text.wrap, TextWrap::Word);
+                assert_eq!(text.box_width, Some(64));
             }
             _ => panic!("expected text layer"),
         }

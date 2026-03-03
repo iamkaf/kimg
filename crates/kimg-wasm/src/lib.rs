@@ -30,7 +30,7 @@ use kimg_core::layer::{
     FilterLayerData, FilterLayerPatch, GradientDirection, GradientLayerData, GradientStop,
     GroupLayerData, ImageLayerData, Layer, LayerCommon, LayerKind, LayerPatch, LayerTransform,
     PaintLayerData, ShapeLayerData, ShapePoint, ShapeStroke, ShapeType, SolidColorLayerData,
-    TextLayerData, TextLayerPatch,
+    TextAlign, TextFontStyle, TextLayerData, TextLayerPatch, TextWrap,
 };
 use kimg_core::pixel::Rgba;
 use kimg_core::serialize;
@@ -54,6 +54,47 @@ fn mutate_image_layer(
         if let LayerKind::Image(image) = &mut layer.kind {
             mutate(image);
         }
+    }
+}
+
+/// Register raw font bytes for the text backend.
+///
+/// Returns the number of faces successfully parsed from the input. When the
+/// `cosmic-text-backend` feature is not enabled, this returns `0`.
+#[wasm_bindgen]
+pub fn register_font(bytes: &[u8]) -> u32 {
+    #[cfg(feature = "cosmic-text-backend")]
+    {
+        return kimg_core::text::register_font_bytes(bytes.to_vec()) as u32;
+    }
+
+    #[cfg(not(feature = "cosmic-text-backend"))]
+    {
+        let _ = bytes;
+        0
+    }
+}
+
+/// Clear all runtime-registered fonts.
+#[wasm_bindgen]
+pub fn clear_registered_fonts() {
+    #[cfg(feature = "cosmic-text-backend")]
+    {
+        kimg_core::text::clear_registered_fonts();
+    }
+}
+
+/// Count the number of runtime-registered font binaries.
+#[wasm_bindgen]
+pub fn registered_font_count() -> u32 {
+    #[cfg(feature = "cosmic-text-backend")]
+    {
+        return kimg_core::text::registered_font_count() as u32;
+    }
+
+    #[cfg(not(feature = "cosmic-text-backend"))]
+    {
+        0
     }
 }
 
@@ -1382,6 +1423,25 @@ fn layer_snapshot(layer: &Layer, parent_id: Option<u32>, index: usize, depth: us
                 "letterSpacing",
                 JsValue::from_f64(text.letter_spacing as f64),
             );
+            set_prop(&object, "fontFamily", JsValue::from_str(&text.font_family));
+            set_prop(
+                &object,
+                "fontWeight",
+                JsValue::from_f64(text.font_weight as f64),
+            );
+            set_prop(
+                &object,
+                "fontStyle",
+                JsValue::from_str(text.font_style.as_str()),
+            );
+            set_prop(&object, "align", JsValue::from_str(text.align.as_str()));
+            set_prop(&object, "wrap", JsValue::from_str(text.wrap.as_str()));
+            match text.box_width {
+                Some(box_width) => {
+                    set_prop(&object, "boxWidth", JsValue::from_f64(box_width as f64))
+                }
+                None => set_prop(&object, "boxWidth", JsValue::NULL),
+            }
             let rgba = Array::new();
             rgba.push(&JsValue::from_f64(text.color.r as f64));
             rgba.push(&JsValue::from_f64(text.color.g as f64));
@@ -1463,6 +1523,13 @@ fn parse_text_patch(value: &JsValue) -> Option<TextLayerPatch> {
             None
         }
     });
+    patch.font_family = get_prop(&object, "fontFamily").and_then(|value| value.as_string());
+    patch.font_weight = get_prop(&object, "fontWeight")
+        .and_then(|value| value.as_f64())
+        .map(|value| value as u16);
+    patch.font_style = get_prop(&object, "fontStyle")
+        .and_then(|value| value.as_string())
+        .map(|value| TextFontStyle::from_str_lossy(&value));
     patch.font_size = get_prop(&object, "fontSize")
         .and_then(|value| value.as_f64())
         .map(|value| value as u32);
@@ -1472,6 +1539,19 @@ fn parse_text_patch(value: &JsValue) -> Option<TextLayerPatch> {
     patch.letter_spacing = get_prop(&object, "letterSpacing")
         .and_then(|value| value.as_f64())
         .map(|value| value as u32);
+    patch.align = get_prop(&object, "align")
+        .and_then(|value| value.as_string())
+        .map(|value| TextAlign::from_str_lossy(&value));
+    patch.wrap = get_prop(&object, "wrap")
+        .and_then(|value| value.as_string())
+        .map(|value| TextWrap::from_str_lossy(&value));
+    if let Some(value) = get_prop(&object, "boxWidth") {
+        patch.box_width = if value.is_null() || value.is_undefined() {
+            Some(None)
+        } else {
+            value.as_f64().map(|width| Some(width as u32))
+        };
+    }
     Some(patch)
 }
 
@@ -1623,6 +1703,13 @@ mod tests {
         let data = doc.render();
         assert_eq!(data.len(), 4 * 4 * 4);
         assert!(data.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn runtime_font_registration_api_is_safe() {
+        clear_registered_fonts();
+        assert_eq!(register_font(&[1, 2, 3, 4]), 0);
+        assert_eq!(registered_font_count(), 0);
     }
 
     #[test]

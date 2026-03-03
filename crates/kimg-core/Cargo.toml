@@ -11,11 +11,13 @@ categories = ["multimedia::images", "graphics", "wasm"]
 
 [features]
 default = []
+cosmic-text-backend = ["dep:cosmic-text"]
 tiny-skia-shapes = ["dep:tiny-skia"]
 quantette-quantize = ["dep:quantette"]
 
 [dependencies]
 bytemuck = { version = "1.25.0", features = ["derive"] }
+cosmic-text = { version = "0.15.0", default-features = false, features = ["std", "swash", "wasm-web"], optional = true }
 fast_image_resize = { version = "6.0.0", default-features = false, features = ["std", "only_u8x4"] }
 font8x8 = { version = "0.3.1", default-features = false, features = ["unicode"] }
 png = "0.17"

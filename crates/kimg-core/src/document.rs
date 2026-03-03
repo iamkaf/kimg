@@ -295,6 +295,15 @@ impl Document {
             if let Some(color) = text_patch.color {
                 text.color = color;
             }
+            if let Some(font_family) = &text_patch.font_family {
+                text.font_family = font_family.clone();
+            }
+            if let Some(font_weight) = text_patch.font_weight {
+                text.font_weight = font_weight.max(1);
+            }
+            if let Some(font_style) = text_patch.font_style {
+                text.font_style = font_style;
+            }
             if let Some(font_size) = text_patch.font_size {
                 text.font_size = font_size.max(1);
             }
@@ -303,6 +312,15 @@ impl Document {
             }
             if let Some(letter_spacing) = text_patch.letter_spacing {
                 text.letter_spacing = letter_spacing;
+            }
+            if let Some(align) = text_patch.align {
+                text.align = align;
+            }
+            if let Some(wrap) = text_patch.wrap {
+                text.wrap = wrap;
+            }
+            if let Some(box_width) = text_patch.box_width {
+                text.box_width = box_width.map(|width| width.max(1));
             }
         }
 
@@ -1447,9 +1465,15 @@ mod tests {
                 text: Some(TextLayerPatch {
                     text: Some("World".into()),
                     color: Some(Rgba::new(0, 0, 0, 255)),
+                    font_family: Some("monospace".into()),
+                    font_weight: Some(500),
+                    font_style: Some(TextFontStyle::Italic),
                     font_size: Some(24),
                     line_height: Some(28),
                     letter_spacing: Some(2),
+                    align: Some(TextAlign::Center),
+                    wrap: Some(TextWrap::Word),
+                    box_width: Some(Some(48)),
                 }),
                 anchor: Some(crate::blit::Anchor::Center),
                 rotation: Some(12.0),
@@ -1542,9 +1566,15 @@ mod tests {
             LayerKind::Text(text) => {
                 assert_eq!(text.text, "World");
                 assert_eq!(text.color, Rgba::new(0, 0, 0, 255));
+                assert_eq!(text.font_family, "monospace");
+                assert_eq!(text.font_weight, 500);
+                assert_eq!(text.font_style, TextFontStyle::Italic);
                 assert_eq!(text.font_size, 24);
                 assert_eq!(text.line_height, 28);
                 assert_eq!(text.letter_spacing, 2);
+                assert_eq!(text.align, TextAlign::Center);
+                assert_eq!(text.wrap, TextWrap::Word);
+                assert_eq!(text.box_width, Some(48));
                 assert_eq!(text.transform.anchor, crate::blit::Anchor::Center);
                 assert_eq!(text.transform.rotation_deg, 12.0);
             }

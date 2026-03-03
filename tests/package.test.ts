@@ -550,12 +550,18 @@ describe("main package facade", () => {
   test("text layers render, serialize, and expose text metadata", async () => {
     const composition = await Composition.create({ width: 96, height: 32 });
     const textId = composition.addTextLayer({
+      align: "center",
+      boxWidth: 48,
       name: "headline",
       text: "Hi",
       color: [255, 0, 0, 255],
+      fontFamily: "serif",
+      fontStyle: "italic",
+      fontWeight: 700,
       fontSize: 16,
       lineHeight: 18,
       letterSpacing: 1,
+      wrap: "word",
       x: 4,
       y: 6,
     });
@@ -564,11 +570,17 @@ describe("main package facade", () => {
       composition.updateLayer(textId, {
         rotation: 12,
         textConfig: {
+          align: "right",
+          boxWidth: 52,
           text: "Hello",
           color: [0, 0, 255, 255],
+          fontFamily: "monospace",
+          fontStyle: "oblique",
+          fontWeight: 500,
           fontSize: 24,
           lineHeight: 28,
           letterSpacing: 2,
+          wrap: "word",
         },
       }),
     ).toBe(true);
@@ -577,10 +589,16 @@ describe("main package facade", () => {
     expect(layer).toMatchObject({
       kind: "text",
       text: "Hello",
+      align: "right",
+      boxWidth: 52,
+      fontFamily: "monospace",
+      fontStyle: "oblique",
+      fontWeight: 500,
       fontSize: 24,
       lineHeight: 28,
       letterSpacing: 2,
       rotation: 12,
+      wrap: "word",
     });
 
     const rendered = composition.renderRgba();
@@ -590,9 +608,15 @@ describe("main package facade", () => {
     expect(roundTrip.getLayer(textId)).toMatchObject({
       kind: "text",
       text: "Hello",
+      align: "right",
+      boxWidth: 52,
+      fontFamily: "monospace",
+      fontStyle: "oblique",
+      fontWeight: 500,
       fontSize: 24,
       lineHeight: 28,
       letterSpacing: 2,
+      wrap: "word",
     });
 
     composition.free();

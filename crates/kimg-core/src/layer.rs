@@ -58,12 +58,24 @@ pub struct TextLayerPatch {
     pub text: Option<String>,
     /// Replace the text color.
     pub color: Option<Rgba>,
+    /// Replace the requested font family.
+    pub font_family: Option<String>,
+    /// Replace the requested font weight.
+    pub font_weight: Option<u16>,
+    /// Replace the requested font style.
+    pub font_style: Option<TextFontStyle>,
     /// Replace the requested text size in pixels.
     pub font_size: Option<u32>,
     /// Replace the line advance in pixels.
     pub line_height: Option<u32>,
     /// Replace the letter spacing in pixels.
     pub letter_spacing: Option<u32>,
+    /// Replace the horizontal alignment in the text box.
+    pub align: Option<TextAlign>,
+    /// Replace the wrapping mode.
+    pub wrap: Option<TextWrap>,
+    /// Replace the optional text box width. `Some(None)` clears it.
+    pub box_width: Option<Option<u32>>,
 }
 
 /// Patch payload for updating a layer through one stable mutation path.
@@ -472,6 +484,98 @@ impl GradientLayerData {
     }
 }
 
+/// Font style for a text layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TextFontStyle {
+    /// Upright text.
+    Normal,
+    /// Italic text.
+    Italic,
+    /// Oblique text.
+    Oblique,
+}
+
+impl TextFontStyle {
+    /// Stable string form used in JS snapshots and serialization.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            TextFontStyle::Normal => "normal",
+            TextFontStyle::Italic => "italic",
+            TextFontStyle::Oblique => "oblique",
+        }
+    }
+
+    /// Parse a string into a font style, falling back to `Normal`.
+    pub fn from_str_lossy(value: &str) -> Self {
+        match value {
+            "italic" => TextFontStyle::Italic,
+            "oblique" => TextFontStyle::Oblique,
+            _ => TextFontStyle::Normal,
+        }
+    }
+}
+
+/// Horizontal alignment for a text layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TextAlign {
+    /// Align text to the left edge of the text box.
+    Left,
+    /// Center text within the text box.
+    Center,
+    /// Align text to the right edge of the text box.
+    Right,
+}
+
+impl TextAlign {
+    /// Stable string form used in JS snapshots and serialization.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            TextAlign::Left => "left",
+            TextAlign::Center => "center",
+            TextAlign::Right => "right",
+        }
+    }
+
+    /// Parse a string into an alignment, falling back to `Left`.
+    pub fn from_str_lossy(value: &str) -> Self {
+        match value {
+            "center" => TextAlign::Center,
+            "right" => TextAlign::Right,
+            _ => TextAlign::Left,
+        }
+    }
+}
+
+/// Wrapping mode for a text layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TextWrap {
+    /// Do not wrap text automatically.
+    None,
+    /// Wrap text at word boundaries.
+    Word,
+}
+
+impl TextWrap {
+    /// Stable string form used in JS snapshots and serialization.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            TextWrap::None => "none",
+            TextWrap::Word => "word",
+        }
+    }
+
+    /// Parse a string into a wrapping mode, falling back to `None`.
+    pub fn from_str_lossy(value: &str) -> Self {
+        match value {
+            "word" => TextWrap::Word,
+            _ => TextWrap::None,
+        }
+    }
+}
+
 /// Text layer data stored as styled content and rasterized at render time.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -480,12 +584,24 @@ pub struct TextLayerData {
     pub text: String,
     /// RGBA text color.
     pub color: Rgba,
+    /// Requested font family.
+    pub font_family: String,
+    /// Requested font weight.
+    pub font_weight: u16,
+    /// Requested font style.
+    pub font_style: TextFontStyle,
     /// Requested font size in pixels.
     pub font_size: u32,
     /// Line advance in pixels.
     pub line_height: u32,
     /// Letter spacing in pixels.
     pub letter_spacing: u32,
+    /// Horizontal alignment within the optional text box.
+    pub align: TextAlign,
+    /// Wrapping mode for multiline text layout.
+    pub wrap: TextWrap,
+    /// Optional text box width used for wrapping and alignment.
+    pub box_width: Option<u32>,
     /// Shared non-destructive transform state.
     pub transform: LayerTransform,
     raster_cache: RefCell<Option<TextRasterCache>>,
@@ -506,9 +622,15 @@ impl TextLayerData {
         Self {
             text: text.into(),
             color,
+            font_family: "sans-serif".to_string(),
+            font_weight: 400,
+            font_style: TextFontStyle::Normal,
             font_size,
             line_height,
             letter_spacing,
+            align: TextAlign::Left,
+            wrap: TextWrap::None,
+            box_width: None,
             transform: LayerTransform::new(),
             raster_cache: RefCell::new(None),
             transformed_cache: RefCell::new(None),
@@ -567,9 +689,15 @@ impl Clone for TextLayerData {
         Self {
             text: self.text.clone(),
             color: self.color,
+            font_family: self.font_family.clone(),
+            font_weight: self.font_weight,
+            font_style: self.font_style,
             font_size: self.font_size,
             line_height: self.line_height,
             letter_spacing: self.letter_spacing,
+            align: self.align,
+            wrap: self.wrap,
+            box_width: self.box_width,
             transform: self.transform,
             raster_cache: RefCell::new(None),
             transformed_cache: RefCell::new(None),
@@ -581,9 +709,15 @@ impl Clone for TextLayerData {
 struct TextRasterCacheKey {
     text: String,
     color: Rgba,
+    font_family: String,
+    font_weight: u16,
+    font_style: TextFontStyle,
     font_size: u32,
     line_height: u32,
     letter_spacing: u32,
+    align: TextAlign,
+    wrap: TextWrap,
+    box_width: Option<u32>,
 }
 
 impl TextRasterCacheKey {
@@ -591,9 +725,15 @@ impl TextRasterCacheKey {
         Self {
             text: text.text.clone(),
             color: text.color,
+            font_family: text.font_family.clone(),
+            font_weight: text.font_weight,
+            font_style: text.font_style,
             font_size: text.font_size,
             line_height: text.line_height,
             letter_spacing: text.letter_spacing,
+            align: text.align,
+            wrap: text.wrap,
+            box_width: text.box_width,
         }
     }
 }

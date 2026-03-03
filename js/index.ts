@@ -16,6 +16,9 @@ import type { InitInput, InitOutput } from "./raw.js";
 
 export type ByteInput = ArrayBuffer | ArrayBufferView | ArrayLike<number>;
 export type Anchor = "topLeft" | "top_left" | "center" | 0 | 1;
+export type TextFontStyle = "normal" | "italic" | "oblique";
+export type TextAlign = "left" | "center" | "right";
+export type TextWrap = "none" | "word";
 export type GradientDirection =
   | "horizontal"
   | "vertical"
@@ -108,9 +111,15 @@ export interface TextLayerOptions {
   name: string;
   text: string;
   color: ByteInput;
+  fontFamily?: string;
+  fontWeight?: number;
+  fontStyle?: TextFontStyle;
   fontSize?: number;
   lineHeight?: number;
   letterSpacing?: number;
+  align?: TextAlign;
+  wrap?: TextWrap;
+  boxWidth?: number | null;
   x?: number;
   y?: number;
   parentId?: number;
@@ -189,9 +198,15 @@ export interface FilterConfigSnapshot {
 export interface TextLayerConfig {
   text?: string;
   color?: ByteInput;
+  fontFamily?: string;
+  fontWeight?: number;
+  fontStyle?: TextFontStyle;
   fontSize?: number;
   lineHeight?: number;
   letterSpacing?: number;
+  align?: TextAlign;
+  wrap?: TextWrap;
+  boxWidth?: number | null;
 }
 
 export interface ExportJpegOptions {
@@ -335,9 +350,15 @@ export interface LayerInfo {
   strokeColor?: number[];
   strokeWidth?: number;
   text?: string;
+  fontFamily?: string;
+  fontWeight?: number;
+  fontStyle?: TextFontStyle;
   fontSize?: number;
   lineHeight?: number;
   letterSpacing?: number;
+  align?: TextAlign;
+  wrap?: TextWrap;
+  boxWidth?: number | null;
 }
 
 const PRIVATE_CONSTRUCTOR_TOKEN = Symbol("kimgComposition");
@@ -528,6 +549,38 @@ function normalizeAnchor(anchor) {
   throw new TypeError('anchor must be "topLeft", "top_left", "center", 0, or 1.');
 }
 
+function normalizeTextFontStyle(value, fieldName): TextFontStyle {
+  const normalized = normalizeString(value, fieldName);
+  if (normalized === "normal" || normalized === "italic" || normalized === "oblique") {
+    return normalized;
+  }
+  throw new TypeError(`${fieldName} must be "normal", "italic", or "oblique".`);
+}
+
+function normalizeTextAlign(value, fieldName): TextAlign {
+  const normalized = normalizeString(value, fieldName);
+  if (normalized === "left" || normalized === "center" || normalized === "right") {
+    return normalized;
+  }
+  throw new TypeError(`${fieldName} must be "left", "center", or "right".`);
+}
+
+function normalizeTextWrap(value, fieldName): TextWrap {
+  const normalized = normalizeString(value, fieldName);
+  if (normalized === "none" || normalized === "word") {
+    return normalized;
+  }
+  throw new TypeError(`${fieldName} must be "none" or "word".`);
+}
+
+function normalizeFontWeight(value, fieldName) {
+  const normalized = normalizePositiveInteger(value, fieldName);
+  if (normalized > 1000) {
+    throw new RangeError(`${fieldName} must be less than or equal to 1000.`);
+  }
+  return normalized;
+}
+
 function normalizeGradientDirection(direction) {
   if (direction === undefined) {
     return 0;
@@ -681,7 +734,15 @@ function normalizeTextLayerOptions(options) {
   );
 
   return {
+    align: normalizeTextAlign(layer.align ?? "left", "addTextLayer.align"),
+    boxWidth:
+      layer.boxWidth === undefined || layer.boxWidth === null
+        ? null
+        : normalizePositiveInteger(layer.boxWidth, "addTextLayer.boxWidth"),
     color: normalizeRgbaColor(layer.color, "addTextLayer.color"),
+    fontFamily: normalizeString(layer.fontFamily ?? "sans-serif", "addTextLayer.fontFamily"),
+    fontStyle: normalizeTextFontStyle(layer.fontStyle ?? "normal", "addTextLayer.fontStyle"),
+    fontWeight: normalizeFontWeight(layer.fontWeight ?? 400, "addTextLayer.fontWeight"),
     fontSize,
     letterSpacing: normalizeNonNegativeInteger(
       layer.letterSpacing ?? 0,
@@ -691,6 +752,7 @@ function normalizeTextLayerOptions(options) {
     name: normalizeString(layer.name, "addTextLayer.name"),
     parentId: layer.parentId,
     text: normalizeString(layer.text, "addTextLayer.text"),
+    wrap: normalizeTextWrap(layer.wrap ?? "none", "addTextLayer.wrap"),
     x: position.x,
     y: position.y,
   };
@@ -834,6 +896,15 @@ function normalizeTextConfigPatch(config, what): TextLayerConfig {
   if ("color" in object && object.color !== undefined) {
     normalized.color = normalizeRgbaColor(object.color, `${what}.color`);
   }
+  if ("fontFamily" in object && object.fontFamily !== undefined) {
+    normalized.fontFamily = normalizeString(object.fontFamily, `${what}.fontFamily`);
+  }
+  if ("fontWeight" in object && object.fontWeight !== undefined) {
+    normalized.fontWeight = normalizeFontWeight(object.fontWeight, `${what}.fontWeight`);
+  }
+  if ("fontStyle" in object && object.fontStyle !== undefined) {
+    normalized.fontStyle = normalizeTextFontStyle(object.fontStyle, `${what}.fontStyle`);
+  }
   if ("fontSize" in object && object.fontSize !== undefined) {
     normalized.fontSize = normalizePositiveInteger(object.fontSize, `${what}.fontSize`);
   }
@@ -845,6 +916,16 @@ function normalizeTextConfigPatch(config, what): TextLayerConfig {
       object.letterSpacing,
       `${what}.letterSpacing`,
     );
+  }
+  if ("align" in object && object.align !== undefined) {
+    normalized.align = normalizeTextAlign(object.align, `${what}.align`);
+  }
+  if ("wrap" in object && object.wrap !== undefined) {
+    normalized.wrap = normalizeTextWrap(object.wrap, `${what}.wrap`);
+  }
+  if ("boxWidth" in object && object.boxWidth !== undefined) {
+    normalized.boxWidth =
+      object.boxWidth === null ? null : normalizePositiveInteger(object.boxWidth, `${what}.boxWidth`);
   }
 
   return normalized;
@@ -1249,9 +1330,9 @@ export class Composition {
 
   addTextLayer(options) {
     const layer = normalizeTextLayerOptions(options);
-
-    if (layer.parentId !== undefined) {
-      return this._inner.add_text_to_group(
+    const textId =
+      layer.parentId !== undefined
+        ? this._inner.add_text_to_group(
         normalizeLayerId(layer.parentId, "addTextLayer.parentId"),
         layer.name,
         layer.text,
@@ -1261,19 +1342,39 @@ export class Composition {
         layer.color,
         layer.x,
         layer.y,
+      )
+        : this._inner.add_text_layer(
+        layer.name,
+        layer.text,
+        layer.fontSize,
+        layer.lineHeight,
+        layer.letterSpacing,
+        layer.color,
+        layer.x,
+        layer.y,
       );
+
+    if (
+      layer.fontFamily !== "sans-serif" ||
+      layer.fontWeight !== 400 ||
+      layer.fontStyle !== "normal" ||
+      layer.align !== "left" ||
+      layer.wrap !== "none" ||
+      layer.boxWidth !== null
+    ) {
+      this._inner.update_layer(textId, {
+        textConfig: {
+          align: layer.align,
+          boxWidth: layer.boxWidth,
+          fontFamily: layer.fontFamily,
+          fontStyle: layer.fontStyle,
+          fontWeight: layer.fontWeight,
+          wrap: layer.wrap,
+        },
+      });
     }
 
-    return this._inner.add_text_layer(
-      layer.name,
-      layer.text,
-      layer.fontSize,
-      layer.lineHeight,
-      layer.letterSpacing,
-      layer.color,
-      layer.x,
-      layer.y,
-    );
+    return textId;
   }
 
   addPngLayer(options) {

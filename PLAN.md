@@ -294,25 +294,67 @@ Action:
 
 ### Phase 1. Research spikes
 
-- [ ] Verify `cosmic-text` integration in `kimg-core` with one hardcoded TTF font
-- [ ] Verify `cosmic-text` on `wasm32-unknown-unknown`
-- [ ] Verify browser-side font registration from raw bytes
-- [ ] Verify Google Fonts CSS2 fetch and stylesheet parsing
-- [ ] Verify `woff2` decode path on native
-- [ ] Verify `woff2` decode path on wasm
+- [x] Verify `cosmic-text` integration in `kimg-core` with one hardcoded TTF font
+- [x] Verify `cosmic-text` on `wasm32-unknown-unknown`
+- [x] Verify browser-side font registration from raw bytes
+- [x] Verify Google Fonts CSS2 fetch and stylesheet parsing
+- [x] Verify `woff2` decode path on native
+- [x] Verify `woff2` decode path on wasm
 
 Exit criteria:
 
 - one rendered text sample from real `cosmic-text` on native and wasm
 - a clear yes/no answer on keyless Google Fonts support
 
+Phase 1 findings:
+
+- Native probe: `cosmic-text` rendered an Inter sample from raw TTF bytes with `loaded_faces=1`, `rects=9169`, `bbox=226x94`.
+- Browser wasm probe: the same sample rendered successfully from:
+  - embedded TTF bytes in wasm
+  - raw TTF bytes passed in from JS
+  - decoded Google Fonts CSS2 `woff2` bytes
+- All three wasm probe paths produced the same output metrics: `loaded_faces=1`, `rects=9169`, `bbox=226x94`.
+- Google Fonts CSS2 is viable for a keyless browser helper, but real browser-style requests return `woff2`, not TTF. The helper will need stylesheet parsing plus `woff2` decode.
+- The `woff2` crate is not viable on this Rust 1.91 toolchain here. It failed to compile in the spike. `wuff` compiled on native and `wasm32-unknown-unknown`, and successfully decoded the CSS2 font payload.
+- Main pain revealed by Phase 1: code size. The minimal wasm-bindgen text probe produced a `3,085,236` byte wasm file before `wasm-opt` or gzip, versus the current baseline `kimg_wasm_bg.wasm` at `1,079,184` bytes.
+
+Decision after Phase 1:
+
+- Proceed with `cosmic-text`.
+- Use a low-level raw-byte `registerFont()` API.
+- Keep the browser Google Fonts plan keyless via CSS2.
+- Plan around `wuff` as the current `woff2` decode path unless a better option appears later.
+- Ship the browser text backend as a lazy-loaded path.
+- Keep the Node path eager: text support is included in the normal package flow there.
+
+Shipping decision:
+
+- Browser:
+  - text backend and Google Fonts helper load on first text use
+  - documents without text should not pay the text wasm/code-size cost up front
+- Node:
+  - include the text backend in the main package path
+  - prioritize API simplicity over bundle size
+
+Implication for Phase 2 and Phase 3:
+
+- core text rendering should be integrated normally
+- wasm/JS packaging should preserve a browser-specific split point for text runtime loading
+
 ### Phase 2. Core backend replacement
 
 - [ ] Replace bitmap rasterizer with `cosmic-text`
-- [ ] Expand `TextLayerData` style model
-- [ ] Keep render caching
-- [ ] Update serialization for the new text metadata
-- [ ] Add core render and round-trip tests
+- [x] Expand `TextLayerData` style model
+- [x] Keep render caching
+- [x] Update serialization for the new text metadata
+- [x] Add core render and round-trip tests
+
+Current state:
+
+- Initial slice landed on this branch: `kimg-core` now has a feature-gated `cosmic-text` backend seam with bitmap fallback, and `kimg-wasm` forwards that feature for native and `wasm32` compilation.
+- The text model now includes family, weight, style, align, wrap, and optional box width.
+- Runtime font registration plumbing exists in `kimg-core`, and `kimg-wasm` exposes low-level font registration calls.
+- The remaining blocker for closing Phase 2 is making the real backend the primary path instead of a feature-gated seam with bitmap fallback.
 
 Exit criteria:
 
