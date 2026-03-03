@@ -15,6 +15,7 @@ tiny-skia-shapes = ["dep:tiny-skia"]
 quantette-quantize = ["dep:quantette"]
 
 [dependencies]
+bytemuck = { version = "1.25.0", features = ["derive"] }
 fast_image_resize = { version = "6.0.0", default-features = false, features = ["std", "only_u8x4"] }
 png = "0.17"
 jpeg-decoder = "0.3"

@@ -653,11 +653,132 @@ pub fn batch_render(items: &[BatchItem]) -> Vec<BatchResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "quantette-quantize")]
+    use std::collections::BTreeSet;
 
     fn solid_buf(w: u32, h: u32, color: Rgba) -> ImageBuffer {
         let mut buf = ImageBuffer::new_transparent(w, h);
         buf.fill(color);
         buf
+    }
+
+    #[cfg(feature = "quantette-quantize")]
+    fn flat_ui_probe() -> ImageBuffer {
+        let mut buf = ImageBuffer::new_transparent(64, 64);
+        buf.fill(Rgba::new(245, 247, 250, 255));
+
+        for y in 6..58 {
+            for x in 6..58 {
+                buf.set_pixel(x, y, Rgba::new(32, 37, 44, 255));
+            }
+        }
+        for y in 10..24 {
+            for x in 10..54 {
+                buf.set_pixel(x, y, Rgba::new(70, 150, 255, 255));
+            }
+        }
+        for y in 30..38 {
+            for x in 12..50 {
+                buf.set_pixel(x, y, Rgba::new(215, 220, 228, 255));
+            }
+        }
+        for y in 42..52 {
+            for x in 12..28 {
+                buf.set_pixel(x, y, Rgba::new(255, 170, 64, 255));
+            }
+        }
+        for y in 42..52 {
+            for x in 34..52 {
+                buf.set_pixel(x, y, Rgba::new(86, 208, 140, 255));
+            }
+        }
+
+        buf
+    }
+
+    #[cfg(feature = "quantette-quantize")]
+    fn textured_probe() -> ImageBuffer {
+        let mut buf = ImageBuffer::new_transparent(64, 64);
+        for y in 0..64u32 {
+            for x in 0..64u32 {
+                let checker = if ((x / 8) + (y / 8)) % 2 == 0 {
+                    22
+                } else {
+                    -22
+                };
+                let ripple = ((((x * x + y * 3) % 29) as i32) - 14) * 3;
+                let base_r = ((x * 255) / 63) as i32;
+                let base_g = ((y * 255) / 63) as i32;
+                let base_b = (((x ^ y) * 255) / 63) as i32;
+                let r = (base_r + checker + ripple).clamp(0, 255) as u8;
+                let g = (base_g - checker / 2 + ripple / 2).clamp(0, 255) as u8;
+                let b = (base_b + checker / 3 - ripple).clamp(0, 255) as u8;
+                buf.set_pixel(x, y, Rgba::new(r, g, b, 255));
+            }
+        }
+        buf
+    }
+
+    #[cfg(feature = "quantette-quantize")]
+    fn pixel_art_probe() -> ImageBuffer {
+        let mut buf = ImageBuffer::new_transparent(64, 64);
+        let palette = [
+            Rgba::new(20, 24, 32, 255),
+            Rgba::new(74, 86, 110, 255),
+            Rgba::new(145, 184, 89, 255),
+            Rgba::new(233, 239, 236, 255),
+            Rgba::new(207, 78, 61, 255),
+            Rgba::new(246, 189, 96, 255),
+        ];
+
+        for ty in 0..8u32 {
+            for tx in 0..8u32 {
+                let color = palette[((tx + ty * 3) as usize) % palette.len()];
+                for y in 0..8u32 {
+                    for x in 0..8u32 {
+                        let px = tx * 8 + x;
+                        let py = ty * 8 + y;
+                        let shade = if x == 0 || y == 0 || x == 7 || y == 7 {
+                            palette[0]
+                        } else if (x + y) % 5 == 0 {
+                            palette[5]
+                        } else {
+                            color
+                        };
+                        buf.set_pixel(px, py, shade);
+                    }
+                }
+            }
+        }
+
+        buf
+    }
+
+    #[cfg(feature = "quantette-quantize")]
+    fn rgb_squared_error_sum(original: &ImageBuffer, quantized: &ImageBuffer) -> u64 {
+        original
+            .data
+            .chunks_exact(4)
+            .zip(quantized.data.chunks_exact(4))
+            .filter(|(src, _)| src[3] > 0)
+            .map(|(src, dst)| {
+                let dr = src[0] as i32 - dst[0] as i32;
+                let dg = src[1] as i32 - dst[1] as i32;
+                let db = src[2] as i32 - dst[2] as i32;
+                (dr * dr + dg * dg + db * db) as u64
+            })
+            .sum()
+    }
+
+    #[cfg(feature = "quantette-quantize")]
+    fn unique_rgb_count(image: &ImageBuffer) -> usize {
+        image
+            .data
+            .chunks_exact(4)
+            .filter(|px| px[3] > 0)
+            .map(|px| (px[0], px[1], px[2]))
+            .collect::<BTreeSet<_>>()
+            .len()
     }
 
     #[test]
@@ -841,6 +962,48 @@ mod tests {
         let quantized = quantize(&buf, &palette);
         assert_eq!(quantized.get_pixel(0, 0), Rgba::new(10, 20, 30, 0));
         assert_eq!(quantized.get_pixel(1, 0), Rgba::new(255, 0, 0, 128));
+    }
+
+    #[cfg(feature = "quantette-quantize")]
+    #[test]
+    fn quantette_quality_probes_representative_inputs() {
+        let cases = [
+            ("flat_ui", flat_ui_probe()),
+            ("textured", textured_probe()),
+            ("pixel_art", pixel_art_probe()),
+        ];
+
+        for (label, src) in cases {
+            let manual_palette = extract_palette_manual(&src, 16);
+            let manual_quantized = quantize_manual(&src, &manual_palette);
+            let quantette_palette = extract_palette_quantette(&src, 16);
+            let quantette_quantized = quantize_quantette(&src, &quantette_palette);
+
+            let manual_error = rgb_squared_error_sum(&src, &manual_quantized);
+            let quantette_error = rgb_squared_error_sum(&src, &quantette_quantized);
+            let manual_colors = unique_rgb_count(&manual_quantized);
+            let quantette_colors = unique_rgb_count(&quantette_quantized);
+            let max_quantette_error = match label {
+                "flat_ui" => manual_error,
+                "textured" => manual_error.saturating_mul(5) / 4,
+                "pixel_art" => manual_error,
+                _ => unreachable!(),
+            };
+
+            assert!(
+                manual_colors <= 16,
+                "{label} manual quantization exceeded palette size: {manual_colors}"
+            );
+            assert!(
+                quantette_colors <= 16,
+                "{label} quantette quantization exceeded palette size: {quantette_colors}"
+            );
+
+            assert!(
+                quantette_error <= max_quantette_error,
+                "{label} quantette error regressed too far: quantette={quantette_error}, manual={manual_error}, max={max_quantette_error}"
+            );
+        }
     }
 
     #[test]

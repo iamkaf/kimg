@@ -994,7 +994,7 @@ fn get_prop(object: &Object, key: &str) -> Option<JsValue> {
 fn parse_optional_rgba(bytes: &[u8], what: &str) -> Option<Rgba> {
     match bytes.len() {
         0 => None,
-        4 => Some(Rgba::new(bytes[0], bytes[1], bytes[2], bytes[3])),
+        4 => Some(bytemuck::pod_read_unaligned(bytes)),
         _ => panic!("{what} must contain exactly 4 RGBA bytes or be empty"),
     }
 }
@@ -1360,28 +1360,14 @@ fn parse_layer_patch(value: &JsValue) -> Option<LayerPatch> {
 }
 
 fn palette_to_flat(palette: &sprite::Palette) -> Vec<u8> {
-    let mut out = Vec::with_capacity(palette.colors.len() * 4);
-    for c in &palette.colors {
-        out.push(c.r);
-        out.push(c.g);
-        out.push(c.b);
-        out.push(c.a);
-    }
-    out
+    bytemuck::cast_slice(&palette.colors).to_vec()
 }
 
 fn flat_to_palette(data: &[u8]) -> sprite::Palette {
-    let count = data.len() / 4;
-    let mut colors = Vec::with_capacity(count);
-    for i in 0..count {
-        let idx = i * 4;
-        colors.push(Rgba::new(
-            data[idx],
-            data[idx + 1],
-            data[idx + 2],
-            data[idx + 3],
-        ));
-    }
+    let colors = data
+        .chunks_exact(4)
+        .map(bytemuck::pod_read_unaligned)
+        .collect();
     sprite::Palette::new(colors)
 }
 

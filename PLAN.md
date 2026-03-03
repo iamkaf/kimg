@@ -317,14 +317,17 @@ and wasm builds before adoption.
 - [x] Reject `imagequant` for this repo due to `GPL-3.0-or-later` licensing, which conflicts with the current license policy
 - [x] A/B benchmark `quantette` against the current sprite/palette path in `kimg-core/src/sprite.rs`
 - Prototype is available behind the `quantette-quantize` feature in both `kimg-core` and `kimg-wasm`.
-- [ ] Compare output quality, runtime, and memory behavior on representative inputs:
-  - flat UI art
-  - textured images
-  - pixel art / sprite sheets
+- [x] Compare output quality, runtime, and memory behavior on representative inputs:
+  - flat UI art: `quantette` reconstructed the probe exactly (`0` RGB squared error vs `4,007,668` for manual median-cut)
+  - textured image: `quantette` was worse on the probe (`13,629,556` vs `11,201,846` RGB squared error, about `21.7%` higher)
+  - pixel art / sprite sheet: both paths were exact on the probe (`0` RGB squared error)
 - Runtime comparison on the current benchmark harness:
-  - `extract_palette/512/16colors`: `2.76 ms` vs `22.40 ms`
-  - `quantize/512/16colors`: `3.89 ms` vs `4.11 ms`
-- Initial quality check on one textured-input RGB-error probe was mixed rather than clearly better, so this should remain feature-gated until output quality is reviewed on representative art styles.
+  - `extract_palette/512/16colors`: `2.73 ms` vs `22.40 ms`
+  - `quantize/512/16colors`: `3.85 ms` vs `4.11 ms`
+- Memory notes:
+  - no dedicated heap profiler run yet
+  - by inspection, the `quantette` path adds an extra packed RGB buffer plus palette buffer transiently, so peak working memory is somewhat higher than the current manual path
+- Decision: keep `quantette-quantize` feature-gated for now. The speed win is clear and flat/pixel-art probes look good, but the textured probe regressed enough that it is not a safe default yet.
 - [x] Re-run palette/quantization benchmarks:
   - `extract_palette/512/16colors`
   - `quantize/512/16colors`
@@ -336,11 +339,19 @@ and wasm builds before adoption.
 
 #### 6.4 Codec Spike: `zune-jpeg` and `zune-png`
 
-- [ ] Prototype `zune-jpeg` as an alternative to `jpeg-decoder`
-- [ ] Prototype `zune-png` as an alternative to `png`
-- [ ] Re-run codec benchmarks with the current textured-image harness
-- [ ] Compare native decode speed, wasm behavior, code complexity, and output compatibility
-- [ ] Keep current encode paths unless a replacement clearly improves the package
+- [x] Prototype `zune-jpeg` as an alternative to `jpeg-decoder`
+- [x] Prototype `zune-png` as an alternative to `png`
+- [x] Re-run codec benchmarks with the current textured-image harness
+- [x] Compare native decode speed, wasm behavior, code complexity, and output compatibility
+- Decision: keep the current `png` and `jpeg-decoder` stack. The `zune` prototype compiled and passed focused native/wasm tests, but it regressed decode performance and would add another optional decoder matrix to maintain.
+- Runtime comparison on the current benchmark harness:
+  - `decode_png/512`: `3.12 ms` vs `1.28 ms`
+  - `decode_jpeg/512`: `1.38 ms` vs `1.27 ms`
+- Validation notes:
+  - focused core codec tests passed on both the current and prototype paths
+  - focused wasm tests passed (`png_roundtrip_via_wasm`, `import_jpeg_wasm`, `detect_format_wasm`)
+  - `cargo check --target wasm32-unknown-unknown` passed for both `kimg-core` and `kimg-wasm` with the prototype enabled
+- [x] Keep current encode paths unless a replacement clearly improves the package
 - Success criteria:
   - materially better decode performance, or simpler maintenance at comparable performance
   - no packaging or wasm integration regressions
@@ -348,10 +359,12 @@ and wasm builds before adoption.
 
 #### 6.5 Buffer Ergonomics Pass: `bytemuck` and optional `rgb`
 
-- [ ] Audit RGBA byte/pixel conversion code in buffer, codec, and wasm glue layers
-- [ ] Use `bytemuck` where it reduces manual casting or indexing noise without obscuring layout assumptions
-- [ ] Evaluate `rgb` only if it makes pixel manipulation clearer without spreading new wrapper types everywhere
-- [ ] Keep this pass incremental; do not block higher-value spikes on it
+- [x] Audit RGBA byte/pixel conversion code in buffer, codec, and wasm glue layers
+- [x] Use `bytemuck` where it reduces manual casting or indexing noise without obscuring layout assumptions
+- Result: `Rgba` is now a POD-safe `#[repr(C)]` type, `ImageBuffer` uses `bytemuck` for pixel reads/writes/fill, and the wasm palette/optional-RGBA glue no longer hand-rolls byte packing.
+- [x] Evaluate `rgb` only if it makes pixel manipulation clearer without spreading new wrapper types everywhere
+- Decision: do not adopt `rgb` for this pass. `bytemuck` covered the useful no-copy cases without introducing a second pixel wrapper type through the API and internals.
+- [x] Keep this pass incremental; do not block higher-value spikes on it
 - Success criteria:
   - leaner byte/pixel glue code
   - no behavior changes
@@ -368,11 +381,11 @@ and wasm builds before adoption.
 
 #### 6.7 Recommended Order
 
-- [ ] 1. `postcard`
-- [ ] 2. `tiny-skia`
-- [ ] 3. `quantette`
-- [ ] 4. `zune-jpeg` / `zune-png`
-- [ ] 5. `bytemuck`
+- [x] 1. `postcard`
+- [x] 2. `tiny-skia`
+- [x] 3. `quantette`
+- [x] 4. `zune-jpeg` / `zune-png`
+- [x] 5. `bytemuck`
 
 ## Roadmap
 

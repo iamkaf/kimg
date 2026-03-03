@@ -420,6 +420,7 @@ dependencies = [
 name = "kimg-core"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "criterion",
  "fast_image_resize",
  "gif",
@@ -438,6 +439,7 @@ dependencies = [
 name = "kimg-wasm"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "js-sys",
  "kimg-core",
  "wasm-bindgen",

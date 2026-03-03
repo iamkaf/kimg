@@ -7,6 +7,8 @@
 //! Pixel data is stored in row-major order: pixel `(x, y)` starts at byte
 //! index `(y * width + x) * 4`.
 
+use bytemuck::{bytes_of, cast_slice_mut, pod_read_unaligned};
+
 use crate::pixel::Rgba;
 
 /// Owned RGBA image buffer stored as contiguous `Vec<u8>` in RGBA8 order.
@@ -68,12 +70,7 @@ impl ImageBuffer {
     /// Panics in debug builds if `x >= self.width` or `y >= self.height`.
     pub fn get_pixel(&self, x: u32, y: u32) -> Rgba {
         let i = self.pixel_index(x, y);
-        Rgba {
-            r: self.data[i],
-            g: self.data[i + 1],
-            b: self.data[i + 2],
-            a: self.data[i + 3],
-        }
+        pod_read_unaligned(&self.data[i..i + 4])
     }
 
     /// Set the pixel at `(x, y)`.
@@ -83,20 +80,12 @@ impl ImageBuffer {
     /// Panics in debug builds if `x >= self.width` or `y >= self.height`.
     pub fn set_pixel(&mut self, x: u32, y: u32, px: Rgba) {
         let i = self.pixel_index(x, y);
-        self.data[i] = px.r;
-        self.data[i + 1] = px.g;
-        self.data[i + 2] = px.b;
-        self.data[i + 3] = px.a;
+        self.data[i..i + 4].copy_from_slice(bytes_of(&px));
     }
 
     /// Fill the entire buffer with a single color.
     pub fn fill(&mut self, px: Rgba) {
-        for chunk in self.data.chunks_exact_mut(4) {
-            chunk[0] = px.r;
-            chunk[1] = px.g;
-            chunk[2] = px.b;
-            chunk[3] = px.a;
-        }
+        cast_slice_mut::<u8, Rgba>(&mut self.data).fill(px);
     }
 
     #[inline]

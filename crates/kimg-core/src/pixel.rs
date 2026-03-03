@@ -4,8 +4,11 @@
 //! [`ImageBuffer`](crate::buffer::ImageBuffer) is one `Rgba` value stored as four
 //! contiguous `u8` bytes in RGBA order.
 
+use bytemuck::{Pod, Zeroable};
+
 /// A 32-bit RGBA color pixel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
 #[non_exhaustive]
 pub struct Rgba {
     /// Red channel (0-255).
