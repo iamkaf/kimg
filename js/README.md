@@ -78,7 +78,7 @@ doc.addSvgLayer({
 });
 ```
 
-`Composition.create()` and `Composition.deserialize()` use the text-enabled wasm renderer from the main package, so text works without a separate init step. `loadGoogleFont()` is browser-only; on Node use `registerFont()` with raw bytes. SVG layers keep the original markup around for scalable rendering until you call `rasterizeSvgLayer(id)`.
+`Composition.create()` and `Composition.deserialize()` use the text-enabled wasm renderer from the main package, so text works without a separate init step. In browsers, SVG support is lazy-loaded the first time you add an SVG layer or deserialize a document that already contains one; on Node the main package uses the full text+SVG renderer eagerly. `loadGoogleFont()` is browser-only; on Node use `registerFont()` with raw bytes. SVG layers keep the original markup around for scalable rendering until you call `rasterizeSvgLayer(id)`.
 
 ## Node.js
 

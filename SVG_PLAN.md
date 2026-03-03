@@ -174,7 +174,7 @@ Result:
 
 - native and `wasm32` viability: yes
 - current eager shipping cost: `dist/kimg_wasm_bg.wasm` is about `2.9 MB` raw, `dist/kimg_wasm_text_bg.wasm` about `4.9 MB` raw
-- decision: ship SVG support eagerly for now and revisit lazy-loading only if package size becomes a practical problem
+- decision: ship SVG support eagerly on Node, and lazy-load it in the browser when an SVG layer is first needed
 
 ### Phase 2. Engine layer
 
@@ -227,9 +227,9 @@ Exit criteria:
 Current recommendation:
 
 - Node: include SVG support eagerly
-- Browser: include SVG support eagerly for now
+- Browser: lazy-load SVG support when `addSvgLayer(...)`, `rasterizeSvgLayer(...)`, or `.kimg` deserialization first requires it
 
-If wasm size becomes a release problem later, the most likely follow-up is a browser-only lazy-loaded SVG build rather than changing the API surface.
+This keeps the browser baseline near the lean non-SVG build while preserving the same high-level API surface.
 
 ## Validation Matrix
 
@@ -260,4 +260,4 @@ SVG-specific validation:
 ## Notes
 
 - The correct MVP is "scalable asset layer," not "editable vector layer."
-- If Phase 1 size is too costly, SVG should follow the same browser lazy-load pattern as text.
+- The browser path now follows that lazy-load model; Node keeps the simpler eager path.

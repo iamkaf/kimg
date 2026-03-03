@@ -4,7 +4,9 @@
 //! compositor only when they need to be rendered.
 
 use crate::buffer::ImageBuffer;
+#[cfg(feature = "svg-backend")]
 use roxmltree::Document as XmlDocument;
+#[cfg(feature = "svg-backend")]
 use usvg::{Options as UsvgOptions, Tree as UsvgTree};
 
 /// Errors that can occur while parsing or rasterizing SVG input.
@@ -38,6 +40,7 @@ impl std::fmt::Display for SvgError {
 impl std::error::Error for SvgError {}
 
 /// Validate that an SVG stays within the current MVP support envelope.
+#[cfg(feature = "svg-backend")]
 pub fn validate_svg(data: &[u8]) -> Result<(), SvgError> {
     let text = std::str::from_utf8(data).map_err(|_| SvgError::InvalidText)?;
     let doc = XmlDocument::parse(text).map_err(|_| SvgError::InvalidText)?;
@@ -67,6 +70,13 @@ pub fn validate_svg(data: &[u8]) -> Result<(), SvgError> {
     Ok(())
 }
 
+#[cfg(not(feature = "svg-backend"))]
+/// Reject SVG usage when the lightweight build excludes the SVG backend.
+pub fn validate_svg(_data: &[u8]) -> Result<(), SvgError> {
+    Err(SvgError::Unsupported("svg backend is not enabled in this build"))
+}
+
+#[cfg(feature = "svg-backend")]
 fn build_options() -> UsvgOptions<'static> {
     let mut options = UsvgOptions::default();
     let default_resolver = usvg::ImageHrefResolver::default();
@@ -80,12 +90,14 @@ fn build_options() -> UsvgOptions<'static> {
     options
 }
 
+#[cfg(feature = "svg-backend")]
 fn parse_svg_tree(data: &[u8]) -> Result<UsvgTree, SvgError> {
     validate_svg(data)?;
     let options = build_options();
     UsvgTree::from_data(data, &options).map_err(|err| SvgError::Parse(err.to_string()))
 }
 
+#[cfg(feature = "svg-backend")]
 fn pixmap_to_image_buffer(pixmap: &resvg::tiny_skia::Pixmap) -> ImageBuffer {
     let mut rgba = Vec::with_capacity((pixmap.width() * pixmap.height() * 4) as usize);
     for pixel in pixmap.pixels() {
@@ -97,6 +109,7 @@ fn pixmap_to_image_buffer(pixmap: &resvg::tiny_skia::Pixmap) -> ImageBuffer {
 }
 
 /// Rasterize raw SVG input to a target RGBA buffer size.
+#[cfg(feature = "svg-backend")]
 pub fn rasterize_svg(data: &[u8], width: u32, height: u32) -> Result<ImageBuffer, SvgError> {
     if width == 0 || height == 0 {
         return Err(SvgError::InvalidSize);
@@ -117,7 +130,13 @@ pub fn rasterize_svg(data: &[u8], width: u32, height: u32) -> Result<ImageBuffer
     Ok(pixmap_to_image_buffer(&pixmap))
 }
 
-#[cfg(test)]
+#[cfg(not(feature = "svg-backend"))]
+/// Report that SVG rasterization is unavailable in the lightweight build.
+pub fn rasterize_svg(_data: &[u8], _width: u32, _height: u32) -> Result<ImageBuffer, SvgError> {
+    Err(SvgError::Unsupported("svg backend is not enabled in this build"))
+}
+
+#[cfg(all(test, feature = "svg-backend"))]
 mod tests {
     use super::*;
 

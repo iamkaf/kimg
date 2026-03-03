@@ -2,19 +2,26 @@ import initRaw, {
   Composition as RawComposition,
   clear_registered_fonts,
   contrast_ratio,
+  document_has_svg_layers,
   decode_image,
   detect_format,
   dominant_rgb_from_rgba,
   extract_palette_from_rgba,
   hex_to_rgb,
   histogram_rgba,
+  initSvg as initSvgRaw,
+  initSvgSync as initSvgSyncRaw,
   initText as initTextRaw,
+  initTextSvg as initTextSvgRaw,
+  initTextSvgSync as initTextSvgSyncRaw,
   quantize_rgba,
   register_font,
   registered_font_count,
   relative_luminance,
   rgb_to_hex,
+  type RawCompositionInstance,
   simdSupported,
+  svgBackendActive,
   textBackendActive,
 } from "./raw.js";
 import type { InitInput, InitOutput } from "./raw.js";
@@ -427,9 +434,13 @@ const GRADIENT_DIRECTION_TO_RAW = {
 
 let preloadPromise: Promise<InitOutput> | null = null;
 let textPreloadPromise: Promise<InitOutput> | null = null;
+let svgPreloadPromise: Promise<InitOutput> | null = null;
+let textSvgPreloadPromise: Promise<InitOutput> | null = null;
 const liveCompositions = new Set<Composition>();
 const googleFontRequestCache = new Map<string, Promise<LoadedGoogleFontResult>>();
 const googleFontBinaryCache = new Map<string, Promise<number>>();
+
+type BackendKind = "base" | "text" | "svg" | "textSvg";
 
 function isNodeRuntime() {
   const runtime = globalThis as typeof globalThis & {
@@ -1288,26 +1299,221 @@ function normalizeLayerIdArray(ids, fieldName) {
   throw new TypeError(`${fieldName} must be a Uint32Array or array-like collection of layer ids.`);
 }
 
-async function getDefaultInitInput(textBackend = false): Promise<Uint8Array | undefined> {
+function backendKindFromFlags(textBackend: boolean, svgBackend: boolean): BackendKind {
+  if (textBackend && svgBackend) {
+    return "textSvg";
+  }
+  if (textBackend) {
+    return "text";
+  }
+  if (svgBackend) {
+    return "svg";
+  }
+  return "base";
+}
+
+function currentBackendKind(): BackendKind {
+  return backendKindFromFlags(textBackendActive(), svgBackendActive());
+}
+
+function backendSatisfies(current: BackendKind, required: BackendKind): boolean {
+  switch (required) {
+    case "base":
+      return true;
+    case "text":
+      return current === "text" || current === "textSvg";
+    case "svg":
+      return current === "svg" || current === "textSvg";
+    case "textSvg":
+      return current === "textSvg";
+  }
+}
+
+function wasmFileNameForBackend(kind: BackendKind): string {
+  switch (kind) {
+    case "textSvg":
+      return simdSupported() ? "kimg_wasm_text_svg_simd_bg.wasm" : "kimg_wasm_text_svg_bg.wasm";
+    case "text":
+      return simdSupported() ? "kimg_wasm_text_simd_bg.wasm" : "kimg_wasm_text_bg.wasm";
+    case "svg":
+      return simdSupported() ? "kimg_wasm_svg_simd_bg.wasm" : "kimg_wasm_svg_bg.wasm";
+    case "base":
+    default:
+      return simdSupported() ? "kimg_wasm_simd_bg.wasm" : "kimg_wasm_bg.wasm";
+  }
+}
+
+async function getDefaultInitInput(kind: BackendKind): Promise<Uint8Array | undefined> {
   if (!isNodeRuntime()) {
     return undefined;
   }
 
   // @ts-ignore Node built-in typing is only available in Node environments.
   const { readFile } = await import("node:fs/promises");
-  const wasmName = textBackend
-    ? simdSupported()
-      ? "kimg_wasm_text_simd_bg.wasm"
-      : "kimg_wasm_text_bg.wasm"
-    : simdSupported()
-      ? "kimg_wasm_simd_bg.wasm"
-      : "kimg_wasm_bg.wasm";
+  const wasmName = wasmFileNameForBackend(kind);
   return readFile(new URL(`./${wasmName}`, import.meta.url));
+}
+
+function getBrowserInitInputSync(kind: BackendKind): Uint8Array {
+  const request = new XMLHttpRequest();
+  request.open("GET", new URL(`./${wasmFileNameForBackend(kind)}`, import.meta.url), false);
+  request.overrideMimeType("text/plain; charset=x-user-defined");
+  request.send();
+
+  if (request.status !== 0 && (request.status < 200 || request.status >= 300)) {
+    throw new Error(`Failed to load ${wasmFileNameForBackend(kind)}: HTTP ${request.status}`);
+  }
+
+  if (typeof request.responseText !== "string" || request.responseText.length === 0) {
+    throw new Error(`Failed to load ${wasmFileNameForBackend(kind)}.`);
+  }
+
+  const bytes = new Uint8Array(request.responseText.length);
+  for (let index = 0; index < request.responseText.length; index += 1) {
+    bytes[index] = request.responseText.charCodeAt(index) & 0xff;
+  }
+
+  return bytes;
 }
 
 async function withPreload<T>(fn: () => T): Promise<T> {
   await preload();
   return fn();
+}
+
+function upgradeCompositionBackend(composition: Composition): void {
+  const serialized = composition._inner.serialize();
+  composition._inner.free();
+  composition._inner = RawComposition.deserialize(serialized) as RawCompositionInstance;
+  composition._backendKind = currentBackendKind();
+}
+
+function refreshLiveCompositions(): void {
+  for (const composition of liveCompositions) {
+    upgradeCompositionBackend(composition);
+  }
+}
+
+function preloadPromiseForKind(kind: BackendKind): Promise<InitOutput> | null {
+  switch (kind) {
+    case "base":
+      return preloadPromise;
+    case "text":
+      return textPreloadPromise;
+    case "svg":
+      return svgPreloadPromise;
+    case "textSvg":
+      return textSvgPreloadPromise;
+  }
+}
+
+function setPreloadPromiseForKind(kind: BackendKind, promise: Promise<InitOutput> | null): void {
+  switch (kind) {
+    case "base":
+      preloadPromise = promise;
+      break;
+    case "text":
+      textPreloadPromise = promise;
+      break;
+    case "svg":
+      svgPreloadPromise = promise;
+      break;
+    case "textSvg":
+      textSvgPreloadPromise = promise;
+      break;
+  }
+}
+
+async function preloadBackendKind(
+  kind: BackendKind,
+  module_or_path?:
+    | { module_or_path: InitInput | Promise<InitInput> }
+    | InitInput
+    | Promise<InitInput>,
+): Promise<InitOutput> {
+  const existing = preloadPromiseForKind(kind);
+  if (existing !== null && backendSatisfies(currentBackendKind(), kind)) {
+    return existing;
+  }
+
+  const promise = (async () => {
+    if (module_or_path !== undefined) {
+      switch (kind) {
+        case "text":
+          return initTextRaw(module_or_path);
+        case "svg":
+          return initSvgRaw(module_or_path);
+        case "textSvg":
+          return initTextSvgRaw(module_or_path);
+        case "base":
+        default:
+          return initRaw(module_or_path);
+      }
+    }
+
+    const defaultInput = await getDefaultInitInput(kind);
+    if (defaultInput !== undefined) {
+      const input = { module_or_path: defaultInput };
+      switch (kind) {
+        case "text":
+          return initTextRaw(input);
+        case "svg":
+          return initSvgRaw(input);
+        case "textSvg":
+          return initTextSvgRaw(input);
+        case "base":
+        default:
+          return initRaw(input);
+      }
+    }
+
+    switch (kind) {
+      case "text":
+        return initTextRaw();
+      case "svg":
+        return initSvgRaw();
+      case "textSvg":
+        return initTextSvgRaw();
+      case "base":
+      default:
+        return initRaw();
+    }
+  })().catch((error) => {
+    setPreloadPromiseForKind(kind, null);
+    throw error;
+  });
+
+  setPreloadPromiseForKind(kind, promise);
+  if (kind === "text" || kind === "textSvg" || (kind === "svg" && isNodeRuntime())) {
+    preloadPromise = promise;
+  }
+  return promise;
+}
+
+function ensureBackendReadySync(kind: BackendKind): void {
+  const current = currentBackendKind();
+  if (backendSatisfies(current, kind)) {
+    return;
+  }
+
+  if (isNodeRuntime()) {
+    return;
+  }
+
+  const input = { module: getBrowserInitInputSync(kind) };
+  switch (kind) {
+    case "svg":
+      initSvgSyncRaw(input);
+      break;
+    case "textSvg":
+      initTextSvgSyncRaw(input);
+      break;
+    case "base":
+    case "text":
+    default:
+      break;
+  }
+  refreshLiveCompositions();
 }
 
 async function preloadText(
@@ -1316,53 +1522,36 @@ async function preloadText(
     | InitInput
     | Promise<InitInput>,
 ): Promise<InitOutput> {
-  if (textPreloadPromise !== null) {
-    return textPreloadPromise;
-  }
-
-  textPreloadPromise = (async () => {
-    if (module_or_path !== undefined) {
-      return initTextRaw(module_or_path);
-    }
-
-    const defaultInput = await getDefaultInitInput(true);
-    if (defaultInput !== undefined) {
-      return initTextRaw({ module_or_path: defaultInput });
-    }
-
-    return initTextRaw();
-  })().catch((error) => {
-    textPreloadPromise = null;
-    throw error;
-  });
-
-  preloadPromise = textPreloadPromise;
-  return textPreloadPromise;
+  return preloadBackendKind(
+    svgBackendActive() || isNodeRuntime() ? "textSvg" : "text",
+    module_or_path,
+  );
 }
 
-function upgradeCompositionToTextBackend(composition: Composition): void {
-  const serialized = composition._inner.serialize();
-  composition._inner.free();
-  composition._inner = RawComposition.deserialize(serialized);
-  composition._backendKind = textBackendActive() ? "text" : "base";
-}
-
-function refreshLiveCompositions(): void {
-  for (const composition of liveCompositions) {
-    upgradeCompositionToTextBackend(composition);
-  }
+export async function preloadSvg(
+  module_or_path?:
+    | { module_or_path: InitInput | Promise<InitInput> }
+    | InitInput
+    | Promise<InitInput>,
+): Promise<InitOutput> {
+  return preloadBackendKind(
+    textBackendActive() || isNodeRuntime() ? "textSvg" : "svg",
+    module_or_path,
+  );
 }
 
 async function ensureTextBackendReady(): Promise<void> {
   if (!textBackendActive()) {
     await preloadText();
   }
+  refreshLiveCompositions();
+}
 
-  for (const composition of liveCompositions) {
-    if (composition._backendKind !== "text") {
-      upgradeCompositionToTextBackend(composition);
-    }
+async function ensureSvgBackendReady(): Promise<void> {
+  if (!svgBackendActive()) {
+    await preloadSvg();
   }
+  refreshLiveCompositions();
 }
 
 export function preload(
@@ -1383,14 +1572,14 @@ export async function preload(
 
   preloadPromise = (async () => {
     if (isNodeRuntime() && module_or_path === undefined) {
-      return preloadText();
+      return preloadBackendKind("textSvg");
     }
 
     if (module_or_path !== undefined) {
-      return initRaw(module_or_path);
+      return preloadBackendKind("base", module_or_path);
     }
 
-    const defaultInput = await getDefaultInitInput(false);
+    const defaultInput = await getDefaultInitInput("base");
     if (defaultInput !== undefined) {
       return initRaw({ module_or_path: defaultInput });
     }
@@ -1422,7 +1611,13 @@ export async function clearRegisteredFonts(): Promise<void> {
   googleFontRequestCache.clear();
   googleFontBinaryCache.clear();
 
-  if (!textBackendActive() && textPreloadPromise === null && !isNodeRuntime()) {
+  if (
+    !textBackendActive() &&
+    !svgBackendActive() &&
+    textPreloadPromise === null &&
+    textSvgPreloadPromise === null &&
+    !isNodeRuntime()
+  ) {
     return;
   }
 
@@ -1432,7 +1627,13 @@ export async function clearRegisteredFonts(): Promise<void> {
 }
 
 export async function registeredFontCount(): Promise<number> {
-  if (!textBackendActive() && textPreloadPromise === null && !isNodeRuntime()) {
+  if (
+    !textBackendActive() &&
+    !svgBackendActive() &&
+    textPreloadPromise === null &&
+    textSvgPreloadPromise === null &&
+    !isNodeRuntime()
+  ) {
     return 0;
   }
 
@@ -1612,14 +1813,14 @@ export interface Composition {
 }
 
 export class Composition {
-  _inner!: RawComposition;
-  _backendKind!: "base" | "text";
+  _inner!: RawCompositionInstance;
+  _backendKind!: BackendKind;
 
-  static #fromInner(inner: RawComposition) {
-    return new Composition(inner, PRIVATE_CONSTRUCTOR_TOKEN, textBackendActive() ? "text" : "base");
+  static #fromInner(inner: RawCompositionInstance) {
+    return new Composition(inner, PRIVATE_CONSTRUCTOR_TOKEN, currentBackendKind());
   }
 
-  private constructor(inner: RawComposition, token: symbol, backendKind: "base" | "text") {
+  private constructor(inner: RawCompositionInstance, token: symbol, backendKind: BackendKind) {
     if (token !== PRIVATE_CONSTRUCTOR_TOKEN) {
       throw new TypeError("Use await Composition.create(...) instead of new Composition(...).");
     }
@@ -1648,12 +1849,19 @@ export class Composition {
   ): Promise<Composition> {
     const size = normalizeCreateArgs(widthOrOptions, height);
     await preloadText();
-    return Composition.#fromInner(new RawComposition(size.width, size.height));
+    return Composition.#fromInner(
+      new RawComposition(size.width, size.height) as RawCompositionInstance,
+    );
   }
 
   static async deserialize(data: ByteInput): Promise<Composition> {
-    await preloadText();
-    return Composition.#fromInner(RawComposition.deserialize(normalizeByteInput(data, "data")));
+    const bytes = normalizeByteInput(data, "data");
+    if (document_has_svg_layers(bytes)) {
+      await preloadBackendKind("textSvg");
+    } else {
+      await preloadText();
+    }
+    return Composition.#fromInner(RawComposition.deserialize(bytes) as RawCompositionInstance);
   }
 
   get width(): number {
@@ -1834,6 +2042,9 @@ export class Composition {
   }
 
   addSvgLayer(options) {
+    if (!svgBackendActive()) {
+      ensureBackendReadySync(textBackendActive() ? "textSvg" : "svg");
+    }
     const layer = normalizeSvgLayerOptions(options);
 
     if (layer.parentId !== undefined) {
@@ -2069,6 +2280,9 @@ export class Composition {
   }
 
   rasterizeSvgLayer(id) {
+    if (!svgBackendActive()) {
+      ensureBackendReadySync(textBackendActive() ? "textSvg" : "svg");
+    }
     return this._inner.rasterize_svg_layer(normalizeLayerId(id));
   }
 

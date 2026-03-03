@@ -28,7 +28,7 @@ cargo install wasm-bindgen-cli
 ./scripts/build.sh
 ```
 
-This builds the consumable JS/WASM package into `dist/` using `tsgo` for the tracked TypeScript wrapper layer. The main `Composition` API loads the text-enabled renderer automatically; pure utility APIs and the low-level `raw` entrypoint can still use the leaner non-text builds.
+This builds the consumable JS/WASM package into `dist/` using `tsgo` for the tracked TypeScript wrapper layer. The main `Composition` API loads the text-enabled renderer automatically, lazy-loads the SVG-enabled renderer in the browser when needed, and uses the full text+SVG renderer eagerly on Node. Pure utility APIs and the low-level `raw` entrypoint can still use the leaner non-text builds.
 
 ## Quick start
 
@@ -170,6 +170,7 @@ doc.rasterizeSvgLayer(logoId);
 - SVG layers are retained scalable assets, not editable path geometry.
 - Static SVG is the target. Scripts, animation elements, and external image references are rejected.
 - SVGs containing `<text>` render best when the required fonts are registered first.
+- Browser `Composition` only loads the heavier SVG-capable wasm when you first add an SVG layer or deserialize a `.kimg` document that already contains one. Node uses the text+SVG renderer eagerly.
 
 ### Text notes
 
@@ -290,14 +291,18 @@ cargo install wasm-bindgen-cli
 
 Output goes to `dist/`. The demo page at `demo/index.html` loads from there.
 
-The build emits four wasm binaries:
+The build emits eight wasm binaries:
 
 - `kimg_wasm_bg.wasm` for the baseline target
 - `kimg_wasm_simd_bg.wasm` for runtimes with `wasm32` SIMD (`simd128`)
+- `kimg_wasm_svg_bg.wasm` for the SVG-enabled baseline target
+- `kimg_wasm_svg_simd_bg.wasm` for SVG-enabled runtimes with `wasm32` SIMD (`simd128`)
 - `kimg_wasm_text_bg.wasm` for the text-enabled baseline target
 - `kimg_wasm_text_simd_bg.wasm` for text-enabled runtimes with `wasm32` SIMD (`simd128`)
+- `kimg_wasm_text_svg_bg.wasm` for the combined text+SVG baseline target
+- `kimg_wasm_text_svg_simd_bg.wasm` for the combined text+SVG SIMD target
 
-The main package uses the text-enabled variants for `Composition`. The baseline variants remain useful for the `raw` entrypoint and utility-only scenarios.
+The main package uses the text-enabled variants for `Composition`, upgrades to the SVG-capable variants lazily in the browser, and uses the combined text+SVG variants eagerly on Node. The baseline variants remain useful for the `raw` entrypoint and utility-only scenarios.
 
 ## Running tests
 
@@ -418,6 +423,10 @@ Current local release build sizes:
 - `dist/kimg_wasm_simd_bg.wasm`: `1.2 MB` uncompressed, `409,572` bytes gzipped
 - `dist/kimg_wasm_text_bg.wasm`: `3.2 MB` uncompressed, `1,076,325` bytes gzipped
 - `dist/kimg_wasm_text_simd_bg.wasm`: `3.5 MB` uncompressed, `1,178,561` bytes gzipped
+- `dist/kimg_wasm_svg_bg.wasm`: `2.9 MB` uncompressed
+- `dist/kimg_wasm_svg_simd_bg.wasm`: `3.1 MB` uncompressed
+- `dist/kimg_wasm_text_svg_bg.wasm`: `4.9 MB` uncompressed
+- `dist/kimg_wasm_text_svg_simd_bg.wasm`: `5.1 MB` uncompressed
 
 These vary slightly with toolchain and optimization settings.
 

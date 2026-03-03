@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = []
 cosmic-text-backend = ["kimg-core/cosmic-text-backend"]
+svg-backend = ["kimg-core/svg-backend"]
 tiny-skia-shapes = ["kimg-core/tiny-skia-shapes"]
 quantette-quantize = ["kimg-core/quantette-quantize"]
 

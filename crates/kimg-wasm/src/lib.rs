@@ -1701,6 +1701,12 @@ pub fn detect_format(data: &[u8]) -> String {
     codec::detect_format(data).as_str().to_string()
 }
 
+/// Return whether serialized `.kimg` data contains any retained SVG layers.
+#[wasm_bindgen]
+pub fn document_has_svg_layers(data: &[u8]) -> bool {
+    serialize::document_has_svg_layers(data).unwrap_or(false)
+}
+
 /// Auto-detect format, decode to RGBA, return flat [w_u32_be(4 bytes), h_u32_be(4 bytes), rgba...].
 #[wasm_bindgen]
 pub fn decode_image(data: &[u8]) -> Vec<u8> {
@@ -1753,6 +1759,7 @@ pub fn quantize_rgba(data: &[u8], w: u32, h: u32, palette: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "svg-backend")]
     const SIMPLE_SVG: &str = r##"
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
           <rect x="2" y="2" width="20" height="20" rx="4" fill="#d9482b"/>
@@ -2156,6 +2163,7 @@ mod tests {
         assert!(rendered.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
+    #[cfg(feature = "svg-backend")]
     #[test]
     fn svg_layer_wasm() {
         let mut doc = Document::new(32, 32);
@@ -2174,6 +2182,7 @@ mod tests {
         assert!(rendered.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
+    #[cfg(feature = "svg-backend")]
     #[test]
     fn rasterize_svg_layer_wasm() {
         let mut doc = Document::new(32, 32);
@@ -2437,6 +2446,7 @@ mod tests {
         assert_eq!(palette[3], 255);
     }
 
+    #[cfg(feature = "svg-backend")]
     #[test]
     fn extract_palette_svg_wasm() {
         let mut doc = Document::new(32, 32);
@@ -2533,6 +2543,7 @@ mod tests {
         assert!(result.iter().any(|&value| value > 0));
     }
 
+    #[cfg(feature = "svg-backend")]
     #[test]
     fn serialize_deserialize_svg_wasm() {
         let mut doc = Document::new(32, 32);

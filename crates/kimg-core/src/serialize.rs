@@ -221,6 +221,17 @@ pub fn serialize(doc: &Document) -> Result<Vec<u8>, SerializeError> {
 
 /// Deserialize a [`Document`] from the kimg binary format.
 pub fn deserialize(data: &[u8]) -> Result<Document, SerializeError> {
+    let (metadata, pixel_data) = decode_binary_metadata(data)?;
+    document_from_metadata(metadata, pixel_data)
+}
+
+/// Check whether serialized document data contains any SVG layers.
+pub fn document_has_svg_layers(data: &[u8]) -> Result<bool, SerializeError> {
+    let (metadata, _) = decode_binary_metadata(data)?;
+    Ok(layer_metadata_has_svg(&metadata.layers))
+}
+
+fn decode_binary_metadata(data: &[u8]) -> Result<(DocumentMetadata, &[u8]), SerializeError> {
     if data.len() < 4 {
         return Err(SerializeError::InvalidData("data too short".into()));
     }
@@ -254,10 +265,26 @@ pub fn deserialize(data: &[u8]) -> Result<Document, SerializeError> {
 
     let metadata: DocumentMetadata = postcard::from_bytes(&metadata_bytes[5..])
         .map_err(|e| SerializeError::InvalidData(format!("metadata decode failed: {e}")))?;
-    document_from_metadata(metadata, pixel_data)
+    Ok((metadata, pixel_data))
 }
 
-fn get_next_id(doc: &Document) -> u32 {
+fn layer_metadata_has_svg(layers: &[LayerMetadata]) -> bool {
+    for layer in layers {
+        match &layer.kind {
+            LayerKindMetadata::Svg { .. } => return true,
+            LayerKindMetadata::Group { children } => {
+                if layer_metadata_has_svg(children) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    false
+}
+
+fn min_next_id(doc: &Document) -> u32 {
     fn max_layer_id(layers: &[Layer]) -> u32 {
         let mut max_id = 0u32;
         for layer in layers {
@@ -285,7 +312,7 @@ fn build_document_metadata(
     Ok(DocumentMetadata {
         width: doc.width,
         height: doc.height,
-        next_id: get_next_id(doc),
+        next_id: doc.next_available_id().max(min_next_id(doc)),
         layers,
     })
 }
@@ -440,9 +467,7 @@ fn document_from_metadata(
 
     let mut doc = Document::new(metadata.width, metadata.height);
     doc.layers = layers;
-    while get_next_id(&doc) < metadata.next_id {
-        doc.next_id();
-    }
+    doc.set_next_available_id(metadata.next_id.max(min_next_id(&doc)));
     Ok(doc)
 }
 
@@ -959,6 +984,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "svg-backend")]
     #[test]
     fn serialize_svg_layer() {
         let mut doc = Document::new(32, 32);
@@ -1045,5 +1071,29 @@ mod tests {
             }
             _ => panic!("expected raster layer"),
         }
+    }
+
+    #[test]
+    fn serialize_preserves_next_layer_id() {
+        let mut doc = Document::new(8, 8);
+        let first_id = doc.next_id();
+        let second_id = doc.next_id();
+        doc.layers.push(Layer {
+            common: LayerCommon::new(first_id, "bottom"),
+            kind: LayerKind::Fill(FillLayerData::solid(Rgba::new(10, 20, 30, 255))),
+        });
+        doc.layers.push(Layer {
+            common: LayerCommon::new(second_id, "top"),
+            kind: LayerKind::Fill(FillLayerData::solid(Rgba::new(40, 50, 60, 255))),
+        });
+
+        let reserved_id = doc.next_id();
+        assert_eq!(reserved_id, 3);
+
+        let data = serialize(&doc).unwrap();
+        let mut restored = deserialize(&data).unwrap();
+        let added_id = restored.next_id();
+
+        assert_eq!(added_id, reserved_id + 1);
     }
 }

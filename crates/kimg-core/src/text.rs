@@ -16,24 +16,24 @@ use cosmic_text::{
     Align as CosmicAlign, Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics,
     Shaping, Style as CosmicStyle, SwashCache, Weight as CosmicWeight, Wrap as CosmicWrap,
 };
+#[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
+use fontdb::{Database, Source};
 #[cfg(feature = "cosmic-text-backend")]
-use fontdb::{
-    Database, Query, Source, Stretch as FontStretch, Style as FontDbStyle, Weight as FontDbWeight,
-};
+use fontdb::{Query, Stretch as FontStretch, Style as FontDbStyle, Weight as FontDbWeight};
 use font8x8::{UnicodeFonts, MISC_FONTS};
 use font8x8::{BASIC_FONTS, BLOCK_FONTS, BOX_FONTS, GREEK_FONTS, HIRAGANA_FONTS, LATIN_FONTS};
-#[cfg(feature = "cosmic-text-backend")]
+#[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 use std::sync::{Arc, Mutex, OnceLock};
-#[cfg(feature = "cosmic-text-backend")]
+#[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 use wuff::{decompress_woff1, decompress_woff2};
 
 const GLYPH_WIDTH: u32 = 8;
 const GLYPH_HEIGHT: u32 = 8;
 
-#[cfg(feature = "cosmic-text-backend")]
+#[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 static REGISTERED_FONTS: OnceLock<Mutex<Vec<RegisteredFont>>> = OnceLock::new();
 
-#[cfg(feature = "cosmic-text-backend")]
+#[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 #[derive(Clone)]
 struct RegisteredFont {
     bytes: Arc<Vec<u8>>,
@@ -64,12 +64,12 @@ fn fallback_glyph() -> [u8; 8] {
     BASIC_FONTS.get('?').unwrap_or([0; 8])
 }
 
-#[cfg(feature = "cosmic-text-backend")]
+#[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 fn registered_fonts() -> &'static Mutex<Vec<RegisteredFont>> {
     REGISTERED_FONTS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-#[cfg(feature = "cosmic-text-backend")]
+#[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 fn decode_runtime_font_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
     if bytes.starts_with(b"wOF2") {
         return decompress_woff2(&bytes).ok();
@@ -86,7 +86,7 @@ fn decode_runtime_font_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
 ///
 /// Returns the number of faces successfully parsed from the input. Invalid or
 /// unsupported font data returns `0` and is not retained.
-#[cfg(feature = "cosmic-text-backend")]
+#[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 pub fn register_font_bytes(bytes: Vec<u8>) -> usize {
     let bytes = match decode_runtime_font_bytes(bytes) {
         Some(bytes) => Arc::new(bytes),
@@ -120,7 +120,7 @@ pub fn register_font_bytes(bytes: Vec<u8>) -> usize {
 }
 
 /// Clear all registered runtime fonts for the `cosmic-text` backend.
-#[cfg(feature = "cosmic-text-backend")]
+#[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 pub fn clear_registered_fonts() {
     registered_fonts()
         .lock()
@@ -129,7 +129,7 @@ pub fn clear_registered_fonts() {
 }
 
 /// Count the number of registered runtime font binaries.
-#[cfg(feature = "cosmic-text-backend")]
+#[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 pub fn registered_font_count() -> usize {
     registered_fonts()
         .lock()
@@ -137,7 +137,7 @@ pub fn registered_font_count() -> usize {
         .len()
 }
 
-#[cfg(feature = "cosmic-text-backend")]
+#[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 pub(crate) fn populate_runtime_fontdb(db: &mut Database) -> Option<String> {
     let fonts = registered_fonts()
         .lock()
@@ -168,22 +168,23 @@ fn build_font_system() -> FontSystem {
     FontSystem::new_with_locale_and_db("en-US".to_string(), db)
 }
 
-#[cfg(not(feature = "cosmic-text-backend"))]
-pub(crate) fn populate_runtime_fontdb(_: &mut fontdb::Database) -> Option<String> {
+#[cfg(not(any(feature = "cosmic-text-backend", feature = "svg-backend")))]
+#[allow(dead_code)]
+pub(crate) fn populate_runtime_fontdb(_: &mut ()) -> Option<String> {
     None
 }
 
-#[cfg(not(feature = "cosmic-text-backend"))]
+#[cfg(not(any(feature = "cosmic-text-backend", feature = "svg-backend")))]
 /// Count the number of registered runtime font binaries.
 pub fn registered_font_count() -> usize {
     0
 }
 
-#[cfg(not(feature = "cosmic-text-backend"))]
+#[cfg(not(any(feature = "cosmic-text-backend", feature = "svg-backend")))]
 /// Clear all registered runtime fonts for the active backend.
 pub fn clear_registered_fonts() {}
 
-#[cfg(not(feature = "cosmic-text-backend"))]
+#[cfg(not(any(feature = "cosmic-text-backend", feature = "svg-backend")))]
 /// Register raw font bytes for the active text backend.
 pub fn register_font_bytes(_: Vec<u8>) -> usize {
     0

@@ -267,7 +267,7 @@ describe("main package facade", () => {
       expect(second).toEqual(first);
       expect(await registeredFontCount()).toBeGreaterThan(0);
       expect(Array.from(composition.renderRgba())).not.toEqual(before);
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
     } finally {
       composition?.free();
       globalThis.fetch = originalFetch;

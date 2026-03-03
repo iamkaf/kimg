@@ -80,6 +80,14 @@ impl Document {
         id
     }
 
+    pub(crate) fn next_available_id(&self) -> u32 {
+        self.next_id
+    }
+
+    pub(crate) fn set_next_available_id(&mut self, next_id: u32) {
+        self.next_id = next_id.max(1);
+    }
+
     /// Find a layer by ID (immutable), searching recursively through groups.
     ///
     /// Returns `None` if no layer with the given ID exists in the tree.
@@ -1672,6 +1680,7 @@ mod tests {
         assert!(result.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
+    #[cfg(feature = "svg-backend")]
     #[test]
     fn svg_layer_renders_visible_pixels() {
         let mut doc = Document::new(32, 32);
@@ -1698,6 +1707,7 @@ mod tests {
         assert!(result.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
+    #[cfg(feature = "svg-backend")]
     #[test]
     fn rasterize_svg_layer_converts_to_raster() {
         let mut doc = Document::new(32, 32);
