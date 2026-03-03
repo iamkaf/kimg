@@ -83,7 +83,7 @@ Shape layers are also available for rectangle, rounded rectangle, ellipse, line,
 
 **Sprite tools** — Sprite sheet packer (shelf bin-packing), contact sheet grids, pixel-art upscale, color quantization, batch render pipeline.
 
-**Format support** — PNG, JPEG, WebP, GIF (animated frames → layers), PSD (layer import). Auto-detection via magic bytes.
+**Format support** — PNG, JPEG, WebP, GIF (animated frames → layers), and experimental PSD layer import. Auto-detection via magic bytes.
 
 **Serialization** — Save/load full documents as `.kimg` files (versioned binary metadata + raw pixel data, with legacy JSON metadata still accepted on load).
 
@@ -182,7 +182,7 @@ kimg/
 │   │   │   ├── blend.rs       # 16 blend modes
 │   │   │   ├── blit.rs        # Transformed blit (position, flip, rotation, opacity)
 │   │   │   ├── buffer.rs      # ImageBuffer with RGBA pixel data
-│   │   │   ├── codec.rs       # PNG, JPEG, WebP, GIF, PSD decode/encode
+│   │   │   ├── codec.rs       # PNG, JPEG, WebP, GIF, experimental PSD import
 │   │   │   ├── color.rs       # RGB/HSL conversion, luminance, contrast
 │   │   │   ├── convolution.rs # Blur, sharpen, edge detect, emboss kernels
 │   │   │   ├── document.rs    # Document struct, layer tree, render pipeline
@@ -229,7 +229,7 @@ npm run test:pack
 npm run test:all
 ```
 
-144 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, bucket fill, and shared per-layer transforms.
+147 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, bucket fill, and shared per-layer transforms.
 
 The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
 
@@ -280,7 +280,7 @@ Notes on the harnesses:
 - Very expensive resize cases use reduced flat-sampled Criterion groups so `cargo bench -p kimg-core` stays practical while still reporting worst-case medians.
 - RGBA bilinear and Lanczos3 resize paths use `fast_image_resize`, so native builds pick up host SIMD and the browser `Composition.create()` path can load the separate `simd128` wasm artifact.
 - Codec benchmarks use a deterministic textured 512×512 image instead of a flat fill, which avoids unrealistically optimistic compression timings.
-- `render/repeated_transformed_layer/512` performs two back-to-back renders of the same transformed document in one iteration so future caching work has a stable benchmark target.
+- `render/repeated_transformed_layer/512` performs two back-to-back renders of the same transformed document in one iteration to measure transform-cache wins directly.
 - Standalone shape benches instantiate a fresh shape per sample so they continue to measure rasterization work instead of the document-level layer cache.
 
 Representative medians from recent local runs on March 3, 2026. These are hardware-dependent and should be treated as a baseline example, not a guarantee:
@@ -297,11 +297,11 @@ Representative medians from recent local runs on March 3, 2026. These are hardwa
 | `render/group_of_5/512` | `28.08 ms` |
 | `render/clipped_layer_stack/512` | `18.40 ms` |
 | `render/masked_layer_stack/512` | `10.59 ms` |
-| `render/transformed_image/512` | `9.02 ms` |
-| `render/transformed_paint/512` | `11.03 ms` |
+| `render/transformed_image/512` | `774.35 µs` |
+| `render/transformed_paint/512` | `889.75 µs` |
 | `render/transformed_shape/512` | `861.31 µs` |
-| `render/10_layers_with_transforms/512` | `55.52 ms` |
-| `render/repeated_transformed_layer/512` | `11.79 ms` |
+| `render/10_layers_with_transforms/512` | `7.98 ms` |
+| `render/repeated_transformed_layer/512` | `1.56 ms` |
 | `serialize_deserialize/10_layers` | `762.54 µs` |
 | `apply_hsl_filter/512` | `5.31 ms` |
 | `bucket_fill/contiguous/512` | `945.14 µs` |
@@ -340,7 +340,7 @@ Tracked for later:
 
 Possible follow-up work if those areas become important:
 
-- Revisit the PSD parser
+- Keep PSD import experimental unless it becomes a priority again
 - Evaluate a text engine such as `cosmic-text`
 
 ## License

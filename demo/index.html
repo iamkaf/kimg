@@ -216,7 +216,7 @@
 
       <!-- Phase 5: File Import -->
       <div class="panel" id="import-panel">
-        <h2>Import Image (PNG / JPEG / WebP / GIF / PSD)</h2>
+        <h2>Import Image (PNG / JPEG / WebP / GIF / PSD experimental)</h2>
         <div class="drop-zone" id="drop-zone">
           Drop an image here or click to browse
           <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/gif,.psd" style="display:none">
@@ -532,7 +532,7 @@
               importNote.textContent += ` — ${ids.length} frame(s) imported as layers`;
             } else if (fmt === 'psd') {
               const ids = doc.importPsd({ bytes });
-              importNote.textContent += ` — ${ids.length} layer(s) imported`;
+              importNote.textContent += ` — ${ids.length} layer(s) imported (experimental PSD path)`;
             } else {
               doc.importImage({ name: file.name, bytes, x: 0, y: 0 });
               importNote.textContent += ' — added as layer';

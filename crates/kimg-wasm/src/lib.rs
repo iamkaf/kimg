@@ -43,6 +43,18 @@ pub struct Document {
     inner: CoreDocument,
 }
 
+fn mutate_image_layer(
+    document: &mut CoreDocument,
+    id: u32,
+    mutate: impl FnOnce(&mut ImageLayerData),
+) {
+    if let Some(layer) = document.find_layer_mut(id) {
+        if let LayerKind::Image(image) = &mut layer.kind {
+            mutate(image);
+        }
+    }
+}
+
 #[wasm_bindgen]
 impl Document {
     /// Create a new document with the given canvas dimensions.
@@ -584,133 +596,125 @@ impl Document {
 
     /// Resize a layer's buffer using nearest-neighbor (good for pixel art).
     pub fn resize_layer_nearest(&mut self, id: u32, new_width: u32, new_height: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer = transform::resize_nearest(&img.buffer, new_width, new_height);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(transform::resize_nearest(
+                &img.buffer,
+                new_width,
+                new_height,
+            ));
+        });
     }
 
     /// Resize a layer's buffer using bilinear interpolation.
     pub fn resize_layer_bilinear(&mut self, id: u32, new_width: u32, new_height: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer = transform::resize_bilinear(&img.buffer, new_width, new_height);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(transform::resize_bilinear(
+                &img.buffer,
+                new_width,
+                new_height,
+            ));
+        });
     }
 
     /// Resize a layer's buffer using Lanczos3 interpolation (high quality).
     pub fn resize_layer_lanczos3(&mut self, id: u32, new_width: u32, new_height: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer = transform::resize_lanczos3(&img.buffer, new_width, new_height);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(transform::resize_lanczos3(
+                &img.buffer,
+                new_width,
+                new_height,
+            ));
+        });
     }
 
     /// Crop a layer's buffer to the given rectangle.
     pub fn crop_layer(&mut self, id: u32, x: u32, y: u32, width: u32, height: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer = transform::crop(&img.buffer, x, y, width, height);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(transform::crop(&img.buffer, x, y, width, height));
+        });
     }
 
     /// Trim transparent edges from a layer's buffer.
     pub fn trim_layer_alpha(&mut self, id: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer = transform::trim_alpha(&img.buffer);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(transform::trim_alpha(&img.buffer));
+        });
     }
 
     /// Rotate a layer's buffer by an arbitrary angle (degrees) with bilinear interpolation.
     pub fn rotate_layer(&mut self, id: u32, angle_deg: f64) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer = transform::rotate_bilinear(&img.buffer, angle_deg);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(transform::rotate_bilinear(&img.buffer, angle_deg));
+        });
     }
 
     // ── Phase 3: Convolution filters ──
 
     /// Apply a box blur to a layer. Radius 0 = no-op.
     pub fn box_blur_layer(&mut self, id: u32, radius: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer = convolution::box_blur(&img.buffer, radius);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(convolution::box_blur(&img.buffer, radius));
+        });
     }
 
     /// Apply a Gaussian blur to a layer. Radius 0 = no-op.
     pub fn gaussian_blur_layer(&mut self, id: u32, radius: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer = convolution::gaussian_blur(&img.buffer, radius);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(convolution::gaussian_blur(&img.buffer, radius));
+        });
     }
 
     /// Apply a sharpen convolution to a layer.
     pub fn sharpen_layer(&mut self, id: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer = convolution::convolve(&img.buffer, &convolution::Kernel::sharpen());
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(convolution::convolve(
+                &img.buffer,
+                &convolution::Kernel::sharpen(),
+            ));
+        });
     }
 
     /// Apply edge detection (Laplacian) to a layer.
     pub fn edge_detect_layer(&mut self, id: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer =
-                    convolution::convolve(&img.buffer, &convolution::Kernel::edge_detect());
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(convolution::convolve(
+                &img.buffer,
+                &convolution::Kernel::edge_detect(),
+            ));
+        });
     }
 
     /// Apply emboss effect to a layer.
     pub fn emboss_layer(&mut self, id: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer = convolution::convolve(&img.buffer, &convolution::Kernel::emboss());
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(convolution::convolve(
+                &img.buffer,
+                &convolution::Kernel::emboss(),
+            ));
+        });
     }
 
     // ── Phase 3: Pixel filters ──
 
     /// Invert RGB channels of a layer.
     pub fn invert_layer(&mut self, id: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                filter::invert(&mut img.buffer);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.mutate_buffer(filter::invert);
+        });
     }
 
     /// Posterize a layer (reduce color levels per channel).
     pub fn posterize_layer(&mut self, id: u32, levels: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                filter::posterize(&mut img.buffer, levels);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.mutate_buffer(|buffer| filter::posterize(buffer, levels));
+        });
     }
 
     /// Convert a layer to black/white based on luminance threshold (0–255).
     pub fn threshold_layer(&mut self, id: u32, thresh: u8) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                filter::threshold(&mut img.buffer, thresh);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.mutate_buffer(|buffer| filter::threshold(buffer, thresh));
+        });
     }
 
     /// Apply levels adjustment to a layer.
@@ -724,44 +728,35 @@ impl Document {
         out_black: u8,
         out_white: u8,
     ) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                filter::levels(
-                    &mut img.buffer,
-                    in_black,
-                    in_white,
-                    gamma,
-                    out_black,
-                    out_white,
-                );
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.mutate_buffer(|buffer| {
+                filter::levels(buffer, in_black, in_white, gamma, out_black, out_white);
+            });
+        });
     }
 
     /// Apply a gradient map to a layer. `stops_colors` is [r,g,b,a, r,g,b,a, ...],
     /// `stops_positions` is [f64, f64, ...].
     pub fn gradient_map_layer(&mut self, id: u32, stops_colors: &[u8], stops_positions: &[f64]) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                let count = stops_positions.len();
-                let mut stops = Vec::with_capacity(count);
-                for (i, &pos) in stops_positions.iter().enumerate().take(count) {
-                    let ci = i * 4;
-                    if ci + 3 < stops_colors.len() {
-                        stops.push((
-                            pos,
-                            Rgba::new(
-                                stops_colors[ci],
-                                stops_colors[ci + 1],
-                                stops_colors[ci + 2],
-                                stops_colors[ci + 3],
-                            ),
-                        ));
-                    }
-                }
-                filter::gradient_map(&mut img.buffer, &stops);
+        let count = stops_positions.len();
+        let mut stops = Vec::with_capacity(count);
+        for (i, &pos) in stops_positions.iter().enumerate().take(count) {
+            let ci = i * 4;
+            if ci + 3 < stops_colors.len() {
+                stops.push((
+                    pos,
+                    Rgba::new(
+                        stops_colors[ci],
+                        stops_colors[ci + 1],
+                        stops_colors[ci + 2],
+                        stops_colors[ci + 3],
+                    ),
+                ));
             }
         }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.mutate_buffer(|buffer| filter::gradient_map(buffer, &stops));
+        });
     }
     // ── Phase 4: Sprite & Game Dev Tools ──
 
@@ -829,11 +824,9 @@ impl Document {
 
     /// Scale a layer in-place by an integer factor using nearest-neighbor.
     pub fn pixel_scale_layer(&mut self, id: u32, factor: u32) {
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer = sprite::pixel_scale(&img.buffer, factor);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(sprite::pixel_scale(&img.buffer, factor));
+        });
     }
 
     /// Extract a palette from a layer. Returns flat [r,g,b,a, r,g,b,a, ...].
@@ -864,11 +857,9 @@ impl Document {
     /// `palette_colors` is flat [r,g,b,a, r,g,b,a, ...].
     pub fn quantize_layer(&mut self, id: u32, palette_colors: &[u8]) {
         let palette = flat_to_palette(palette_colors);
-        if let Some(layer) = self.inner.find_layer_mut(id) {
-            if let LayerKind::Image(img) = &mut layer.kind {
-                img.buffer = sprite::quantize(&img.buffer, &palette);
-            }
-        }
+        mutate_image_layer(&mut self.inner, id, |img| {
+            img.set_buffer(sprite::quantize(&img.buffer, &palette));
+        });
     }
 
     // ── Phase 5: Format Import/Export ──
@@ -897,7 +888,9 @@ impl Document {
         ids
     }
 
-    /// Import PSD layers. Returns layer IDs.
+    /// Import PSD layers through the current experimental PSD path. Returns layer IDs.
+    ///
+    /// This path is currently experimental.
     pub fn import_psd(&mut self, psd_bytes: &[u8]) -> Vec<u32> {
         let (_w, _h, layers) = codec::import_psd(psd_bytes).expect("failed to decode PSD");
         let mut ids = Vec::with_capacity(layers.len());
@@ -1973,6 +1966,18 @@ mod tests {
         assert_eq!(buf[0], 0); // 255 inverted
         assert_eq!(buf[1], 255); // 0 inverted
         assert_eq!(buf[2], 255); // 0 inverted
+    }
+
+    #[test]
+    fn transformed_image_cache_invalidates_after_raster_edit_wasm() {
+        let (mut doc, id) = make_red_4x4();
+        doc.set_rotation(id, 15.0);
+
+        let before = doc.render();
+        doc.invert_layer(id);
+        let after = doc.render();
+
+        assert_ne!(before, after);
     }
 
     #[test]

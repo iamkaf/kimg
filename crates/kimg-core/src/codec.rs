@@ -1,6 +1,6 @@
 //! Image encoding and decoding for multiple formats.
 //!
-//! Supports PNG, JPEG, WebP, GIF, and PSD (Adobe Photoshop).
+//! Supports PNG, JPEG, WebP, GIF, and experimental PSD (Adobe Photoshop) import.
 //!
 //! All decoders produce an RGBA8 [`ImageBuffer`].  All encoders accept one.
 //!
@@ -671,6 +671,8 @@ pub struct PsdLayer {
 }
 
 /// Import layers from an Adobe Photoshop (PSD) file.
+///
+/// This path is currently experimental.
 ///
 /// Returns `(canvas_width, canvas_height, layers)`.  Each [`PsdLayer`] contains
 /// the layer's name, pixel buffer, position, opacity, and visibility.

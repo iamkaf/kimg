@@ -433,14 +433,18 @@ fn layer_from_metadata(
 ) -> Result<Layer, SerializeError> {
     let common = common_from_metadata(metadata.common, pixel_data)?;
     let kind = match metadata.kind {
-        LayerKindMetadata::Image { buffer, transform } => LayerKind::Image(ImageLayerData {
-            buffer: image_buffer_from_ref(buffer, pixel_data, "image pixel data")?,
-            transform: transform_from_metadata(transform),
-        }),
-        LayerKindMetadata::Paint { buffer, transform } => LayerKind::Paint(PaintLayerData {
-            buffer: image_buffer_from_ref(buffer, pixel_data, "paint pixel data")?,
-            transform: transform_from_metadata(transform),
-        }),
+        LayerKindMetadata::Image { buffer, transform } => {
+            LayerKind::Image(ImageLayerData::with_transform(
+                image_buffer_from_ref(buffer, pixel_data, "image pixel data")?,
+                transform_from_metadata(transform),
+            ))
+        }
+        LayerKindMetadata::Paint { buffer, transform } => {
+            LayerKind::Paint(PaintLayerData::with_transform(
+                image_buffer_from_ref(buffer, pixel_data, "paint pixel data")?,
+                transform_from_metadata(transform),
+            ))
+        }
         LayerKindMetadata::Filter { config } => LayerKind::Filter(FilterLayerData {
             config: filter_from_metadata(config),
         }),
@@ -1058,10 +1062,10 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             let buffer_bytes = checked_slice(pixel_data, offset, len, "pixel data")?;
             let buffer = ImageBuffer::from_rgba(w, h, buffer_bytes.to_vec())
                 .ok_or_else(|| SerializeError::InvalidData("buffer size mismatch".into()))?;
-            LayerKind::Image(ImageLayerData {
+            LayerKind::Image(ImageLayerData::with_transform(
                 buffer,
-                transform: parse_transform(&obj),
-            })
+                parse_transform(&obj),
+            ))
         }
         "paint" => {
             let w = get_json_u32(&obj, "width")?;
@@ -1071,10 +1075,10 @@ fn deserialize_layer(s: &str, pixel_data: &[u8]) -> Result<Layer, SerializeError
             let buffer_bytes = checked_slice(pixel_data, offset, len, "pixel data")?;
             let buffer = ImageBuffer::from_rgba(w, h, buffer_bytes.to_vec())
                 .ok_or_else(|| SerializeError::InvalidData("buffer size mismatch".into()))?;
-            LayerKind::Paint(PaintLayerData {
+            LayerKind::Paint(PaintLayerData::with_transform(
                 buffer,
-                transform: parse_transform(&obj),
-            })
+                parse_transform(&obj),
+            ))
         }
         "filter" => {
             let config = HslFilterConfig {
@@ -1317,10 +1321,7 @@ mod tests {
                 y: 2,
                 ..LayerCommon::new(id, "test image")
             },
-            kind: LayerKind::Image(ImageLayerData {
-                buffer: buf,
-                transform: LayerTransform::new(),
-            }),
+            kind: LayerKind::Image(ImageLayerData::new(buf)),
         });
 
         let data = serialize(&doc).unwrap();
@@ -1486,10 +1487,7 @@ mod tests {
         transform.scale_y = 0.5;
         let mut layer = Layer {
             common: LayerCommon::new(id, "props"),
-            kind: LayerKind::Image(ImageLayerData {
-                buffer: buf,
-                transform,
-            }),
+            kind: LayerKind::Image(ImageLayerData::with_transform(buf, transform)),
         };
         layer.common.opacity = 0.75;
         layer.common.visible = false;

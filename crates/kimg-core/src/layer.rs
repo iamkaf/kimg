@@ -168,13 +168,15 @@ impl Default for LayerTransform {
 }
 
 /// Image layer with transform properties.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub struct ImageLayerData {
     /// The source image buffer.
     pub buffer: ImageBuffer,
     /// Shared non-destructive transform state.
     pub transform: LayerTransform,
+    revision: u64,
+    transformed_cache: RefCell<Option<RasterTransformCache>>,
 }
 
 impl ImageLayerData {
@@ -183,18 +185,86 @@ impl ImageLayerData {
         Self {
             buffer,
             transform: LayerTransform::new(),
+            revision: 0,
+            transformed_cache: RefCell::new(None),
+        }
+    }
+
+    /// Create an image layer with explicit transform properties.
+    pub fn with_transform(buffer: ImageBuffer, transform: LayerTransform) -> Self {
+        let mut layer = Self::new(buffer);
+        layer.transform = transform;
+        layer
+    }
+
+    /// Replace the source buffer and invalidate any cached transformed raster.
+    pub fn set_buffer(&mut self, buffer: ImageBuffer) {
+        self.buffer = buffer;
+        self.bump_revision();
+    }
+
+    /// Mutate the source buffer in place and invalidate any cached transformed raster.
+    pub fn mutate_buffer<R>(&mut self, mutate: impl FnOnce(&mut ImageBuffer) -> R) -> R {
+        let result = mutate(&mut self.buffer);
+        self.bump_revision();
+        result
+    }
+
+    /// Reuse or refresh the transformed raster for the current source buffer and transform.
+    pub fn with_cached_transformed_raster<F, R>(
+        &self,
+        render: F,
+        use_buffer: impl FnOnce(&ImageBuffer) -> R,
+    ) -> R
+    where
+        F: FnOnce() -> ImageBuffer,
+    {
+        let key = RasterTransformCacheKey::new(self.revision, self.transform);
+        let needs_refresh = self
+            .transformed_cache
+            .borrow()
+            .as_ref()
+            .is_none_or(|cached| cached.key != key);
+
+        if needs_refresh {
+            let buffer = render();
+            *self.transformed_cache.borrow_mut() = Some(RasterTransformCache { key, buffer });
+        }
+
+        let cached = self.transformed_cache.borrow();
+        let entry = cached
+            .as_ref()
+            .expect("image transform cache should be populated");
+        use_buffer(&entry.buffer)
+    }
+
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+        self.transformed_cache.get_mut().take();
+    }
+}
+
+impl Clone for ImageLayerData {
+    fn clone(&self) -> Self {
+        Self {
+            buffer: self.buffer.clone(),
+            transform: self.transform,
+            revision: self.revision,
+            transformed_cache: RefCell::new(None),
         }
     }
 }
 
 /// Paint layer — an editable RGBA buffer.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub struct PaintLayerData {
     /// The editable pixel buffer.
     pub buffer: ImageBuffer,
     /// Shared non-destructive transform state.
     pub transform: LayerTransform,
+    revision: u64,
+    transformed_cache: RefCell<Option<RasterTransformCache>>,
 }
 
 impl PaintLayerData {
@@ -203,6 +273,72 @@ impl PaintLayerData {
         Self {
             buffer,
             transform: LayerTransform::new(),
+            revision: 0,
+            transformed_cache: RefCell::new(None),
+        }
+    }
+
+    /// Create a paint layer with explicit transform properties.
+    pub fn with_transform(buffer: ImageBuffer, transform: LayerTransform) -> Self {
+        let mut layer = Self::new(buffer);
+        layer.transform = transform;
+        layer
+    }
+
+    /// Replace the source buffer and invalidate any cached transformed raster.
+    pub fn set_buffer(&mut self, buffer: ImageBuffer) {
+        self.buffer = buffer;
+        self.bump_revision();
+    }
+
+    /// Mutate the source buffer in place and invalidate any cached transformed raster.
+    pub fn mutate_buffer<R>(&mut self, mutate: impl FnOnce(&mut ImageBuffer) -> R) -> R {
+        let result = mutate(&mut self.buffer);
+        self.bump_revision();
+        result
+    }
+
+    /// Reuse or refresh the transformed raster for the current source buffer and transform.
+    pub fn with_cached_transformed_raster<F, R>(
+        &self,
+        render: F,
+        use_buffer: impl FnOnce(&ImageBuffer) -> R,
+    ) -> R
+    where
+        F: FnOnce() -> ImageBuffer,
+    {
+        let key = RasterTransformCacheKey::new(self.revision, self.transform);
+        let needs_refresh = self
+            .transformed_cache
+            .borrow()
+            .as_ref()
+            .is_none_or(|cached| cached.key != key);
+
+        if needs_refresh {
+            let buffer = render();
+            *self.transformed_cache.borrow_mut() = Some(RasterTransformCache { key, buffer });
+        }
+
+        let cached = self.transformed_cache.borrow();
+        let entry = cached
+            .as_ref()
+            .expect("paint transform cache should be populated");
+        use_buffer(&entry.buffer)
+    }
+
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+        self.transformed_cache.get_mut().take();
+    }
+}
+
+impl Clone for PaintLayerData {
+    fn clone(&self) -> Self {
+        Self {
+            buffer: self.buffer.clone(),
+            transform: self.transform,
+            revision: self.revision,
+            transformed_cache: RefCell::new(None),
         }
     }
 }
@@ -555,6 +691,35 @@ struct ShapeTransformedCache {
     buffer: ImageBuffer,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RasterTransformCacheKey {
+    revision: u64,
+    flip_x: bool,
+    flip_y: bool,
+    rotation_bits: u64,
+    scale_x_bits: u64,
+    scale_y_bits: u64,
+}
+
+impl RasterTransformCacheKey {
+    fn new(revision: u64, transform: LayerTransform) -> Self {
+        Self {
+            revision,
+            flip_x: transform.flip_x,
+            flip_y: transform.flip_y,
+            rotation_bits: transform.rotation_deg.to_bits(),
+            scale_x_bits: transform.scale_x.to_bits(),
+            scale_y_bits: transform.scale_y.to_bits(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RasterTransformCache {
+    key: RasterTransformCacheKey,
+    buffer: ImageBuffer,
+}
+
 /// A layer in the compositing document.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -610,6 +775,74 @@ mod tests {
         assert_eq!(c.blend_mode, BlendMode::Normal);
         assert!(c.mask.is_none());
         assert!(!c.clip_to_below);
+    }
+
+    #[test]
+    fn image_transformed_cache_reuses_and_invalidates() {
+        let mut image = ImageLayerData::new(ImageBuffer::new_transparent(8, 8));
+        image.transform.rotation_deg = 45.0;
+        let calls = Cell::new(0);
+
+        image.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(12, 12)
+            },
+            Clone::clone,
+        );
+        image.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(12, 12)
+            },
+            Clone::clone,
+        );
+        assert_eq!(calls.get(), 1);
+
+        image.mutate_buffer(|buffer| {
+            buffer.set_pixel(0, 0, Rgba::new(255, 0, 0, 255));
+        });
+        image.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(12, 12)
+            },
+            Clone::clone,
+        );
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn paint_transformed_cache_reuses_and_invalidates() {
+        let mut paint = PaintLayerData::new(ImageBuffer::new_transparent(8, 8));
+        paint.transform.scale_x = 1.5;
+        let calls = Cell::new(0);
+
+        paint.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(12, 8)
+            },
+            Clone::clone,
+        );
+        paint.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(12, 8)
+            },
+            Clone::clone,
+        );
+        assert_eq!(calls.get(), 1);
+
+        paint.set_buffer(ImageBuffer::new_transparent(10, 10));
+        paint.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(15, 10)
+            },
+            Clone::clone,
+        );
+        assert_eq!(calls.get(), 2);
     }
 
     #[test]

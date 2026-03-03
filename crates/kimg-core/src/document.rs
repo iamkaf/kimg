@@ -314,10 +314,7 @@ impl Document {
 
         // Now replace the layer kind
         let layer = self.find_layer_mut(group_id).unwrap();
-        layer.kind = LayerKind::Image(crate::layer::ImageLayerData {
-            buffer: buf,
-            transform: LayerTransform::new(),
-        });
+        layer.kind = LayerKind::Image(crate::layer::ImageLayerData::new(buf));
         // Reset position since the buffer is already at canvas coordinates
         layer.common.x = 0;
         layer.common.y = 0;
@@ -344,12 +341,12 @@ impl Document {
         };
 
         match &mut layer.kind {
-            LayerKind::Image(image) => {
-                fill::bucket_fill(&mut image.buffer, x, y, color, contiguous, tolerance)
-            }
-            LayerKind::Paint(paint) => {
-                fill::bucket_fill(&mut paint.buffer, x, y, color, contiguous, tolerance)
-            }
+            LayerKind::Image(image) => image.mutate_buffer(|buffer| {
+                fill::bucket_fill(buffer, x, y, color, contiguous, tolerance)
+            }),
+            LayerKind::Paint(paint) => paint.mutate_buffer(|buffer| {
+                fill::bucket_fill(buffer, x, y, color, contiguous, tolerance)
+            }),
             _ => false,
         }
     }
@@ -448,28 +445,6 @@ fn flip_buffer(src: &ImageBuffer, flip_x: bool, flip_y: bool) -> ImageBuffer {
         }
     }
     dst
-}
-
-fn blit_raster_layer(
-    target: &mut ImageBuffer,
-    source: &ImageBuffer,
-    common: &LayerCommon,
-    transform: &LayerTransform,
-) {
-    let transformed = apply_non_destructive_transform(source, transform);
-    blit_transformed(
-        target,
-        &transformed,
-        &BlitParams {
-            dx: common.x,
-            dy: common.y,
-            anchor: transform.anchor,
-            flip_x: false,
-            flip_y: false,
-            rotation: Rotation::None,
-            opacity: common.opacity,
-        },
-    );
 }
 
 fn blit_pretransformed_raster_layer(
@@ -612,11 +587,31 @@ fn render_layer_direct(layer: &Layer, output: &mut ImageBuffer) -> bool {
 
     match &layer.kind {
         LayerKind::Image(image) => {
-            blit_raster_layer(output, &image.buffer, &layer.common, &image.transform);
+            image.with_cached_transformed_raster(
+                || apply_non_destructive_transform(&image.buffer, &image.transform),
+                |transformed| {
+                    blit_pretransformed_raster_layer(
+                        output,
+                        transformed,
+                        &layer.common,
+                        image.transform.anchor,
+                    );
+                },
+            );
             true
         }
         LayerKind::Paint(paint) => {
-            blit_raster_layer(output, &paint.buffer, &layer.common, &paint.transform);
+            paint.with_cached_transformed_raster(
+                || apply_non_destructive_transform(&paint.buffer, &paint.transform),
+                |transformed| {
+                    blit_pretransformed_raster_layer(
+                        output,
+                        transformed,
+                        &layer.common,
+                        paint.transform.anchor,
+                    );
+                },
+            );
             true
         }
         LayerKind::Shape(shape) => {
@@ -777,7 +772,17 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
     match &layer.kind {
         LayerKind::Image(img) => {
             let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
-            blit_raster_layer(&mut buf, &img.buffer, &layer.common, &img.transform);
+            img.with_cached_transformed_raster(
+                || apply_non_destructive_transform(&img.buffer, &img.transform),
+                |transformed| {
+                    blit_pretransformed_raster_layer(
+                        &mut buf,
+                        transformed,
+                        &layer.common,
+                        img.transform.anchor,
+                    );
+                },
+            );
             if let Some(mask) = &layer.common.mask {
                 apply_mask(&mut buf, mask, layer.common.mask_inverted);
             }
@@ -785,7 +790,17 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
         }
         LayerKind::Paint(paint) => {
             let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
-            blit_raster_layer(&mut buf, &paint.buffer, &layer.common, &paint.transform);
+            paint.with_cached_transformed_raster(
+                || apply_non_destructive_transform(&paint.buffer, &paint.transform),
+                |transformed| {
+                    blit_pretransformed_raster_layer(
+                        &mut buf,
+                        transformed,
+                        &layer.common,
+                        paint.transform.anchor,
+                    );
+                },
+            );
             if let Some(mask) = &layer.common.mask {
                 apply_mask(&mut buf, mask, layer.common.mask_inverted);
             }
@@ -942,10 +957,7 @@ mod tests {
                 y,
                 ..LayerCommon::new(id, name)
             },
-            kind: LayerKind::Image(ImageLayerData {
-                buffer: buf,
-                transform: LayerTransform::new(),
-            }),
+            kind: LayerKind::Image(ImageLayerData::new(buf)),
         }
     }
 
@@ -1355,6 +1367,58 @@ mod tests {
             }
             _ => panic!("expected paint layer"),
         }
+    }
+
+    #[test]
+    fn render_invalidates_transformed_raster_cache_after_pixel_mutation() {
+        let mut doc = Document::new(8, 4);
+        let image_id = doc.next_id();
+        let paint_id = doc.next_id();
+
+        doc.layers.push(img_layer(
+            image_id,
+            "img",
+            solid_buf(2, 2, Rgba::new(255, 0, 0, 255)),
+            0,
+            0,
+        ));
+
+        let mut paint = ImageBuffer::new_transparent(2, 2);
+        paint.fill(Rgba::new(0, 0, 255, 255));
+        let mut paint_layer = Layer {
+            common: LayerCommon::new(paint_id, "paint"),
+            kind: LayerKind::Paint(PaintLayerData::new(paint)),
+        };
+        paint_layer.common.x = 4;
+        doc.layers.push(paint_layer);
+
+        assert!(doc.update_layer(
+            image_id,
+            &LayerPatch {
+                scale_x: Some(2.0),
+                scale_y: Some(2.0),
+                ..Default::default()
+            },
+        ));
+        assert!(doc.update_layer(
+            paint_id,
+            &LayerPatch {
+                scale_x: Some(2.0),
+                scale_y: Some(2.0),
+                ..Default::default()
+            },
+        ));
+
+        let before = doc.render();
+        assert_eq!(before.get_pixel(0, 0), Rgba::new(255, 0, 0, 255));
+        assert_eq!(before.get_pixel(4, 0), Rgba::new(0, 0, 255, 255));
+
+        assert!(doc.bucket_fill_layer(image_id, 0, 0, Rgba::new(0, 255, 0, 255), true, 0,));
+        assert!(doc.bucket_fill_layer(paint_id, 0, 0, Rgba::new(255, 255, 0, 255), true, 0,));
+
+        let after = doc.render();
+        assert_eq!(after.get_pixel(0, 0), Rgba::new(0, 255, 0, 255));
+        assert_eq!(after.get_pixel(4, 0), Rgba::new(255, 255, 0, 255));
     }
 
     #[test]
