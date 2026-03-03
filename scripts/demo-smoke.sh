@@ -100,13 +100,22 @@ if not match:
     raise SystemExit("ERROR: body tag not found in demo DOM")
 
 attrs = dict(re.findall(r'data-([a-z0-9-]+)="([^"]*)"', html.unescape(match.group(1))))
+runtime_status_match = re.search(r'<dd id="runtime-status">(.*?)</dd>', dom, re.S)
+runtime_status_text = ""
+if runtime_status_match:
+    runtime_status_text = re.sub(r"<[^>]+>", "", html.unescape(runtime_status_match.group(1))).strip()
+
+diagnostics = [
+    re.sub(r"<[^>]+>", "", html.unescape(entry)).strip()
+    for entry in re.findall(r'<li class="(?:error|warn|diagnostic-empty)">(.*?)</li>', dom, re.S)
+]
 
 status = attrs.get("suite-status")
 cards = int(attrs.get("suite-count", 0))
 passed = int(attrs.get("suite-pass", 0))
 failed = int(attrs.get("suite-fail", 0))
 experimental = int(attrs.get("suite-experimental", 0))
-diagnostics = int(attrs.get("suite-diagnostics", 0))
+diagnostic_count = int(attrs.get("suite-diagnostics", 0))
 
 print(
     "demo-status:"
@@ -115,17 +124,23 @@ print(
     f" pass={passed}"
     f" fail={failed}"
     f" experimental={experimental}"
-    f" diagnostics={diagnostics}"
+    f" diagnostics={diagnostic_count}"
 )
 
 if status != "completed":
+    if runtime_status_text:
+        print(f"demo-runtime-status: {runtime_status_text}")
+    for diagnostic in diagnostics[:5]:
+        print(f"demo-diagnostic: {diagnostic}")
     raise SystemExit(f"ERROR: demo did not complete cleanly (status={status})")
 if cards < 20:
     raise SystemExit(f"ERROR: demo rendered too few cards ({cards})")
 if failed != 0:
     raise SystemExit(f"ERROR: demo reported failing cards ({failed})")
-if diagnostics != 0:
-    raise SystemExit(f"ERROR: demo captured diagnostics ({diagnostics})")
+if diagnostic_count != 0:
+    for diagnostic in diagnostics[:5]:
+        print(f"demo-diagnostic: {diagnostic}")
+    raise SystemExit(f"ERROR: demo captured diagnostics ({diagnostic_count})")
 if passed <= 0:
     raise SystemExit("ERROR: demo reported zero passing cards")
 if passed + failed + experimental != cards:
