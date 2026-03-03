@@ -64,10 +64,6 @@ pub struct BlitParams {
     pub opacity: f64,
 }
 
-fn clamp_byte(n: f64) -> u8 {
-    (n as i32).clamp(0, 255) as u8
-}
-
 /// Blit `src` onto `dst` with position, anchor, flip, rotation, and opacity.
 ///
 /// Pixels that map outside `dst`'s bounds are silently clipped.
@@ -93,7 +89,10 @@ pub fn blit_transformed(dst: &mut ImageBuffer, src: &ImageBuffer, params: &BlitP
         Anchor::TopLeft => (params.dx, params.dy),
     };
 
-    let op = params.opacity.clamp(0.0, 1.0);
+    let opacity = (params.opacity.clamp(0.0, 1.0) * 255.0).round() as u32;
+    if opacity == 0 {
+        return;
+    }
 
     let dw = dst.width as i32;
     let dh = dst.height as i32;
@@ -124,6 +123,10 @@ pub fn blit_transformed(dst: &mut ImageBuffer, src: &ImageBuffer, params: &BlitP
             if sa_byte == 0 {
                 continue;
             }
+            let sa = ((sa_byte as u32) * opacity + 127) / 255;
+            if sa == 0 {
+                continue;
+            }
 
             let tx = x0 + x;
             let ty = y0 + y;
@@ -132,25 +135,36 @@ pub fn blit_transformed(dst: &mut ImageBuffer, src: &ImageBuffer, params: &BlitP
             }
 
             let di = ((ty * dw + tx) * 4) as usize;
-            let da = dst.data[di + 3] as f64 / 255.0;
-            let s_alpha = (sa_byte as f64 / 255.0) * op;
-            let out_a = s_alpha + da * (1.0 - s_alpha);
-            if out_a <= 0.0 {
+            if sa == 255 {
+                dst.data[di] = src.data[si];
+                dst.data[di + 1] = src.data[si + 1];
+                dst.data[di + 2] = src.data[si + 2];
+                dst.data[di + 3] = 255;
                 continue;
             }
 
-            let sr = src.data[si] as f64;
-            let sg = src.data[si + 1] as f64;
-            let sb = src.data[si + 2] as f64;
-            let dr = dst.data[di] as f64;
-            let dg = dst.data[di + 1] as f64;
-            let db = dst.data[di + 2] as f64;
+            let da = dst.data[di + 3] as u32;
+            if da == 0 {
+                dst.data[di] = src.data[si];
+                dst.data[di + 1] = src.data[si + 1];
+                dst.data[di + 2] = src.data[si + 2];
+                dst.data[di + 3] = sa as u8;
+                continue;
+            }
 
-            let inv_sa = 1.0 - s_alpha;
-            dst.data[di] = clamp_byte((sr * s_alpha + dr * da * inv_sa) / out_a);
-            dst.data[di + 1] = clamp_byte((sg * s_alpha + dg * da * inv_sa) / out_a);
-            dst.data[di + 2] = clamp_byte((sb * s_alpha + db * da * inv_sa) / out_a);
-            dst.data[di + 3] = clamp_byte(out_a * 255.0);
+            let inv_sa = 255 - sa;
+            let out_a = sa + ((da * inv_sa + 127) / 255);
+            if out_a == 0 {
+                continue;
+            }
+
+            for channel in 0..3 {
+                let src_term = src.data[si + channel] as u32 * sa;
+                let dst_term = (dst.data[di + channel] as u32 * da * inv_sa + 127) / 255;
+                let out = (src_term + dst_term + out_a / 2) / out_a;
+                dst.data[di + channel] = out as u8;
+            }
+            dst.data[di + 3] = out_a as u8;
         }
     }
 }

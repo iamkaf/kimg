@@ -13,14 +13,14 @@
 //! isolated buffer first (two-pass: non-filter layers, then filter layers),
 //! mirroring Spriteform's `renderSmartVariantScoped` behaviour.
 
-use crate::blend::{blend, blend_normal};
+use crate::blend::{blend, blend_normal, BlendMode};
 use crate::blit::{blit_transformed, BlitParams, Rotation};
 use crate::buffer::ImageBuffer;
 use crate::fill;
 use crate::filter::{apply_hsl_filter, HslFilterConfig};
 use crate::layer::{
-    FilterLayerPatch, GradientDirection, GradientLayerData, GroupLayerData, Layer, LayerKind,
-    LayerPatch, LayerTransform, ShapeLayerData, SolidColorLayerData,
+    FilterLayerPatch, GradientDirection, GradientLayerData, GroupLayerData, Layer, LayerCommon,
+    LayerKind, LayerPatch, LayerTransform, ShapeLayerData, SolidColorLayerData,
 };
 use crate::pixel::Rgba;
 use crate::shape::render_shape;
@@ -432,14 +432,48 @@ fn flip_buffer(src: &ImageBuffer, flip_x: bool, flip_y: bool) -> ImageBuffer {
     }
 
     let mut dst = ImageBuffer::new_transparent(src.width, src.height);
-    for y in 0..src.height {
-        for x in 0..src.width {
-            let sx = if flip_x { src.width - 1 - x } else { x };
-            let sy = if flip_y { src.height - 1 - y } else { y };
-            dst.set_pixel(x, y, src.get_pixel(sx, sy));
+    let src_w = src.width as usize;
+    let dst_w = dst.width as usize;
+    for y in 0..src.height as usize {
+        let sy = if flip_y {
+            src.height as usize - 1 - y
+        } else {
+            y
+        };
+        for x in 0..src.width as usize {
+            let sx = if flip_x {
+                src.width as usize - 1 - x
+            } else {
+                x
+            };
+            let si = (sy * src_w + sx) * 4;
+            let di = (y * dst_w + x) * 4;
+            dst.data[di..di + 4].copy_from_slice(&src.data[si..si + 4]);
         }
     }
     dst
+}
+
+fn blit_raster_layer(
+    target: &mut ImageBuffer,
+    source: &ImageBuffer,
+    common: &LayerCommon,
+    transform: &LayerTransform,
+) {
+    let transformed = apply_non_destructive_transform(source, transform);
+    blit_transformed(
+        target,
+        &transformed,
+        &BlitParams {
+            dx: common.x,
+            dy: common.y,
+            anchor: transform.anchor,
+            flip_x: false,
+            flip_y: false,
+            rotation: Rotation::None,
+            opacity: common.opacity,
+        },
+    );
 }
 
 fn apply_non_destructive_transform(
@@ -525,6 +559,55 @@ fn apply_filter_patch(config: &mut HslFilterConfig, patch: &FilterLayerPatch) {
     }
     if let Some(sharpen) = patch.sharpen {
         config.sharpen = sharpen;
+    }
+}
+
+fn scale_alpha(buf: &mut ImageBuffer, opacity: f64) {
+    if opacity >= 1.0 {
+        return;
+    }
+    let scale = (opacity.clamp(0.0, 1.0) * 255.0).round() as u16;
+    for chunk in buf.data.chunks_exact_mut(4) {
+        chunk[3] = ((chunk[3] as u16 * scale + 127) / 255) as u8;
+    }
+}
+
+fn refresh_alpha_snapshot(snapshot: &mut [u8], buffer: &ImageBuffer) {
+    for (alpha, pixel) in snapshot.iter_mut().zip(buffer.data.chunks_exact(4)) {
+        *alpha = pixel[3];
+    }
+}
+
+fn can_render_layer_direct(layer: &Layer) -> bool {
+    layer.common.mask.is_none()
+        && !layer.common.clip_to_below
+        && layer.common.blend_mode == BlendMode::Normal
+        && matches!(
+            layer.kind,
+            LayerKind::Image(_) | LayerKind::Paint(_) | LayerKind::Shape(_)
+        )
+}
+
+fn render_layer_direct(layer: &Layer, output: &mut ImageBuffer) -> bool {
+    if !can_render_layer_direct(layer) {
+        return false;
+    }
+
+    match &layer.kind {
+        LayerKind::Image(image) => {
+            blit_raster_layer(output, &image.buffer, &layer.common, &image.transform);
+            true
+        }
+        LayerKind::Paint(paint) => {
+            blit_raster_layer(output, &paint.buffer, &layer.common, &paint.transform);
+            true
+        }
+        LayerKind::Shape(shape) => {
+            let shape_buf = render_shape_layer(shape);
+            blit_raster_layer(output, &shape_buf, &layer.common, &shape.transform);
+            true
+        }
+        _ => false,
     }
 }
 
@@ -643,140 +726,86 @@ fn apply_mask(buf: &mut ImageBuffer, mask: &ImageBuffer, inverted: bool) {
         for x in 0..w {
             let bi = (y * buf_stride + x) * 4;
             let mi = (y * mask_stride + x) * 4;
-            let mut mask_val = mask.data[mi] as f64 / 255.0;
+            let mut mask_val = mask.data[mi];
             if inverted {
-                mask_val = 1.0 - mask_val;
+                mask_val = 255 - mask_val;
             }
-            let a = buf.data[bi + 3] as f64;
-            buf.data[bi + 3] = (a * mask_val + 0.5) as u8;
+            buf.data[bi + 3] = ((buf.data[bi + 3] as u16 * mask_val as u16 + 127) / 255) as u8;
         }
     }
 }
 
 /// Clip `layer_buf` to the alpha of `below_buf`. Where below has alpha=0,
 /// the layer becomes transparent.
-fn apply_clipping_mask(layer_buf: &mut ImageBuffer, below_buf: &ImageBuffer) {
-    let w = layer_buf.width.min(below_buf.width) as usize;
-    let h = layer_buf.height.min(below_buf.height) as usize;
-    let ls = layer_buf.width as usize;
-    let bs = below_buf.width as usize;
-
-    for y in 0..h {
-        for x in 0..w {
-            let li = (y * ls + x) * 4;
-            let bi = (y * bs + x) * 4;
-            let below_a = below_buf.data[bi + 3] as f64 / 255.0;
-            let a = layer_buf.data[li + 3] as f64;
-            layer_buf.data[li + 3] = (a * below_a + 0.5) as u8;
-        }
+fn apply_clipping_mask(layer_buf: &mut ImageBuffer, below_alpha: &[u8]) {
+    for (pixel, &alpha) in layer_buf.data.chunks_exact_mut(4).zip(below_alpha.iter()) {
+        pixel[3] = ((pixel[3] as u16 * alpha as u16 + 127) / 255) as u8;
     }
 }
 
 /// Render a single layer to an isolated canvas-sized RGBA buffer.
 fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageBuffer {
-    let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
-
     match &layer.kind {
         LayerKind::Image(img) => {
-            let transformed = apply_non_destructive_transform(&img.buffer, &img.transform);
-            blit_transformed(
-                &mut buf,
-                &transformed,
-                &BlitParams {
-                    dx: layer.common.x,
-                    dy: layer.common.y,
-                    anchor: img.transform.anchor,
-                    flip_x: false,
-                    flip_y: false,
-                    rotation: Rotation::None,
-                    opacity: layer.common.opacity,
-                },
-            );
+            let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
+            blit_raster_layer(&mut buf, &img.buffer, &layer.common, &img.transform);
+            if let Some(mask) = &layer.common.mask {
+                apply_mask(&mut buf, mask, layer.common.mask_inverted);
+            }
+            buf
         }
         LayerKind::Paint(paint) => {
-            let transformed = apply_non_destructive_transform(&paint.buffer, &paint.transform);
-            blit_transformed(
-                &mut buf,
-                &transformed,
-                &BlitParams {
-                    dx: layer.common.x,
-                    dy: layer.common.y,
-                    anchor: paint.transform.anchor,
-                    flip_x: false,
-                    flip_y: false,
-                    rotation: Rotation::None,
-                    opacity: layer.common.opacity,
-                },
-            );
+            let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
+            blit_raster_layer(&mut buf, &paint.buffer, &layer.common, &paint.transform);
+            if let Some(mask) = &layer.common.mask {
+                apply_mask(&mut buf, mask, layer.common.mask_inverted);
+            }
+            buf
         }
         LayerKind::SolidColor(sc) => {
-            let fill = render_solid_color(sc, canvas_w, canvas_h);
-            if layer.common.opacity < 1.0 {
-                // Apply opacity
-                for i in (0..buf.data.len()).step_by(4) {
-                    buf.data[i] = fill.data[i];
-                    buf.data[i + 1] = fill.data[i + 1];
-                    buf.data[i + 2] = fill.data[i + 2];
-                    buf.data[i + 3] = (fill.data[i + 3] as f64 * layer.common.opacity + 0.5) as u8;
-                }
-            } else {
-                buf = fill;
+            let mut fill = render_solid_color(sc, canvas_w, canvas_h);
+            scale_alpha(&mut fill, layer.common.opacity);
+            if let Some(mask) = &layer.common.mask {
+                apply_mask(&mut fill, mask, layer.common.mask_inverted);
             }
+            fill
         }
         LayerKind::Gradient(grad) => {
-            let fill = render_gradient(grad, canvas_w, canvas_h);
-            if layer.common.opacity < 1.0 {
-                for i in (0..buf.data.len()).step_by(4) {
-                    buf.data[i] = fill.data[i];
-                    buf.data[i + 1] = fill.data[i + 1];
-                    buf.data[i + 2] = fill.data[i + 2];
-                    buf.data[i + 3] = (fill.data[i + 3] as f64 * layer.common.opacity + 0.5) as u8;
-                }
-            } else {
-                buf = fill;
+            let mut fill = render_gradient(grad, canvas_w, canvas_h);
+            scale_alpha(&mut fill, layer.common.opacity);
+            if let Some(mask) = &layer.common.mask {
+                apply_mask(&mut fill, mask, layer.common.mask_inverted);
             }
+            fill
         }
         LayerKind::Shape(shape) => {
-            let shape_buf =
-                apply_non_destructive_transform(&render_shape_layer(shape), &shape.transform);
-            blit_transformed(
-                &mut buf,
-                &shape_buf,
-                &BlitParams {
-                    dx: layer.common.x,
-                    dy: layer.common.y,
-                    anchor: shape.transform.anchor,
-                    flip_x: false,
-                    flip_y: false,
-                    rotation: Rotation::None,
-                    opacity: layer.common.opacity,
-                },
-            );
+            let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
+            let shape_buf = render_shape_layer(shape);
+            blit_raster_layer(&mut buf, &shape_buf, &layer.common, &shape.transform);
+            if let Some(mask) = &layer.common.mask {
+                apply_mask(&mut buf, mask, layer.common.mask_inverted);
+            }
+            buf
         }
         LayerKind::Group(group) => {
+            let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
             render_group(group, &mut buf, layer.common.opacity);
+            if let Some(mask) = &layer.common.mask {
+                apply_mask(&mut buf, mask, layer.common.mask_inverted);
+            }
+            buf
         }
         LayerKind::Filter(_) => {
             // Filters are handled at the list level, not as individual buffers
+            ImageBuffer::new_transparent(canvas_w, canvas_h)
         }
     }
-
-    // Apply layer mask if present
-    if let Some(mask) = &layer.common.mask {
-        apply_mask(&mut buf, mask, layer.common.mask_inverted);
-    }
-
-    buf
 }
 
 /// Render a list of layers onto `output`, back-to-front.
 /// Layers at the end of the vec are drawn on top.
 fn render_layers(layers: &[Layer], output: &mut ImageBuffer) {
-    let canvas_w = output.width;
-    let canvas_h = output.height;
-
-    // We need the previous rendered state for clipping masks
-    let mut prev_composite = output.clone();
+    let mut prev_alpha = vec![0; (output.width as usize) * (output.height as usize)];
 
     for layer in layers {
         if !layer.common.visible {
@@ -786,18 +815,23 @@ fn render_layers(layers: &[Layer], output: &mut ImageBuffer) {
         match &layer.kind {
             LayerKind::Filter(filter) => {
                 apply_hsl_filter(output, &filter.config);
-                prev_composite = output.clone();
+                refresh_alpha_snapshot(&mut prev_alpha, output);
             }
             _ => {
-                let mut layer_buf = render_layer_to_buffer(layer, canvas_w, canvas_h);
+                if render_layer_direct(layer, output) {
+                    refresh_alpha_snapshot(&mut prev_alpha, output);
+                    continue;
+                }
+
+                let mut layer_buf = render_layer_to_buffer(layer, output.width, output.height);
 
                 // Clipping mask: clip to the alpha of what was rendered before this layer
                 if layer.common.clip_to_below {
-                    apply_clipping_mask(&mut layer_buf, &prev_composite);
+                    apply_clipping_mask(&mut layer_buf, &prev_alpha);
                 }
 
                 blend(output, &layer_buf, layer.common.blend_mode);
-                prev_composite = output.clone();
+                refresh_alpha_snapshot(&mut prev_alpha, output);
             }
         }
     }
@@ -815,7 +849,7 @@ fn render_group(group: &GroupLayerData, output: &mut ImageBuffer, opacity: f64) 
     let mut group_buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
     let mut filters: Vec<&HslFilterConfig> = Vec::new();
 
-    let mut prev_composite = group_buf.clone();
+    let mut prev_alpha = vec![0; (canvas_w as usize) * (canvas_h as usize)];
 
     // Pass 1: render non-filter layers, collect filters
     for layer in &group.children {
@@ -827,14 +861,19 @@ fn render_group(group: &GroupLayerData, output: &mut ImageBuffer, opacity: f64) 
                 filters.push(&filter.config);
             }
             _ => {
+                if render_layer_direct(layer, &mut group_buf) {
+                    refresh_alpha_snapshot(&mut prev_alpha, &group_buf);
+                    continue;
+                }
+
                 let mut layer_buf = render_layer_to_buffer(layer, canvas_w, canvas_h);
 
                 if layer.common.clip_to_below {
-                    apply_clipping_mask(&mut layer_buf, &prev_composite);
+                    apply_clipping_mask(&mut layer_buf, &prev_alpha);
                 }
 
                 blend(&mut group_buf, &layer_buf, layer.common.blend_mode);
-                prev_composite = group_buf.clone();
+                refresh_alpha_snapshot(&mut prev_alpha, &group_buf);
             }
         }
     }
@@ -844,12 +883,7 @@ fn render_group(group: &GroupLayerData, output: &mut ImageBuffer, opacity: f64) 
         apply_hsl_filter(&mut group_buf, config);
     }
 
-    if opacity < 1.0 {
-        for i in (0..group_buf.data.len()).step_by(4) {
-            let a = group_buf.data[i + 3] as f64;
-            group_buf.data[i + 3] = (a * opacity).round() as u8;
-        }
-    }
+    scale_alpha(&mut group_buf, opacity);
 
     blend_normal(output, &group_buf);
 }

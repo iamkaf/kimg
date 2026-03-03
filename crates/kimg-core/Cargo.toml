@@ -62,3 +62,7 @@ harness = false
 [[bench]]
 name = "fill"
 harness = false
+
+[[bench]]
+name = "shape"
+harness = false

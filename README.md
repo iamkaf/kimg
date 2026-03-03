@@ -266,32 +266,38 @@ The benchmarks cover:
 | `transform` | Nearest, bilinear, and Lanczos3 resize; crop; trim; arbitrary rotation |
 | `convolution` | 3×3 and 5×5 kernels; box blur; Gaussian blur |
 | `filter` | HSL pipeline, invert, levels, posterize, gradient map |
-| `document` | Full render pipeline at 1–10 layers, shape-heavy scenes, and non-destructive transform render costs |
+| `document` | Full render pipeline at 1–10 layers, shape-heavy scenes, clipping/masking overhead, and non-destructive transform render costs |
 | `codec` | PNG / JPEG / WebP encode and decode of a 512×512 buffer |
 | `sprite` | Sprite sheet packing, palette extraction, quantization, pixel-art scale |
 | `fill` | Contiguous and non-contiguous bucket fill, plus alpha-aware tolerance matching |
+| `shape` | Standalone shape rasterization cost for rectangle and polygon primitives |
 
 Notes on the harnesses:
 
 - Very expensive resize cases use reduced flat-sampled Criterion groups so `cargo bench -p kimg-core` stays practical while still reporting worst-case medians.
 - RGBA bilinear and Lanczos3 resize paths use `fast_image_resize`, so native builds pick up host SIMD and the browser `Composition.create()` path can load the separate `simd128` wasm artifact.
 - Codec benchmarks use a deterministic textured 512×512 image instead of a flat fill, which avoids unrealistically optimistic compression timings.
+- `render/repeated_transformed_layer/512` performs two back-to-back renders of the same transformed document in one iteration so future caching work has a stable benchmark target.
 
 Representative medians from recent local runs on March 2, 2026. These are hardware-dependent and should be treated as a baseline example, not a guarantee:
 
 | Operation | Median |
 |------|------:|
 | `render/single_image/512` | `5.29 ms` |
-| `render/10_layers/512` | `46.02 ms` |
+| `render/10_layers/512` | `8.31 ms` |
+| `render/10_normal_layers/512` | `17.78 ms` |
 | `render/10_layers_with_filter/512` | `51.12 ms` |
 | `render/single_shape/512` | `6.40 ms` |
 | `render/10_shapes/512` | `55.66 ms` |
 | `render/10_shapes_with_filter/512` | `67.91 ms` |
 | `render/group_of_5/512` | `28.08 ms` |
+| `render/clipped_layer_stack/512` | `18.42 ms` |
+| `render/masked_layer_stack/512` | `10.59 ms` |
 | `render/transformed_image/512` | `9.02 ms` |
 | `render/transformed_paint/512` | `11.03 ms` |
 | `render/transformed_shape/512` | `11.18 ms` |
-| `render/10_layers_with_transforms/512` | `83.31 ms` |
+| `render/10_layers_with_transforms/512` | `71.67 ms` |
+| `render/repeated_transformed_layer/512` | `11.79 ms` |
 | `serialize_deserialize/10_layers` | `762.54 µs` |
 | `bucket_fill/contiguous/512` | `945.14 µs` |
 | `bucket_fill/non_contiguous/512` | `808.98 µs` |
@@ -303,6 +309,8 @@ Representative medians from recent local runs on March 2, 2026. These are hardwa
 | `encode_webp/512` | `1.41 ms` |
 | `decode_webp/512` | `2.65 ms` |
 | `extract_palette/512/16colors` | `20.45 ms` |
+| `shape/rasterize_rectangle/512` | `341.91 µs` |
+| `shape/rasterize_polygon/512` | `11.88 ms` |
 | `resize_nearest/512→1024` | `1.63 ms` |
 | `resize_bilinear/512→1024` | `1.01 ms` |
 | `resize_lanczos3/512→1024` | `1.59 ms` |

@@ -273,6 +273,11 @@ fn clamp_byte(n: f64) -> u8 {
 ///
 /// Fully transparent source pixels are skipped for efficiency.
 pub fn blend(dst: &mut ImageBuffer, src: &ImageBuffer, mode: BlendMode) {
+    if mode == BlendMode::Normal {
+        blend_normal(dst, src);
+        return;
+    }
+
     let w = dst.width.min(src.width) as usize;
     let h = dst.height.min(src.height) as usize;
     let dst_stride = dst.width as usize;
@@ -320,7 +325,49 @@ pub fn blend(dst: &mut ImageBuffer, src: &ImageBuffer, mode: BlendMode) {
 
 /// Convenience: alpha-composite using Normal blend mode.
 pub fn blend_normal(dst: &mut ImageBuffer, src: &ImageBuffer) {
-    blend(dst, src, BlendMode::Normal);
+    let w = dst.width.min(src.width) as usize;
+    let h = dst.height.min(src.height) as usize;
+    let dst_stride = dst.width as usize;
+    let src_stride = src.width as usize;
+
+    for y in 0..h {
+        for x in 0..w {
+            let si = (y * src_stride + x) * 4;
+            let sa = src.data[si + 3] as u32;
+            if sa == 0 {
+                continue;
+            }
+
+            let di = (y * dst_stride + x) * 4;
+            if sa == 255 {
+                dst.data[di..di + 4].copy_from_slice(&src.data[si..si + 4]);
+                continue;
+            }
+
+            let da = dst.data[di + 3] as u32;
+            if da == 0 {
+                dst.data[di] = src.data[si];
+                dst.data[di + 1] = src.data[si + 1];
+                dst.data[di + 2] = src.data[si + 2];
+                dst.data[di + 3] = src.data[si + 3];
+                continue;
+            }
+
+            let inv_sa = 255 - sa;
+            let out_a = sa + ((da * inv_sa + 127) / 255);
+            if out_a == 0 {
+                continue;
+            }
+
+            for channel in 0..3 {
+                let src_term = src.data[si + channel] as u32 * sa;
+                let dst_term = (dst.data[di + channel] as u32 * da * inv_sa + 127) / 255;
+                let out = (src_term + dst_term + out_a / 2) / out_a;
+                dst.data[di + channel] = out as u8;
+            }
+            dst.data[di + 3] = out_a as u8;
+        }
+    }
 }
 
 #[cfg(test)]
