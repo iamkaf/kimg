@@ -19,6 +19,7 @@ quantette-quantize = ["dep:quantette"]
 bytemuck = { version = "1.25.0", features = ["derive"] }
 cosmic-text = { version = "0.15.0", default-features = false, features = ["std", "swash", "wasm-web"], optional = true }
 fast_image_resize = { version = "6.0.0", default-features = false, features = ["std", "only_u8x4"] }
+fontdb = "0.23.0"
 font8x8 = { version = "0.3.1", default-features = false, features = ["unicode"] }
 png = "0.17"
 jpeg-decoder = "0.3"
@@ -27,9 +28,12 @@ image-webp = "0.2"
 gif = "0.13"
 psd = "0.3"
 postcard = { version = "1.1.3", default-features = false, features = ["alloc"] }
+resvg = { version = "0.47.0", default-features = false, features = ["text"] }
+roxmltree = "0.21.1"
 serde = { version = "1.0.228", features = ["derive"] }
 tiny-skia = { version = "0.12.0", default-features = false, features = ["std", "simd"], optional = true }
 quantette = { version = "0.5.1", default-features = false, features = ["std"], optional = true }
+usvg = { version = "0.47.0", default-features = false, features = ["text"] }
 wuff = { version = "0.2.3", default-features = false, features = ["brotli", "z"], optional = true }
 
 [dev-dependencies]

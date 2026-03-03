@@ -160,23 +160,29 @@ I would avoid overdesigning the import surface initially. A single composition-l
 
 ### Phase 1. Integration spike
 
-- [ ] Add a small `usvg` + `resvg` prototype in core
-- [ ] Verify native render from raw SVG bytes
-- [ ] Verify `wasm32-unknown-unknown` build
-- [ ] Measure wasm size impact
-- [ ] Render one representative icon/logo SVG in tests
+- [x] Add a small `usvg` + `resvg` prototype in core
+- [x] Verify native render from raw SVG bytes
+- [x] Verify `wasm32-unknown-unknown` build
+- [x] Measure wasm size impact
+- [x] Render one representative icon/logo SVG in tests
 
 Exit criteria:
 
 - clear yes/no answer on native viability, wasm viability, and size cost
 
+Result:
+
+- native and `wasm32` viability: yes
+- current eager shipping cost: `dist/kimg_wasm_bg.wasm` is about `2.9 MB` raw, `dist/kimg_wasm_text_bg.wasm` about `4.9 MB` raw
+- decision: ship SVG support eagerly for now and revisit lazy-loading only if package size becomes a practical problem
+
 ### Phase 2. Engine layer
 
-- [ ] Add `SvgLayerData`
-- [ ] Store original source plus parsed tree / render-ready state
-- [ ] Add raster cache keyed by output size
-- [ ] Render SVG layers through the normal document pipeline
-- [ ] Reuse existing transform model
+- [x] Add `SvgLayerData`
+- [x] Store original source plus parsed tree / render-ready state
+- [x] Add raster cache keyed by output size
+- [x] Render SVG layers through the normal document pipeline
+- [x] Reuse existing transform model
 
 Exit criteria:
 
@@ -184,10 +190,10 @@ Exit criteria:
 
 ### Phase 3. Serialization and API
 
-- [ ] Add `.kimg` serialization for SVG layers
-- [ ] Add wasm bindings
-- [ ] Add JS facade helper(s)
-- [ ] Add layer snapshot support
+- [x] Add `.kimg` serialization for SVG layers
+- [x] Add wasm bindings
+- [x] Add JS facade helper(s)
+- [x] Add layer snapshot support
 
 Exit criteria:
 
@@ -195,9 +201,9 @@ Exit criteria:
 
 ### Phase 4. Rasterization workflow
 
-- [ ] Add `rasterizeSvgLayer(id)` document operation
-- [ ] Preserve current common properties during conversion
-- [ ] Ensure resulting raster layer matches current visual output closely
+- [x] Add `rasterizeSvgLayer(id)` document operation
+- [x] Preserve current common properties during conversion
+- [x] Ensure resulting raster layer matches current visual output closely
 
 Exit criteria:
 
@@ -205,12 +211,12 @@ Exit criteria:
 
 ### Phase 5. Constraints and polish
 
-- [ ] Reject unsupported external-resource cases cleanly
-- [ ] Document SVG text/font caveats
-- [ ] Decide browser shipping model:
+- [x] Reject unsupported external-resource cases cleanly
+- [x] Document SVG text/font caveats
+- [x] Decide browser shipping model:
   - include in main wasm
   - or lazy-load in browser like text
-- [ ] Add demo coverage
+- [x] Add demo coverage
 
 Exit criteria:
 
@@ -218,12 +224,12 @@ Exit criteria:
 
 ## Shipping Recommendation
 
-Default recommendation:
+Current recommendation:
 
-- Node: include SVG support eagerly if size is acceptable
-- Browser: strongly consider lazy-loading if the wasm/bundle delta is large
+- Node: include SVG support eagerly
+- Browser: include SVG support eagerly for now
 
-This should be decided after Phase 1 size measurements, not before.
+If wasm size becomes a release problem later, the most likely follow-up is a browser-only lazy-loaded SVG build rather than changing the API surface.
 
 ## Validation Matrix
 

@@ -67,9 +67,18 @@ await loadGoogleFont({
   weights: [400, 700],
   text: "HELLOKIMG",
 });
+
+doc.addSvgLayer({
+  name: "logo",
+  svg: svgMarkup,
+  width: 96,
+  height: 96,
+  x: 16,
+  y: 16,
+});
 ```
 
-`Composition.create()` and `Composition.deserialize()` use the text-enabled wasm renderer from the main package, so text works without a separate init step. `loadGoogleFont()` is browser-only; on Node use `registerFont()` with raw bytes.
+`Composition.create()` and `Composition.deserialize()` use the text-enabled wasm renderer from the main package, so text works without a separate init step. `loadGoogleFont()` is browser-only; on Node use `registerFont()` with raw bytes. SVG layers keep the original markup around for scalable rendering until you call `rasterizeSvgLayer(id)`.
 
 ## Node.js
 

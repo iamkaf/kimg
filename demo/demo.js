@@ -73,8 +73,8 @@ const SECTION_INFO = {
   io: {
     chip: "Formats",
     description:
-      "Serialization, PNG/JPEG/WebP import-export, GIF frame import, sprite helpers, and utility outputs that verify package-level APIs beyond rendering.",
-    title: "Format, Sprite, and Utility Surface",
+      "Retained SVG layers, serialization, PNG/JPEG/WebP import-export, GIF frame import, sprite helpers, and utility outputs that verify package-level APIs beyond rendering.",
+    title: "Format, SVG, Sprite, and Utility Surface",
   },
   experimental: {
     chip: "Experimental",
@@ -97,6 +97,21 @@ const suiteState = {
   statusText: "Booting",
 };
 let runSequence = 0;
+
+const SIMPLE_SVG = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+    <defs>
+      <linearGradient id="chip" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#d9482b" />
+        <stop offset="100%" stop-color="#2d55d7" />
+      </linearGradient>
+    </defs>
+    <rect x="10" y="10" width="76" height="76" rx="18" fill="url(#chip)" />
+    <circle cx="34" cy="34" r="10" fill="#f2c94c" />
+    <path d="M28 62 L48 42 L67 61" fill="none" stroke="#fffaf1" stroke-width="9" stroke-linecap="round" />
+    <rect x="54" y="24" width="12" height="24" rx="6" fill="#fffaf1" />
+  </svg>
+`;
 
 installDiagnostics();
 dom.rerunButton.addEventListener("click", () => {
@@ -1188,6 +1203,82 @@ function createTests() {
           globalThis.fetch = originalFetch;
           await clearRegisteredFonts();
           composition.free();
+        }
+      },
+    },
+    {
+      expectation:
+        "The retained SVG should stay crisp under scaling and rotation, and the explicit rasterized copy should preserve the same overall silhouette after conversion.",
+      fullSpan: true,
+      previewMin: 250,
+      section: "io",
+      title: "SVG Layer Import and Rasterize",
+      async run() {
+        const verify = createVerifier();
+        const retained = await Composition.create({ width: 208, height: 132 });
+        const rasterized = await Composition.create({ width: 208, height: 132 });
+
+        try {
+          retained.addSolidColorLayer({ color: [247, 241, 232, 255], name: "paper" });
+          rasterized.addSolidColorLayer({ color: [247, 241, 232, 255], name: "paper" });
+
+          const retainedId = retained.addSvgLayer({
+            name: "logo",
+            svg: SIMPLE_SVG,
+            width: 96,
+            height: 96,
+            x: 56,
+            y: 18,
+          });
+          const rasterizedId = rasterized.addSvgLayer({
+            name: "logo",
+            svg: SIMPLE_SVG,
+            width: 96,
+            height: 96,
+            x: 56,
+            y: 18,
+          });
+
+          retained.updateLayer(retainedId, {
+            anchor: "center",
+            rotation: -14,
+            scaleX: 1.45,
+            scaleY: 1.45,
+          });
+          rasterized.updateLayer(rasterizedId, {
+            anchor: "center",
+            rotation: -14,
+            scaleX: 1.45,
+            scaleY: 1.45,
+          });
+
+          const retainedInfo = retained.getLayer(retainedId);
+          const retainedLocal = retained.getLayerRgba(retainedId);
+          verify.equal(retainedInfo?.kind, "svg", "retained layer should stay svg-backed before rasterize");
+          verify.equal(retainedLocal.length, 96 * 96 * 4, "getLayerRgba should rasterize the local SVG bounds");
+
+          verify.equal(rasterized.rasterizeSvgLayer(rasterizedId), true, "rasterizeSvgLayer should succeed");
+          const rasterizedInfo = rasterized.getLayer(rasterizedId);
+          verify.equal(rasterizedInfo?.kind, "raster", "rasterized layer should become a raster layer");
+          verify.ok(retained.renderRgba().some((value) => value !== 0), "retained svg composition should render");
+          verify.ok(rasterized.renderRgba().some((value) => value !== 0), "rasterized svg composition should render");
+
+          return {
+            assertions: verify.count,
+            metrics: [
+              ["Retained kind", retainedInfo?.kind ?? "n/a"],
+              ["Rasterized kind", rasterizedInfo?.kind ?? "n/a"],
+              ["Local bounds", `${retainedInfo?.width ?? "?"}x${retainedInfo?.height ?? "?"}`],
+              ["Transform", `${retainedInfo?.scaleX?.toFixed(2) ?? "n/a"}x @ ${retainedInfo?.rotation?.toFixed(1) ?? "n/a"}°`],
+            ],
+            views: [
+              rgbaView("Retained SVG layer", retained.renderRgba(), retained.width, retained.height),
+              rgbaView("After rasterizeSvgLayer()", rasterized.renderRgba(), rasterized.width, rasterized.height),
+            ],
+          };
+        } finally {
+          retained.free();
+          rasterized.free();
         }
       },
     },

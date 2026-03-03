@@ -17,5 +17,6 @@ pub mod pixel;
 pub mod serialize;
 pub mod shape;
 pub mod sprite;
+pub mod svg;
 pub mod text;
 pub mod transform;

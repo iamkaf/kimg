@@ -13,12 +13,12 @@ use crate::layer::{TextAlign, TextLayerData, TextWrap};
 use crate::pixel::Rgba;
 #[cfg(feature = "cosmic-text-backend")]
 use cosmic_text::{
-    fontdb::{
-        Database, Query, Source, Stretch as FontStretch, Style as FontDbStyle,
-        Weight as FontDbWeight,
-    },
     Align as CosmicAlign, Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics,
     Shaping, Style as CosmicStyle, SwashCache, Weight as CosmicWeight, Wrap as CosmicWrap,
+};
+#[cfg(feature = "cosmic-text-backend")]
+use fontdb::{
+    Database, Query, Source, Stretch as FontStretch, Style as FontDbStyle, Weight as FontDbWeight,
 };
 use font8x8::{UnicodeFonts, MISC_FONTS};
 use font8x8::{BASIC_FONTS, BLOCK_FONTS, BOX_FONTS, GREEK_FONTS, HIRAGANA_FONTS, LATIN_FONTS};
@@ -138,9 +138,7 @@ pub fn registered_font_count() -> usize {
 }
 
 #[cfg(feature = "cosmic-text-backend")]
-fn build_font_system() -> FontSystem {
-    let mut db = Database::new();
-    db.load_system_fonts();
+pub(crate) fn populate_runtime_fontdb(db: &mut Database) -> Option<String> {
     let fonts = registered_fonts()
         .lock()
         .expect("font registry poisoned")
@@ -155,9 +153,40 @@ fn build_font_system() -> FontSystem {
     if let Some(primary_family) = primary_family {
         db.set_sans_serif_family(primary_family.clone());
         db.set_serif_family(primary_family.clone());
-        db.set_monospace_family(primary_family);
+        db.set_monospace_family(primary_family.clone());
+        return Some(primary_family);
     }
+
+    None
+}
+
+#[cfg(feature = "cosmic-text-backend")]
+fn build_font_system() -> FontSystem {
+    let mut db = Database::new();
+    db.load_system_fonts();
+    let _ = populate_runtime_fontdb(&mut db);
     FontSystem::new_with_locale_and_db("en-US".to_string(), db)
+}
+
+#[cfg(not(feature = "cosmic-text-backend"))]
+pub(crate) fn populate_runtime_fontdb(_: &mut fontdb::Database) -> Option<String> {
+    None
+}
+
+#[cfg(not(feature = "cosmic-text-backend"))]
+/// Count the number of registered runtime font binaries.
+pub fn registered_font_count() -> usize {
+    0
+}
+
+#[cfg(not(feature = "cosmic-text-backend"))]
+/// Clear all registered runtime fonts for the active backend.
+pub fn clear_registered_fonts() {}
+
+#[cfg(not(feature = "cosmic-text-backend"))]
+/// Register raw font bytes for the active text backend.
+pub fn register_font_bytes(_: Vec<u8>) -> usize {
+    0
 }
 
 #[cfg(feature = "cosmic-text-backend")]

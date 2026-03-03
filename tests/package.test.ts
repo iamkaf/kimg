@@ -26,6 +26,12 @@ const textWasm = readFileSync(new URL("../dist/kimg_wasm_text_bg.wasm", import.m
 const INTER_KIMG_WOFF2 = Uint8Array.from(
   readFileSync(new URL("./fixtures/inter-kimg.woff2", import.meta.url)),
 );
+const SIMPLE_SVG = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+    <rect x="2" y="2" width="20" height="20" rx="4" fill="#d9482b"/>
+    <circle cx="12" cy="12" r="5" fill="#f2c94c"/>
+  </svg>
+`;
 
 async function initBindings() {
   initSync({ module: wasm });
@@ -747,6 +753,64 @@ describe("main package facade", () => {
       lineHeight: 28,
       letterSpacing: 2,
       wrap: "word",
+    });
+
+    composition.free();
+    roundTrip.free();
+  });
+
+  test("svg layers render, serialize, and rasterize through the facade", async () => {
+    const composition = await Composition.create({ width: 48, height: 48 });
+    const groupId = composition.addGroupLayer({ name: "assets" });
+    const svgId = composition.addSvgLayer({
+      name: "logo",
+      svg: SIMPLE_SVG,
+      width: 24,
+      height: 24,
+      x: 6,
+      y: 8,
+      parentId: groupId,
+    });
+
+    expect(
+      composition.updateLayer(svgId, {
+        anchor: "center",
+        rotation: 18,
+        scaleX: 1.5,
+        scaleY: 0.75,
+      }),
+    ).toBe(true);
+
+    const beforeRaster = composition.getLayer(svgId);
+    expect(beforeRaster).toMatchObject({
+      kind: "svg",
+      parentId: groupId,
+      width: 24,
+      height: 24,
+      rotation: 18,
+      scaleX: 1.5,
+      scaleY: 0.75,
+    });
+
+    const svgPixels = composition.getLayerRgba(svgId);
+    expect(svgPixels.length).toBe(24 * 24 * 4);
+    expect(svgPixels.some((value) => value !== 0)).toBe(true);
+
+    const roundTrip = await Composition.deserialize(composition.serialize());
+    expect(roundTrip.getLayer(svgId)).toMatchObject({
+      kind: "svg",
+      width: 24,
+      height: 24,
+      rotation: 18,
+      scaleX: 1.5,
+      scaleY: 0.75,
+    });
+
+    expect(roundTrip.rasterizeSvgLayer(svgId)).toBe(true);
+    expect(roundTrip.getLayer(svgId)).toMatchObject({
+      kind: "raster",
+      width: 24,
+      height: 24,
     });
 
     composition.free();

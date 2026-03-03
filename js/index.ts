@@ -130,6 +130,16 @@ export interface TextLayerOptions {
   parentId?: number;
 }
 
+export interface SvgLayerOptions {
+  name: string;
+  svg: string | ByteInput;
+  width: number;
+  height: number;
+  x?: number;
+  y?: number;
+  parentId?: number;
+}
+
 export interface PngLayerOptions {
   name: string;
   png: ByteInput;
@@ -341,7 +351,15 @@ export interface RgbColor {
   b: number;
 }
 
-export type LayerKind = "raster" | "filter" | "group" | "fill" | "shape" | "text" | "unknown";
+export type LayerKind =
+  | "raster"
+  | "filter"
+  | "group"
+  | "fill"
+  | "shape"
+  | "text"
+  | "svg"
+  | "unknown";
 
 export interface LayerInfo {
   id: number;
@@ -519,6 +537,14 @@ function normalizeByteInput(value, fieldName): Uint8Array {
   }
 
   throw new TypeError(`${fieldName} must be a byte array, ArrayBuffer, or array-like object.`);
+}
+
+function normalizeSvgSource(value, fieldName): Uint8Array {
+  if (typeof value === "string") {
+    return new TextEncoder().encode(value);
+  }
+
+  return normalizeByteInput(value, fieldName);
 }
 
 function normalizeFloat64Input(value, fieldName) {
@@ -977,6 +1003,21 @@ function normalizeTextLayerOptions(options) {
     parentId: layer.parentId,
     text: normalizeString(layer.text, "addTextLayer.text"),
     wrap: normalizeTextWrap(layer.wrap ?? "none", "addTextLayer.wrap"),
+    x: position.x,
+    y: position.y,
+  };
+}
+
+function normalizeSvgLayerOptions(options) {
+  const layer = requireObject(options, "addSvgLayer");
+  const position = normalizePositionArg(layer.x, layer.y, "addSvgLayer");
+
+  return {
+    height: normalizePositiveInteger(layer.height, "addSvgLayer.height"),
+    name: normalizeString(layer.name, "addSvgLayer.name"),
+    parentId: layer.parentId,
+    svg: normalizeSvgSource(layer.svg, "addSvgLayer.svg"),
+    width: normalizePositiveInteger(layer.width, "addSvgLayer.width"),
     x: position.x,
     y: position.y,
   };
@@ -1486,6 +1527,7 @@ export interface Composition {
   addGradientLayer(options: GradientLayerOptions): number;
   addShapeLayer(options: ShapeLayerOptions): number;
   addTextLayer(options: TextLayerOptions): number;
+  addSvgLayer(options: SvgLayerOptions): number;
   addPngLayer(options: PngLayerOptions): number;
   importImage(options: ImportImageOptions): number;
   importJpeg(options: ImportImageOptions): number;
@@ -1519,6 +1561,7 @@ export interface Composition {
   exportWebp(): Uint8Array;
   serialize(): Uint8Array;
   getLayerRgba(id: number): Uint8Array;
+  rasterizeSvgLayer(id: number): boolean;
   layerCount(): number;
   resizeLayerNearest(id: number, widthOrSize: number | Size, height?: number): void;
   resizeLayerBilinear(id: number, widthOrSize: number | Size, height?: number): void;
@@ -1790,6 +1833,31 @@ export class Composition {
     return textId;
   }
 
+  addSvgLayer(options) {
+    const layer = normalizeSvgLayerOptions(options);
+
+    if (layer.parentId !== undefined) {
+      return this._inner.add_svg_to_group(
+        normalizeLayerId(layer.parentId, "addSvgLayer.parentId"),
+        layer.name,
+        layer.svg,
+        layer.width,
+        layer.height,
+        layer.x,
+        layer.y,
+      );
+    }
+
+    return this._inner.add_svg_layer(
+      layer.name,
+      layer.svg,
+      layer.width,
+      layer.height,
+      layer.x,
+      layer.y,
+    );
+  }
+
   addPngLayer(options) {
     const layer = requireObject(options, "addPngLayer");
     if (layer.parentId !== undefined) {
@@ -1998,6 +2066,10 @@ export class Composition {
 
   getLayerRgba(id) {
     return this._inner.get_layer_rgba(normalizeLayerId(id));
+  }
+
+  rasterizeSvgLayer(id) {
+    return this._inner.rasterize_svg_layer(normalizeLayerId(id));
   }
 
   layerCount() {

@@ -29,12 +29,13 @@ use kimg_core::filter;
 use kimg_core::layer::{
     FillKind, FillLayerData, FilterLayerData, FilterLayerPatch, GradientDirection, GradientStop,
     GroupLayerData, Layer, LayerCommon, LayerKind, LayerPatch, LayerTransform, RasterLayerData,
-    ShapeLayerData, ShapePoint, ShapeStroke, ShapeType, TextAlign, TextFontStyle, TextLayerData,
-    TextLayerPatch, TextWrap,
+    ShapeLayerData, ShapePoint, ShapeStroke, ShapeType, SvgLayerData, TextAlign, TextFontStyle,
+    TextLayerData, TextLayerPatch, TextWrap,
 };
 use kimg_core::pixel::Rgba;
 use kimg_core::serialize;
 use kimg_core::shape::render_shape;
+use kimg_core::svg::{rasterize_svg, validate_svg};
 use kimg_core::sprite;
 use kimg_core::text::{measure_text, render_text};
 use kimg_core::transform;
@@ -294,6 +295,28 @@ impl Document {
         id
     }
 
+    /// Add a retained SVG layer. Returns the layer ID.
+    pub fn add_svg_layer(
+        &mut self,
+        name: &str,
+        svg_bytes: &[u8],
+        width: u32,
+        height: u32,
+        x: i32,
+        y: i32,
+    ) -> u32 {
+        validate_svg(svg_bytes).expect("failed to validate SVG");
+        let id = self.inner.next_id();
+        let mut common = LayerCommon::new(id, name);
+        common.x = x;
+        common.y = y;
+        self.inner.layers.push(Layer::new(
+            common,
+            LayerKind::Svg(SvgLayerData::new(svg_bytes.to_vec(), width, height)),
+        ));
+        id
+    }
+
     // ── Layer property setters (any layer type) ──
 
     /// Set layer opacity (0.0 to 1.0).
@@ -542,6 +565,33 @@ impl Document {
         id
     }
 
+    /// Add a retained SVG layer as a child of a group. Returns the child layer ID.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_svg_to_group(
+        &mut self,
+        group_id: u32,
+        name: &str,
+        svg_bytes: &[u8],
+        width: u32,
+        height: u32,
+        x: i32,
+        y: i32,
+    ) -> u32 {
+        validate_svg(svg_bytes).expect("failed to validate SVG");
+        let id = self.inner.next_id();
+        let mut common = LayerCommon::new(id, name);
+        common.x = x;
+        common.y = y;
+        let child = Layer::new(
+            common,
+            LayerKind::Svg(SvgLayerData::new(svg_bytes.to_vec(), width, height)),
+        );
+        self.inner
+            .add_child_to_group(group_id, child)
+            .expect("group not found");
+        id
+    }
+
     /// Remove a child from a group. Returns true if found and removed.
     pub fn remove_from_group(&mut self, group_id: u32, child_id: u32) -> bool {
         self.inner.remove_child_from_group(group_id, child_id)
@@ -550,6 +600,11 @@ impl Document {
     /// Flatten a group layer into a single image layer. Returns true on success.
     pub fn flatten_group(&mut self, group_id: u32) -> bool {
         self.inner.flatten_group(group_id)
+    }
+
+    /// Destructively convert an SVG layer into a raster layer.
+    pub fn rasterize_svg_layer(&mut self, id: u32) -> bool {
+        self.inner.rasterize_svg_layer(id)
     }
 
     /// Remove any layer by ID, including nested layers.
@@ -660,6 +715,9 @@ impl Document {
                 LayerKind::Raster(raster) => raster.buffer.data.clone(),
                 LayerKind::Shape(shape) => render_shape(shape).data,
                 LayerKind::Text(text) => render_text(text).data,
+                LayerKind::Svg(svg) => rasterize_svg(&svg.source, svg.width, svg.height)
+                    .map(|buffer| buffer.data)
+                    .unwrap_or_default(),
                 _ => Vec::new(),
             },
             None => Vec::new(),
@@ -956,6 +1014,14 @@ impl Document {
                         let palette = sprite::extract_palette(&rasterized, max_colors);
                         return palette_to_flat(&palette);
                     }
+                    LayerKind::Svg(svg) => {
+                        let rasterized = match rasterize_svg(&svg.source, svg.width, svg.height) {
+                            Ok(buffer) => buffer,
+                            Err(_) => return Vec::new(),
+                        };
+                        let palette = sprite::extract_palette(&rasterized, max_colors);
+                        return palette_to_flat(&palette);
+                    }
                     _ => return Vec::new(),
                 };
                 let palette = sprite::extract_palette(buf, max_colors);
@@ -1077,6 +1143,7 @@ impl Document {
                         LayerKind::Raster(raster) => Some(raster.buffer.clone()),
                         LayerKind::Shape(shape) => Some(render_shape(shape)),
                         LayerKind::Text(text) => Some(render_text(text)),
+                        LayerKind::Svg(svg) => rasterize_svg(&svg.source, svg.width, svg.height).ok(),
                         _ => None,
                     })
             })
@@ -1432,6 +1499,12 @@ fn layer_snapshot(layer: &Layer, parent_id: Option<u32>, index: usize, depth: us
             rgba.push(&JsValue::from_f64(text.color.a as f64));
             set_prop(&object, "color", rgba.into());
         }
+        LayerKind::Svg(svg) => {
+            set_prop(&object, "kind", JsValue::from_str("svg"));
+            set_transform_snapshot(&object, &svg.transform);
+            set_prop(&object, "width", JsValue::from_f64(svg.width as f64));
+            set_prop(&object, "height", JsValue::from_f64(svg.height as f64));
+        }
         _ => {
             set_prop(&object, "kind", JsValue::from_str("unknown"));
         }
@@ -1679,6 +1752,13 @@ pub fn quantize_rgba(data: &[u8], w: u32, h: u32, palette: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SIMPLE_SVG: &str = r##"
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+          <rect x="2" y="2" width="20" height="20" rx="4" fill="#d9482b"/>
+          <circle cx="12" cy="12" r="5" fill="#f2c94c"/>
+        </svg>
+    "##;
 
     #[test]
     fn create_and_render_empty() {
@@ -2077,6 +2157,38 @@ mod tests {
     }
 
     #[test]
+    fn svg_layer_wasm() {
+        let mut doc = Document::new(32, 32);
+        let id = doc.add_svg_layer("logo", SIMPLE_SVG.as_bytes(), 24, 24, 4, 5);
+
+        let layer = doc.inner.find_layer(id).unwrap();
+        match &layer.kind {
+            LayerKind::Svg(svg) => {
+                assert_eq!(svg.width, 24);
+                assert_eq!(svg.height, 24);
+            }
+            _ => panic!("expected svg layer"),
+        }
+
+        let rendered = doc.render();
+        assert!(rendered.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn rasterize_svg_layer_wasm() {
+        let mut doc = Document::new(32, 32);
+        let id = doc.add_svg_layer("logo", SIMPLE_SVG.as_bytes(), 24, 24, 0, 0);
+        let before = doc.get_layer_rgba(id);
+
+        assert!(doc.rasterize_svg_layer(id));
+
+        let layer = doc.inner.find_layer(id).unwrap();
+        assert!(matches!(layer.kind, LayerKind::Raster(_)));
+        let after = doc.get_layer_rgba(id);
+        assert_eq!(before, after);
+    }
+
+    #[test]
     fn flatten_group_wasm() {
         let mut doc = Document::new(2, 2);
         let gid = doc.add_group_layer("g");
@@ -2326,6 +2438,14 @@ mod tests {
     }
 
     #[test]
+    fn extract_palette_svg_wasm() {
+        let mut doc = Document::new(32, 32);
+        let id = doc.add_svg_layer("logo", SIMPLE_SVG.as_bytes(), 24, 24, 0, 0);
+        let palette = doc.extract_palette(id, 4);
+        assert!(palette.len() >= 4);
+    }
+
+    #[test]
     fn quantize_layer_wasm() {
         let (mut doc, id) = make_red_4x4();
         // Quantize to a palette of just green
@@ -2411,6 +2531,28 @@ mod tests {
 
         let result = restored.render();
         assert!(result.iter().any(|&value| value > 0));
+    }
+
+    #[test]
+    fn serialize_deserialize_svg_wasm() {
+        let mut doc = Document::new(32, 32);
+        let id = doc.add_svg_layer("logo", SIMPLE_SVG.as_bytes(), 24, 24, 1, 2);
+        doc.set_rotation(id, 18.0);
+
+        let data = doc.serialize();
+        let restored = Document::deserialize(&data);
+        let layer = restored.inner.find_layer(id).unwrap();
+        match &layer.kind {
+            LayerKind::Svg(svg) => {
+                assert_eq!(svg.width, 24);
+                assert_eq!(svg.height, 24);
+                assert_eq!(svg.transform.rotation_deg, 18.0);
+            }
+            _ => panic!("expected svg layer"),
+        }
+
+        let rendered = restored.render();
+        assert!(rendered.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
     #[test]

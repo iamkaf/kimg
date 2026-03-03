@@ -68,8 +68,8 @@ const doc = await Composition.create({ width: 64, height: 64 });
 
 ## What it can do
 
-**Layers** — Raster, Filter, Group, Fill, Shape, Text. Nested groups with scoped filter application.
-Shape layers cover rectangles with optional corner radius, ellipses, lines, and polygons with fill/stroke styling. Text layers support real font rendering with weight, style, wrapping, alignment, transforms, runtime font registration, and browser Google Fonts loading.
+**Layers** — Raster, Filter, Group, Fill, Shape, Text, SVG. Nested groups with scoped filter application.
+Shape layers cover rectangles with optional corner radius, ellipses, lines, and polygons with fill/stroke styling. Text layers support real font rendering with weight, style, wrapping, alignment, transforms, runtime font registration, and browser Google Fonts loading. SVG layers keep source SVG data around so logos and icons stay crisp under normal scaling until you explicitly rasterize them.
 
 **16 blend modes** — Normal, Multiply, Screen, Overlay, Darken, Lighten, ColorDodge, ColorBurn, HardLight, SoftLight, Difference, Exclusion, Hue, Saturation, Color, Luminosity.
 
@@ -77,13 +77,13 @@ Shape layers cover rectangles with optional corner radius, ellipses, lines, and 
 
 **Filters** — HSL adjustments, brightness/contrast, temperature/tint, sharpen. Invert, posterize, threshold, levels, gradient map. Box blur, Gaussian blur, edge detect, emboss (all as convolution kernels).
 
-**Transforms** — Non-destructive per-layer translate / scale / rotate / flip for raster, shape, and text layers, plus destructive resize (nearest-neighbor, bilinear, Lanczos3), crop, trim alpha.
+**Transforms** — Non-destructive per-layer translate / scale / rotate / flip for raster, shape, text, and SVG layers, plus destructive resize (nearest-neighbor, bilinear, Lanczos3), crop, trim alpha.
 
 **Paint tools** — Bucket fill for raster layers with contiguous/non-contiguous modes and alpha-aware RGBA tolerance matching.
 
 **Sprite tools** — Sprite sheet packer (shelf bin-packing), contact sheet grids, pixel-art upscale, color quantization, batch render pipeline.
 
-**Format support** — PNG, JPEG, WebP, GIF (animated frames → layers), and experimental PSD layer import. Auto-detection via magic bytes.
+**Format support** — PNG, JPEG, WebP, GIF (animated frames → layers), retained SVG layers, and experimental PSD layer import. Auto-detection via magic bytes for raster imports.
 
 **Serialization** — Save/load full documents as `.kimg` files (versioned binary metadata + raw pixel data).
 
@@ -144,6 +144,32 @@ await loadGoogleFont({
   text: "HELLOKIMGTEXT",
 });
 ```
+
+### SVG layers
+
+```js
+const logoId = doc.addSvgLayer({
+  name: "Logo",
+  svg: svgMarkup,
+  width: 160,
+  height: 160,
+  x: 32,
+  y: 24,
+});
+
+doc.updateLayer(logoId, {
+  anchor: "center",
+  rotation: -8,
+  scaleX: 1.5,
+  scaleY: 1.5,
+});
+
+doc.rasterizeSvgLayer(logoId);
+```
+
+- SVG layers are retained scalable assets, not editable path geometry.
+- Static SVG is the target. Scripts, animation elements, and external image references are rejected.
+- SVGs containing `<text>` render best when the required fonts are registered first.
 
 ### Text notes
 

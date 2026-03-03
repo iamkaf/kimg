@@ -34,7 +34,7 @@ export interface RawLayerSnapshot {
   parentId: number | null;
   index: number;
   depth: number;
-  kind: "raster" | "filter" | "group" | "fill" | "shape" | "text" | "unknown";
+  kind: "raster" | "filter" | "group" | "fill" | "shape" | "text" | "svg" | "unknown";
   name: string;
   visible: boolean;
   opacity: number;

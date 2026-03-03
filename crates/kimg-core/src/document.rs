@@ -21,9 +21,11 @@ use crate::filter::{apply_hsl_filter, HslFilterConfig};
 use crate::layer::{
     FillKind, FillLayerData, FilterLayerPatch, GradientDirection, GroupLayerData, Layer,
     LayerCommon, LayerKind, LayerPatch, LayerTransform, RasterLayerData, ShapeLayerData,
+    SvgLayerData,
 };
 use crate::pixel::Rgba;
 use crate::shape::render_shape;
+use crate::svg::rasterize_svg;
 use crate::text::render_text;
 use crate::transform;
 
@@ -394,6 +396,24 @@ impl Document {
         render_layers(&self.layers, &mut output);
         output
     }
+
+    /// Rasterize an SVG layer into a raster layer in-place.
+    ///
+    /// The resulting raster layer keeps the SVG layer's common properties and
+    /// non-destructive transform state.
+    pub fn rasterize_svg_layer(&mut self, id: u32) -> bool {
+        let Some(layer) = self.find_layer_mut(id) else {
+            return false;
+        };
+
+        let (buffer, transform) = match &layer.kind {
+            LayerKind::Svg(svg) => (render_svg_layer(svg, svg.width, svg.height), svg.transform),
+            _ => return false,
+        };
+
+        layer.kind = LayerKind::Raster(RasterLayerData::with_transform(buffer, transform));
+        true
+    }
 }
 
 /// Render a fill layer to a full-canvas buffer.
@@ -456,11 +476,29 @@ fn render_shape_layer(shape: &ShapeLayerData) -> ImageBuffer {
     render_shape(shape)
 }
 
+fn render_svg_layer(svg: &SvgLayerData, width: u32, height: u32) -> ImageBuffer {
+    rasterize_svg(&svg.source, width.max(1), height.max(1))
+        .unwrap_or_else(|_| ImageBuffer::new_transparent(width.max(1), height.max(1)))
+}
+
+fn scaled_dimension(base: u32, scale: f64) -> u32 {
+    ((base as f64) * scale.abs()).round().max(1.0) as u32
+}
+
+fn svg_transform_without_scale(transform: LayerTransform) -> LayerTransform {
+    LayerTransform {
+        scale_x: 1.0,
+        scale_y: 1.0,
+        ..transform
+    }
+}
+
 fn layer_transform_mut(layer: &mut Layer) -> Option<&mut LayerTransform> {
     match &mut layer.kind {
         LayerKind::Raster(raster) => Some(&mut raster.transform),
         LayerKind::Shape(shape) => Some(&mut shape.transform),
         LayerKind::Text(text) => Some(&mut text.transform),
+        LayerKind::Svg(svg) => Some(&mut svg.transform),
         _ => None,
     }
 }
@@ -670,7 +708,7 @@ fn can_render_layer_direct(layer: &Layer) -> bool {
         && layer.common.blend_mode == BlendMode::Normal
         && matches!(
             layer.kind,
-            LayerKind::Raster(_) | LayerKind::Shape(_) | LayerKind::Text(_)
+            LayerKind::Raster(_) | LayerKind::Shape(_) | LayerKind::Text(_) | LayerKind::Svg(_)
         )
 }
 
@@ -723,6 +761,30 @@ fn render_layer_direct(layer: &Layer, output: &mut ImageBuffer) -> bool {
                         text_buf,
                         &layer.common,
                         text.transform.anchor,
+                    );
+                },
+            );
+            true
+        }
+        LayerKind::Svg(svg) => {
+            svg.with_cached_transformed_raster(
+                || {
+                    let raster_width = scaled_dimension(svg.width, svg.transform.scale_x);
+                    let raster_height = scaled_dimension(svg.height, svg.transform.scale_y);
+                    let svg_buf = svg.cached_local_raster(raster_width, raster_height, || {
+                        render_svg_layer(svg, raster_width, raster_height)
+                    });
+                    apply_non_destructive_transform(
+                        &svg_buf,
+                        &svg_transform_without_scale(svg.transform),
+                    )
+                },
+                |svg_buf| {
+                    blit_pretransformed_raster_layer(
+                        output,
+                        svg_buf,
+                        &layer.common,
+                        svg.transform.anchor,
                     );
                 },
             );
@@ -792,6 +854,32 @@ fn capture_direct_layer_alpha(
                         transformed,
                         &layer.common,
                         text.transform.anchor,
+                    );
+                },
+            );
+            true
+        }
+        LayerKind::Svg(svg) => {
+            svg.with_cached_transformed_raster(
+                || {
+                    let raster_width = scaled_dimension(svg.width, svg.transform.scale_x);
+                    let raster_height = scaled_dimension(svg.height, svg.transform.scale_y);
+                    let svg_buf = svg.cached_local_raster(raster_width, raster_height, || {
+                        render_svg_layer(svg, raster_width, raster_height)
+                    });
+                    apply_non_destructive_transform(
+                        &svg_buf,
+                        &svg_transform_without_scale(svg.transform),
+                    )
+                },
+                |transformed| {
+                    capture_pretransformed_alpha_snapshot(
+                        snapshot,
+                        canvas_w,
+                        canvas_h,
+                        transformed,
+                        &layer.common,
+                        svg.transform.anchor,
                     );
                 },
             );
@@ -996,6 +1084,34 @@ fn render_layer_to_buffer(layer: &Layer, canvas_w: u32, canvas_h: u32) -> ImageB
                         transformed,
                         &layer.common,
                         text.transform.anchor,
+                    );
+                },
+            );
+            if let Some(mask) = &layer.common.mask {
+                apply_mask(&mut buf, mask, layer.common.mask_inverted);
+            }
+            buf
+        }
+        LayerKind::Svg(svg) => {
+            let mut buf = ImageBuffer::new_transparent(canvas_w, canvas_h);
+            svg.with_cached_transformed_raster(
+                || {
+                    let raster_width = scaled_dimension(svg.width, svg.transform.scale_x);
+                    let raster_height = scaled_dimension(svg.height, svg.transform.scale_y);
+                    let svg_buf = svg.cached_local_raster(raster_width, raster_height, || {
+                        render_svg_layer(svg, raster_width, raster_height)
+                    });
+                    apply_non_destructive_transform(
+                        &svg_buf,
+                        &svg_transform_without_scale(svg.transform),
+                    )
+                },
+                |transformed| {
+                    blit_pretransformed_raster_layer(
+                        &mut buf,
+                        transformed,
+                        &layer.common,
+                        svg.transform.anchor,
                     );
                 },
             );
@@ -1554,6 +1670,58 @@ mod tests {
 
         let result = doc.render();
         assert!(result.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn svg_layer_renders_visible_pixels() {
+        let mut doc = Document::new(32, 32);
+        let id = doc.next_id();
+        let mut common = LayerCommon::new(id, "logo");
+        common.x = 4;
+        common.y = 5;
+        doc.layers.push(Layer {
+            common,
+            kind: LayerKind::Svg(SvgLayerData::new(
+                br##"
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+                      <rect x="2" y="2" width="20" height="20" rx="4" fill="#d9482b"/>
+                      <circle cx="12" cy="12" r="5" fill="#f2c94c"/>
+                    </svg>
+                "##
+                .to_vec(),
+                24,
+                24,
+            )),
+        });
+
+        let result = doc.render();
+        assert!(result.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn rasterize_svg_layer_converts_to_raster() {
+        let mut doc = Document::new(32, 32);
+        let id = doc.next_id();
+        doc.layers.push(Layer {
+            common: LayerCommon::new(id, "logo"),
+            kind: LayerKind::Svg(SvgLayerData::new(
+                br##"
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+                      <rect x="2" y="2" width="20" height="20" rx="4" fill="#d9482b"/>
+                      <circle cx="12" cy="12" r="5" fill="#f2c94c"/>
+                    </svg>
+                "##
+                .to_vec(),
+                24,
+                24,
+            )),
+        });
+
+        let before = doc.render().data;
+        assert!(doc.rasterize_svg_layer(id));
+        assert!(matches!(doc.find_layer(id).unwrap().kind, LayerKind::Raster(_)));
+        let after = doc.render().data;
+        assert_eq!(before, after);
     }
 
     #[test]

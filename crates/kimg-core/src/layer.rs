@@ -13,6 +13,7 @@
 //! | [`LayerKind::Fill`] | A generated fill layer (solid or gradient) |
 //! | [`LayerKind::Shape`] | A rasterized vector-style shape primitive |
 //! | [`LayerKind::Text`] | A rasterized text layer |
+//! | [`LayerKind::Svg`] | A retained SVG asset rasterized on demand |
 
 use crate::blend::BlendMode;
 use crate::blit::Anchor;
@@ -625,6 +626,169 @@ impl Clone for TextLayerData {
     }
 }
 
+/// SVG layer data stored as raw source and rasterized at render time.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct SvgLayerData {
+    /// Original SVG source bytes.
+    pub source: Vec<u8>,
+    /// Base local raster width before non-destructive transforms.
+    pub width: u32,
+    /// Base local raster height before non-destructive transforms.
+    pub height: u32,
+    /// Shared non-destructive transform state.
+    pub transform: LayerTransform,
+    revision: u64,
+    raster_cache: RefCell<Option<SvgRasterCache>>,
+    transformed_cache: RefCell<Option<SvgTransformedCache>>,
+}
+
+impl SvgLayerData {
+    /// Create a new retained SVG layer.
+    pub fn new(source: Vec<u8>, width: u32, height: u32) -> Self {
+        Self {
+            source,
+            width: width.max(1),
+            height: height.max(1),
+            transform: LayerTransform::new(),
+            revision: 0,
+            raster_cache: RefCell::new(None),
+            transformed_cache: RefCell::new(None),
+        }
+    }
+
+    /// Replace the source SVG bytes and invalidate cached rasters.
+    pub fn set_source(&mut self, source: Vec<u8>) {
+        self.source = source;
+        self.bump_revision();
+    }
+
+    /// Replace the base SVG layer size and invalidate cached rasters.
+    pub fn set_size(&mut self, width: u32, height: u32) {
+        self.width = width.max(1);
+        self.height = height.max(1);
+        self.bump_revision();
+    }
+
+    pub(crate) fn cached_local_raster<F>(&self, width: u32, height: u32, render: F) -> ImageBuffer
+    where
+        F: FnOnce() -> ImageBuffer,
+    {
+        let key = SvgRasterCacheKey {
+            revision: self.revision,
+            width,
+            height,
+        };
+        if let Some(cached) = self.raster_cache.borrow().as_ref() {
+            if cached.key == key {
+                return cached.buffer.clone();
+            }
+        }
+
+        let buffer = render();
+        *self.raster_cache.borrow_mut() = Some(SvgRasterCache {
+            key,
+            buffer: buffer.clone(),
+        });
+        buffer
+    }
+
+    pub(crate) fn with_cached_transformed_raster<F, R>(
+        &self,
+        render: F,
+        use_buffer: impl FnOnce(&ImageBuffer) -> R,
+    ) -> R
+    where
+        F: FnOnce() -> ImageBuffer,
+    {
+        let key = SvgTransformedCacheKey::from_svg(self);
+        let needs_refresh = self
+            .transformed_cache
+            .borrow()
+            .as_ref()
+            .is_none_or(|cached| cached.key != key);
+
+        if needs_refresh {
+            let buffer = render();
+            *self.transformed_cache.borrow_mut() = Some(SvgTransformedCache { key, buffer });
+        }
+
+        let cached = self.transformed_cache.borrow();
+        let entry = cached
+            .as_ref()
+            .expect("transformed svg cache should be populated");
+        use_buffer(&entry.buffer)
+    }
+
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+        self.raster_cache.get_mut().take();
+        self.transformed_cache.get_mut().take();
+    }
+}
+
+impl Clone for SvgLayerData {
+    fn clone(&self) -> Self {
+        Self {
+            source: self.source.clone(),
+            width: self.width,
+            height: self.height,
+            transform: self.transform,
+            revision: self.revision,
+            raster_cache: RefCell::new(None),
+            transformed_cache: RefCell::new(None),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SvgRasterCacheKey {
+    revision: u64,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SvgTransformedCacheKey {
+    revision: u64,
+    width: u32,
+    height: u32,
+    anchor: Anchor,
+    flip_x: bool,
+    flip_y: bool,
+    rotation_bits: u64,
+    scale_x_bits: u64,
+    scale_y_bits: u64,
+}
+
+impl SvgTransformedCacheKey {
+    fn from_svg(svg: &SvgLayerData) -> Self {
+        Self {
+            revision: svg.revision,
+            width: svg.width,
+            height: svg.height,
+            anchor: svg.transform.anchor,
+            flip_x: svg.transform.flip_x,
+            flip_y: svg.transform.flip_y,
+            rotation_bits: svg.transform.rotation_deg.to_bits(),
+            scale_x_bits: svg.transform.scale_x.to_bits(),
+            scale_y_bits: svg.transform.scale_y.to_bits(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SvgRasterCache {
+    key: SvgRasterCacheKey,
+    buffer: ImageBuffer,
+}
+
+#[derive(Debug, Clone)]
+struct SvgTransformedCache {
+    key: SvgTransformedCacheKey,
+    buffer: ImageBuffer,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TextRasterCacheKey {
     text: String,
@@ -993,6 +1157,8 @@ pub enum LayerKind {
     Shape(ShapeLayerData),
     /// A rasterized text layer.
     Text(TextLayerData),
+    /// A retained SVG asset rasterized on demand.
+    Svg(SvgLayerData),
 }
 
 #[cfg(test)]
@@ -1177,6 +1343,65 @@ mod tests {
             || {
                 calls.set(calls.get() + 1);
                 ImageBuffer::new_transparent(48, 20)
+            },
+            Clone::clone,
+        );
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn svg_local_cache_reuses_and_invalidates() {
+        let svg = SvgLayerData::new(b"<svg/>".to_vec(), 16, 16);
+        let calls = Cell::new(0);
+
+        let first = svg.cached_local_raster(16, 16, || {
+            calls.set(calls.get() + 1);
+            ImageBuffer::new_transparent(16, 16)
+        });
+        let second = svg.cached_local_raster(16, 16, || {
+            calls.set(calls.get() + 1);
+            ImageBuffer::new_transparent(16, 16)
+        });
+
+        assert_eq!(calls.get(), 1);
+        assert_eq!(first.data, second.data);
+
+        let mut changed = svg.clone();
+        changed.set_size(24, 16);
+        changed.cached_local_raster(24, 16, || {
+            calls.set(calls.get() + 1);
+            ImageBuffer::new_transparent(24, 16)
+        });
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn svg_transformed_cache_reuses_and_invalidates() {
+        let mut svg = SvgLayerData::new(b"<svg/>".to_vec(), 16, 16);
+        svg.transform.rotation_deg = 30.0;
+        let calls = Cell::new(0);
+
+        svg.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(20, 20)
+            },
+            Clone::clone,
+        );
+        svg.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(20, 20)
+            },
+            Clone::clone,
+        );
+        assert_eq!(calls.get(), 1);
+
+        svg.transform.scale_x = 1.5;
+        svg.with_cached_transformed_raster(
+            || {
+                calls.set(calls.get() + 1);
+                ImageBuffer::new_transparent(24, 20)
             },
             Clone::clone,
         );

@@ -15,9 +15,9 @@
 //! [4 bytes: "KIMG"] [1 byte: metadata version] [postcard metadata]
 //! ```
 //!
-//! Raw pixel data (raster buffers and masks) is appended as a flat byte sequence
-//! after the metadata blob; each buffer entry in the metadata includes
-//! `buffer_offset` and `buffer_len` fields pointing into that region.
+//! Raw layer data (raster buffers, masks, and retained asset sources) is
+//! appended as a flat byte sequence after the metadata blob; each metadata
+//! entry includes offsets and lengths pointing into that region.
 
 use crate::blend::BlendMode;
 use crate::blit::Anchor;
@@ -65,6 +65,12 @@ struct BufferRefMetadata {
     height: u32,
     buffer_offset: u64,
     buffer_len: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct BlobRefMetadata {
+    offset: u64,
+    len: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -162,6 +168,12 @@ enum LayerKindMetadata {
     },
     Text {
         text: TextMetadata,
+    },
+    Svg {
+        source: BlobRefMetadata,
+        width: u32,
+        height: u32,
+        transform: LayerTransformMetadata,
     },
 }
 
@@ -337,6 +349,12 @@ fn build_layer_metadata(
                 transform: transform_to_metadata(text.transform),
             },
         },
+        LayerKind::Svg(svg) => LayerKindMetadata::Svg {
+            source: append_blob(&svg.source, pixel_data)?,
+            width: svg.width,
+            height: svg.height,
+            transform: transform_to_metadata(svg.transform),
+        },
     };
 
     Ok(LayerMetadata { common, kind })
@@ -399,6 +417,15 @@ fn append_buffer(
         buffer_offset,
         buffer_len,
     })
+}
+
+fn append_blob(data: &[u8], pixel_data: &mut Vec<u8>) -> Result<BlobRefMetadata, SerializeError> {
+    let offset = u64::try_from(pixel_data.len())
+        .map_err(|_| SerializeError::InvalidData("blob data offset overflow".into()))?;
+    let len = u64::try_from(data.len())
+        .map_err(|_| SerializeError::InvalidData("blob data length overflow".into()))?;
+    pixel_data.extend_from_slice(data);
+    Ok(BlobRefMetadata { offset, len })
 }
 
 fn document_from_metadata(
@@ -482,6 +509,20 @@ fn layer_from_metadata(
             layer.box_width = text.box_width.map(|width| width.max(1));
             layer.transform = transform_from_metadata(text.transform);
             LayerKind::Text(layer)
+        }
+        LayerKindMetadata::Svg {
+            source,
+            width,
+            height,
+            transform,
+        } => {
+            let mut layer = SvgLayerData::new(
+                checked_slice_u64(pixel_data, source.offset, source.len, "svg source")?.to_vec(),
+                width,
+                height,
+            );
+            layer.transform = transform_from_metadata(transform);
+            LayerKind::Svg(layer)
         }
     };
 
@@ -915,6 +956,46 @@ mod tests {
                 assert_eq!(text.box_width, Some(64));
             }
             _ => panic!("expected text layer"),
+        }
+    }
+
+    #[test]
+    fn serialize_svg_layer() {
+        let mut doc = Document::new(32, 32);
+        let id = doc.next_id();
+        let mut layer = Layer {
+            common: LayerCommon::new(id, "logo"),
+            kind: LayerKind::Svg(SvgLayerData::new(
+                br##"
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+                      <rect x="2" y="2" width="20" height="20" rx="4" fill="#d9482b"/>
+                      <circle cx="12" cy="12" r="5" fill="#f2c94c"/>
+                    </svg>
+                "##
+                .to_vec(),
+                24,
+                24,
+            )),
+        };
+        if let LayerKind::Svg(svg) = &mut layer.kind {
+            svg.transform.rotation_deg = 18.0;
+            svg.transform.scale_x = 1.5;
+            svg.transform.scale_y = 0.75;
+        }
+        doc.layers.push(layer);
+
+        let data = serialize(&doc).unwrap();
+        let restored = deserialize(&data).unwrap();
+        match &restored.layers[0].kind {
+            LayerKind::Svg(svg) => {
+                assert_eq!(svg.width, 24);
+                assert_eq!(svg.height, 24);
+                assert_eq!(svg.transform.rotation_deg, 18.0);
+                assert_eq!(svg.transform.scale_x, 1.5);
+                assert_eq!(svg.transform.scale_y, 0.75);
+                assert!(svg.source.starts_with(b"\n                    <svg"));
+            }
+            _ => panic!("expected svg layer"),
         }
     }
 
