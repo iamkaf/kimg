@@ -16,6 +16,7 @@ import { base64ToRgba, rgbaToBase64 } from "../dist/base64.js";
 import { readableTextColor } from "../dist/color-utils.js";
 
 const dom = {
+  body: document.body,
   diagnosticCount: document.getElementById("diagnostic-count"),
   diagnosticList: document.getElementById("diagnostic-list"),
   rerunButton: document.getElementById("rerun-button"),
@@ -25,6 +26,7 @@ const dom = {
   runtimePass: document.getElementById("runtime-pass"),
   runtimeSimd: document.getElementById("runtime-simd"),
   runtimeStatus: document.getElementById("runtime-status"),
+  suiteMachineState: document.getElementById("suite-machine-state"),
   suite: document.getElementById("suite"),
 };
 
@@ -75,6 +77,16 @@ const SECTION_INFO = {
 
 const diagnostics = [];
 const sectionNodes = new Map();
+const suiteState = {
+  cards: 0,
+  diagnostics: 0,
+  experimental: 0,
+  fail: 0,
+  pass: 0,
+  simd: "Checking",
+  status: "booting",
+  statusText: "Booting",
+};
 let runSequence = 0;
 
 installDiagnostics();
@@ -87,8 +99,8 @@ void runSuite();
 async function runSuite() {
   const runId = ++runSequence;
   resetSuiteUi();
-  dom.runtimeStatus.textContent = "Initializing";
-  dom.runtimeSimd.textContent = "Checking";
+  setRuntimeStatus("running", "Initializing");
+  setSimdStatus("Checking");
 
   try {
     await preload();
@@ -97,8 +109,8 @@ async function runSuite() {
       return;
     }
 
-    dom.runtimeStatus.textContent = `Ready · ${context.fixture.width}x${context.fixture.height} working teapot`;
-    dom.runtimeSimd.textContent = context.runtime.simd ? "Available" : "Scalar";
+    setRuntimeStatus("running", `Ready · ${context.fixture.width}x${context.fixture.height} working teapot`);
+    setSimdStatus(context.runtime.simd ? "Available" : "Scalar");
 
     const counts = {
       experimental: 0,
@@ -139,10 +151,12 @@ async function runSuite() {
       updateCounters(counts);
     }
 
-    dom.runtimeStatus.textContent =
-      counts.fail === 0 ? "Completed without runtime failures" : "Completed with failures";
+    setRuntimeStatus(
+      counts.fail === 0 ? "completed" : "failed",
+      counts.fail === 0 ? "Completed without runtime failures" : "Completed with failures",
+    );
   } catch (error) {
-    dom.runtimeStatus.textContent = "Fatal error";
+    setRuntimeStatus("fatal", "Fatal error");
     recordDiagnostic("error", `[fatal] ${toErrorMessage(error)}`);
     const fatal = document.createElement("section");
     fatal.className = "section-intro";
@@ -1945,6 +1959,11 @@ function updateCounters(counts) {
   dom.runtimeExperimental.textContent = String(counts.experimental);
   dom.runtimeFail.textContent = String(counts.fail);
   dom.runtimePass.textContent = String(counts.pass);
+  suiteState.cards = counts.total;
+  suiteState.experimental = counts.experimental;
+  suiteState.fail = counts.fail;
+  suiteState.pass = counts.pass;
+  syncSuiteState();
 }
 
 function resetSuiteUi() {
@@ -1954,6 +1973,13 @@ function resetSuiteUi() {
   dom.runtimeExperimental.textContent = "0";
   dom.runtimeFail.textContent = "0";
   dom.runtimePass.textContent = "0";
+  suiteState.cards = 0;
+  suiteState.experimental = 0;
+  suiteState.fail = 0;
+  suiteState.pass = 0;
+  setRuntimeStatus("running", "Initializing");
+  setSimdStatus("Checking");
+  syncSuiteState();
 }
 
 function installDiagnostics() {
@@ -1986,6 +2012,8 @@ function recordDiagnostic(level, message) {
 function renderDiagnostics() {
   dom.diagnosticCount.textContent = String(diagnostics.length);
   dom.diagnosticList.replaceChildren();
+  suiteState.diagnostics = diagnostics.length;
+  syncSuiteState();
 
   if (diagnostics.length === 0) {
     const item = document.createElement("li");
@@ -2001,6 +2029,30 @@ function renderDiagnostics() {
     item.textContent = diagnostic.message;
     dom.diagnosticList.append(item);
   }
+}
+
+function setRuntimeStatus(status, text) {
+  dom.runtimeStatus.textContent = text;
+  suiteState.status = status;
+  suiteState.statusText = text;
+  syncSuiteState();
+}
+
+function setSimdStatus(text) {
+  dom.runtimeSimd.textContent = text;
+  suiteState.simd = text;
+  syncSuiteState();
+}
+
+function syncSuiteState() {
+  dom.body.dataset.suiteStatus = suiteState.status;
+  dom.body.dataset.suiteCount = String(suiteState.cards);
+  dom.body.dataset.suitePass = String(suiteState.pass);
+  dom.body.dataset.suiteFail = String(suiteState.fail);
+  dom.body.dataset.suiteExperimental = String(suiteState.experimental);
+  dom.body.dataset.suiteDiagnostics = String(suiteState.diagnostics);
+  dom.suiteMachineState.textContent = JSON.stringify(suiteState);
+  window.__KIMG_DEMO__ = { ...suiteState };
 }
 
 function appendView(container, view) {

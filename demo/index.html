@@ -6,7 +6,14 @@
   <title>kimg Visual Test Suite</title>
   <link rel="stylesheet" href="./demo.css">
 </head>
-<body>
+<body
+  data-suite-status="booting"
+  data-suite-count="0"
+  data-suite-pass="0"
+  data-suite-fail="0"
+  data-suite-experimental="0"
+  data-suite-diagnostics="0"
+>
   <div class="page-shell">
     <header class="hero">
       <div class="hero-copy">
@@ -77,6 +84,8 @@
       </aside>
     </div>
   </div>
+
+  <pre id="suite-machine-state" hidden></pre>
 
   <script type="module" src="./demo.js"></script>
 </body>

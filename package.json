@@ -13,6 +13,7 @@
     "fmt:js:check": "oxfmt --check js tests vitest.config.ts",
     "test": "npm run test:js",
     "test:all": "cargo test --workspace && npm run test:js",
+    "test:demo": "./scripts/build.sh && ./scripts/demo-smoke.sh",
     "test:js": "./scripts/build.sh && vitest run",
     "test:pack": "./scripts/pack-smoke.sh",
     "test:js:watch": "./scripts/build.sh && vitest",

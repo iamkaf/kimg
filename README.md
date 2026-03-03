@@ -225,17 +225,20 @@ The build emits two wasm binaries:
 cargo test -p kimg-core
 npm run fmt:js:check
 npm run test:js
+npm run test:demo
 npm run test:pack
 npm run test:all
 ```
 
-147 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, bucket fill, and shared per-layer transforms.
+148 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, bucket fill, and shared per-layer transforms.
 
 The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
 
 `npm run test:all` is the convenience entrypoint for the full Rust + package-layer test pass.
 
 `npm run fmt:js` and `npm run fmt:js:check` use `oxfmt` for the tracked TypeScript sources and tests.
+
+`npm run test:demo` serves `/demo/` locally, loads the full visual suite in a headless browser, and fails if the page reports runtime failures, diagnostics, or an incomplete card set.
 
 `npm run test:pack` packs the repo, installs the tarball into temporary Node/browser projects, and smoke-tests the published package shape instead of the local source tree.
 
