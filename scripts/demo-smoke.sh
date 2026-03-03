@@ -76,7 +76,7 @@ CHROME_FLAGS=(
     --virtual-time-budget=30000
     --dump-dom
 )
-if [ "$(id -u)" -eq 0 ]; then
+if [ "$(id -u)" -eq 0 ] || [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
     CHROME_FLAGS+=(--no-sandbox)
 fi
 
