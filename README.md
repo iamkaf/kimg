@@ -28,7 +28,7 @@ cargo install wasm-bindgen-cli
 ./scripts/build.sh
 ```
 
-This builds the consumable JS/WASM package into `dist/` using `tsgo` for the tracked TypeScript wrapper layer.
+This builds the consumable JS/WASM package into `dist/` using `tsgo` for the tracked TypeScript wrapper layer. The main `Composition` API loads the text-enabled renderer automatically; pure utility APIs and the low-level `raw` entrypoint can still use the leaner non-text builds.
 
 ## Quick start
 
@@ -69,7 +69,7 @@ const doc = await Composition.create({ width: 64, height: 64 });
 ## What it can do
 
 **Layers** — Image, Paint, Filter, Group, SolidColor, Gradient, Shape, Text. Nested groups with scoped filter application.
-Shape layers cover rectangle, rounded rectangle, ellipse, line, and polygon primitives with fill/stroke styling. Text layers use a built-in bitmap font backend, so they work in native and wasm builds with no runtime font loading.
+Shape layers cover rectangle, rounded rectangle, ellipse, line, and polygon primitives with fill/stroke styling. Text layers support real font rendering with weight, style, wrapping, alignment, transforms, runtime font registration, and browser Google Fonts loading.
 
 **16 blend modes** — Normal, Multiply, Screen, Overlay, Darken, Lighten, ColorDodge, ColorBurn, HardLight, SoftLight, Difference, Exclusion, Hue, Saturation, Color, Luminosity.
 
@@ -144,6 +144,14 @@ await loadGoogleFont({
   text: "HELLOKIMGTEXT",
 });
 ```
+
+### Text notes
+
+- `Composition.create()` and `Composition.deserialize()` use the text-enabled wasm renderer so text works out of the box from the main package.
+- `loadGoogleFont()` is browser-only. On Node, use `registerFont()` with raw font bytes.
+- `.kimg` documents serialize text content and style metadata, but they do not embed font binaries yet. Re-register the same fonts before rendering deserialized documents.
+- Registered fonts live in a module-global wasm registry for the current runtime session.
+- Text is currently plain string content with block-level layout. Rich text editing, selection, and inline spans are still out of scope.
 
 ### Per-layer transforms
 
@@ -263,6 +271,8 @@ The build emits four wasm binaries:
 - `kimg_wasm_text_bg.wasm` for the text-enabled baseline target
 - `kimg_wasm_text_simd_bg.wasm` for text-enabled runtimes with `wasm32` SIMD (`simd128`)
 
+The main package uses the text-enabled variants for `Composition`. The baseline variants remain useful for the `raw` entrypoint and utility-only scenarios.
+
 ## Running tests
 
 ```bash
@@ -380,6 +390,8 @@ Current local release build sizes:
 
 - `dist/kimg_wasm_bg.wasm`: `934 KB` uncompressed, `346,582` bytes gzipped
 - `dist/kimg_wasm_simd_bg.wasm`: `1.1 MB` uncompressed, `385,388` bytes gzipped
+- `dist/kimg_wasm_text_bg.wasm`: `3.1 MB` uncompressed
+- `dist/kimg_wasm_text_simd_bg.wasm`: `3.4 MB` uncompressed
 
 These vary slightly with toolchain and optimization settings.
 
@@ -393,7 +405,7 @@ Tracked for later:
 Possible follow-up work if those areas become important:
 
 - Keep PSD import experimental unless it becomes a priority again
-- Finish the real-font text rollout and keep browser text loading lazy by default
+- Improve text editing ergonomics once selection exists
 
 ## License
 

@@ -69,6 +69,8 @@ await loadGoogleFont({
 });
 ```
 
+`Composition.create()` and `Composition.deserialize()` use the text-enabled wasm renderer from the main package, so text works without a separate init step. `loadGoogleFont()` is browser-only; on Node use `registerFont()` with raw bytes.
+
 ## Node.js
 
 ```js

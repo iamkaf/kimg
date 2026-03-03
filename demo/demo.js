@@ -1,4 +1,5 @@
 import preload, {
+  clearRegisteredFonts,
   Composition,
   contrastRatio,
   decodeImage,
@@ -7,6 +8,7 @@ import preload, {
   extractPaletteFromRgba,
   hexToRgb,
   histogramRgba,
+  loadGoogleFont,
   quantizeRgba,
   registerFont,
   relativeLuminance,
@@ -840,12 +842,12 @@ function createTests() {
     },
     {
       expectation:
-        "The first sheet should show tracked headline text plus centered rotation. The second sheet should make weight, italic style, and left/center/right alignment obvious with wrapped cupcake ipsum.",
+        "The first sheet should show a loud display headline plus centered rotation. The second sheet should make Bodoni weight, italic style, and left/center/right alignment obvious with wrapped cupcake ipsum.",
       featured: true,
       fullSpan: true,
       previewMin: 250,
       section: "text",
-      title: "Registered Font Text Layers",
+      title: "Display Font Text Layers",
       async run(context) {
         const verify = createVerifier();
         const composition = await Composition.create({ width: 320, height: 168 });
@@ -854,26 +856,20 @@ function createTests() {
         try {
           const loadedFaces =
             (await registerFont({
-              bytes: context.interFontWoff2,
-              family: "Inter",
+              bytes: context.bungeeKimgWoff2,
+              family: "Bungee",
               style: "normal",
               weight: 400,
             })) +
             (await registerFont({
-              bytes: context.interCupcakeRegularWoff2,
-              family: "Inter",
+              bytes: context.bodoniModaRegularWoff2,
+              family: "Bodoni Moda",
               style: "normal",
               weight: 400,
             })) +
             (await registerFont({
-              bytes: context.interCupcakeBoldWoff2,
-              family: "Inter",
-              style: "normal",
-              weight: 700,
-            })) +
-            (await registerFont({
-              bytes: context.interCupcakeItalicWoff2,
-              family: "Inter",
+              bytes: context.bodoniModaItalicWoff2,
+              family: "Bodoni Moda",
               style: "italic",
               weight: 400,
             }));
@@ -891,6 +887,7 @@ function createTests() {
 
           const headlineId = composition.addTextLayer({
             color: [201, 73, 45, 255],
+            fontFamily: "Bungee",
             fontSize: 24,
             letterSpacing: 2,
             lineHeight: 28,
@@ -901,6 +898,7 @@ function createTests() {
           });
           const badgeId = composition.addTextLayer({
             color: [24, 77, 163, 255],
+            fontFamily: "Bungee",
             fontSize: 16,
             letterSpacing: 1,
             lineHeight: 20,
@@ -915,6 +913,7 @@ function createTests() {
             rotation: -12,
             textConfig: {
               color: [35, 79, 221, 255],
+              fontFamily: "Bungee",
               fontSize: 24,
               letterSpacing: 2,
               lineHeight: 28,
@@ -942,8 +941,8 @@ function createTests() {
               align: "center",
               color: [35, 79, 221, 255],
               fontStyle: "normal",
-              fontWeight: 700,
-              label: "center / 700",
+              fontWeight: 900,
+              label: "center / 900",
               x: 116,
             },
             {
@@ -973,11 +972,11 @@ function createTests() {
                 align: spec.align,
                 boxWidth: 72,
                 color: spec.color,
-                fontFamily: "Inter",
-                fontSize: 16,
+                fontFamily: "Bodoni Moda",
+                fontSize: 17,
                 fontStyle: spec.fontStyle,
                 fontWeight: spec.fontWeight,
-                lineHeight: 22,
+                lineHeight: 23,
                 name: spec.label,
                 text: cupcakeText,
                 wrap: "word",
@@ -1006,7 +1005,7 @@ function createTests() {
             "expected three styled text layers in the second composition",
           );
           verify.equal(leftText?.align, "left", "left panel should keep left alignment");
-          verify.equal(centerText?.fontWeight, 700, "center panel should use heavier weight");
+          verify.equal(centerText?.fontWeight, 900, "center panel should use heavier weight");
           verify.equal(rightText?.fontStyle, "italic", "right panel should keep italic style");
           verify.ok(render.some((value) => value !== 0), "text composition should render non-empty pixels");
           verify.ok(styleRender.some((value) => value !== 0), "styled text composition should render non-empty pixels");
@@ -1022,6 +1021,7 @@ function createTests() {
                 }`,
               ],
               ["Registered faces", loadedFaces],
+              ["display families", "Bungee + Bodoni Moda"],
               ["headline size", headline?.fontSize ?? "n/a"],
               ["badge tracking", badge?.letterSpacing ?? "n/a"],
               ["badge rotation", badge?.rotation?.toFixed(1) ?? "n/a"],
@@ -1040,6 +1040,154 @@ function createTests() {
         } finally {
           composition.free();
           styleComposition.free();
+        }
+      },
+    },
+    {
+      expectation:
+        "The mocked Google Fonts helper should register a theatrical serif family and render regular plus italic Bodoni columns without manual byte registration.",
+      fullSpan: true,
+      previewMin: 250,
+      section: "text",
+      title: "Google Fonts Display Loader",
+      async run(context) {
+        const verify = createVerifier();
+        const composition = await Composition.create({ width: 320, height: 124 });
+        const originalFetch = globalThis.fetch;
+        const regularUrl = "https://fonts.gstatic.com/mock/bodoni-moda-regular.woff2";
+        const italicUrl = "https://fonts.gstatic.com/mock/bodoni-moda-italic.woff2";
+        const css = [
+          "/* latin */",
+          "@font-face {",
+          "  font-family: 'Bodoni Moda';",
+          "  font-style: normal;",
+          "  font-weight: 400;",
+          "  font-display: swap;",
+          `  src: url(${regularUrl}) format('woff2');`,
+          "}",
+          "/* latin */",
+          "@font-face {",
+          "  font-family: 'Bodoni Moda';",
+          "  font-style: italic;",
+          "  font-weight: 400;",
+          "  font-display: swap;",
+          `  src: url(${italicUrl}) format('woff2');`,
+          "}",
+        ].join("\n");
+
+        try {
+          await clearRegisteredFonts();
+          globalThis.fetch = async (input, init) => {
+            const url =
+              typeof input === "string" ? input : input instanceof URL ? input.href : String(input);
+            if (url.startsWith("https://fonts.googleapis.com/css2?")) {
+              return new Response(css, {
+                headers: { "content-type": "text/css; charset=utf-8" },
+                status: 200,
+              });
+            }
+
+            if (url === regularUrl) {
+              return new Response(context.bodoniModaRegularWoff2, {
+                headers: { "content-type": "font/woff2" },
+                status: 200,
+              });
+            }
+
+            if (url === italicUrl) {
+              return new Response(context.bodoniModaItalicWoff2, {
+                headers: { "content-type": "font/woff2" },
+                status: 200,
+              });
+            }
+
+            return originalFetch(input, init);
+          };
+
+          const loaded = await loadGoogleFont({
+            family: "Bodoni Moda",
+            ital: [0, 1],
+            text: "Cupcakeipsumdolorsitamet",
+            weights: [400],
+          });
+
+          composition.addSolidColorLayer({ color: [247, 241, 232, 255], name: "paper" });
+          composition.addShapeLayer({
+            fill: [0, 0, 0, 0],
+            height: 92,
+            name: "regular-panel",
+            stroke: { color: [120, 112, 101, 90], width: 2 },
+            type: "roundedRect",
+            width: 132,
+            x: 16,
+            y: 16,
+          });
+          composition.addShapeLayer({
+            fill: [0, 0, 0, 0],
+            height: 92,
+            name: "italic-panel",
+            stroke: { color: [120, 112, 101, 90], width: 2 },
+            type: "roundedRect",
+            width: 132,
+            x: 172,
+            y: 16,
+          });
+
+          const regularId = composition.addTextLayer({
+            align: "left",
+            boxWidth: 108,
+            color: [201, 73, 45, 255],
+            fontFamily: "Bodoni Moda",
+            fontSize: 17,
+            fontWeight: 400,
+            lineHeight: 23,
+            name: "google-regular",
+            text: "Cupcake ipsum\ndolor sit amet",
+            wrap: "word",
+            x: 28,
+            y: 28,
+          });
+          const italicId = composition.addTextLayer({
+            align: "left",
+            boxWidth: 108,
+            color: [35, 79, 221, 255],
+            fontFamily: "Bodoni Moda",
+            fontSize: 17,
+            fontStyle: "italic",
+            fontWeight: 400,
+            lineHeight: 23,
+            name: "google-italic",
+            text: "Cupcake ipsum\ndolor sit amet",
+            wrap: "word",
+            x: 184,
+            y: 28,
+          });
+
+          const render = composition.renderRgba();
+          const regular = composition.getLayer(regularId);
+          const italic = composition.getLayer(italicId);
+
+          verify.equal(loaded.family, "Bodoni Moda", "loader should report the requested family");
+          verify.equal(loaded.faces.length, 2, "mocked stylesheet should expose two faces");
+          verify.ok(loaded.registeredFaces >= 2, "loadGoogleFont should register both faces");
+          verify.equal(regular?.fontWeight, 400, "regular text should keep weight 400");
+          verify.equal(italic?.fontStyle, "italic", "italic text should keep italic style");
+          verify.ok(render.some((value) => value !== 0), "Google Fonts composition should render non-empty pixels");
+
+          return {
+            assertions: verify.count,
+            metrics: [
+              ["Loader faces", loaded.faces.length],
+              ["Registered faces", loaded.registeredFaces],
+              ["Regular weight", regular?.fontWeight ?? "n/a"],
+              ["Italic style", italic?.fontStyle ?? "n/a"],
+            ],
+            views: [rgbaView("Mocked CSS2 font load", render, composition.width, composition.height)],
+          };
+        } finally {
+          globalThis.fetch = originalFetch;
+          await clearRegisteredFonts();
+          composition.free();
         }
       },
     },
@@ -1325,26 +1473,24 @@ function resolveDemoPreloadInput() {
 
 async function buildContext() {
   const fixture = await loadTeapotFixture("./assets/teapot.png", 192);
+  const bodoniModaItalicWoff2 = await loadBinaryFixture("./assets/bodoni-moda-italic.woff2");
+  const bodoniModaRegularWoff2 = await loadBinaryFixture("./assets/bodoni-moda-regular.woff2");
+  const bungeeKimgWoff2 = await loadBinaryFixture("./assets/bungee-kimg.woff2");
   const filterFixture = createFilterFixture();
   const glyph = createGlyphFixture();
   const borderedGlyph = createBorderedFixture(glyph);
   const clipPattern = createClipPatternFixture();
-  const interCupcakeBoldWoff2 = await loadBinaryFixture("../tests/fixtures/inter-cupcake-bold.woff2");
-  const interCupcakeItalicWoff2 = await loadBinaryFixture("../tests/fixtures/inter-cupcake-italic.woff2");
-  const interCupcakeRegularWoff2 = await loadBinaryFixture("../tests/fixtures/inter-cupcake-regular.woff2");
-  const interFontWoff2 = await loadBinaryFixture("../tests/fixtures/inter-kimg.woff2");
   const utilityTile = createUtilityTile();
 
   return {
+    bodoniModaItalicWoff2,
+    bodoniModaRegularWoff2,
     borderedGlyph,
+    bungeeKimgWoff2,
     clipPattern,
     filterFixture,
     fixture,
     glyph,
-    interCupcakeBoldWoff2,
-    interCupcakeItalicWoff2,
-    interCupcakeRegularWoff2,
-    interFontWoff2,
     runtime: {
       simd: simdSupported(),
     },

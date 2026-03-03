@@ -1614,12 +1614,12 @@ export class Composition {
     height?: number,
   ): Promise<Composition> {
     const size = normalizeCreateArgs(widthOrOptions, height);
-    await preload();
+    await preloadText();
     return Composition.#fromInner(new RawComposition(size.width, size.height));
   }
 
   static async deserialize(data: ByteInput): Promise<Composition> {
-    await preload();
+    await preloadText();
     return Composition.#fromInner(RawComposition.deserialize(normalizeByteInput(data, "data")));
   }
 

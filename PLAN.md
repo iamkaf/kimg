@@ -343,7 +343,7 @@ Implication for Phase 2 and Phase 3:
 
 ### Phase 2. Core backend replacement
 
-- [ ] Replace bitmap rasterizer with `cosmic-text`
+- [x] Replace bitmap rasterizer with `cosmic-text`
 - [x] Expand `TextLayerData` style model
 - [x] Keep render caching
 - [x] Update serialization for the new text metadata
@@ -351,10 +351,10 @@ Implication for Phase 2 and Phase 3:
 
 Current state:
 
-- Initial slice landed on this branch: `kimg-core` now has a feature-gated `cosmic-text` backend seam with bitmap fallback, and `kimg-wasm` forwards that feature for native and `wasm32` compilation.
+- `kimg-core` uses `cosmic-text` as the primary text renderer in text-enabled builds, with bitmap fallback only when no usable face is registered or available.
 - The text model now includes family, weight, style, align, wrap, and optional box width.
 - Runtime font registration plumbing exists in `kimg-core`, and `kimg-wasm` exposes low-level font registration calls.
-- The remaining blocker for closing Phase 2 is making the real backend the primary path instead of a feature-gated seam with bitmap fallback.
+- The main `Composition` API now loads the text-enabled wasm renderer by default, while the low-level raw surface can still use the leaner non-text builds.
 
 Exit criteria:
 
@@ -389,9 +389,9 @@ Exit criteria:
 ### Phase 5. Demo and docs
 
 - [x] Replace bitmap-text demo card with real-font cards
-- [ ] Add a Google Fonts demo card
+- [x] Add a Google Fonts demo card
 - [x] Update README examples
-- [ ] Document limitations clearly
+- [x] Document limitations clearly
 
 Exit criteria:
 

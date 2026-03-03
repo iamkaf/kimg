@@ -220,8 +220,22 @@ describe("main package facade", () => {
       configurable: true,
       value: undefined,
     });
+    let composition: Awaited<ReturnType<typeof Composition.create>> | null = null;
 
     try {
+      composition = await Composition.create({ width: 192, height: 64 });
+      composition.addTextLayer({
+        color: [17, 22, 32, 255],
+        fontFamily: "Inter",
+        fontSize: 20,
+        lineHeight: 24,
+        name: "headline",
+        text: "KIMG",
+        x: 4,
+        y: 12,
+      });
+      const before = Array.from(composition.renderRgba());
+
       const first = await loadGoogleFont({
         family: "Inter",
         text: "KIMG",
@@ -246,8 +260,10 @@ describe("main package facade", () => {
       expect(first.stylesheetUrl).toContain("fonts.googleapis.com/css2?");
       expect(second).toEqual(first);
       expect(await registeredFontCount()).toBeGreaterThan(0);
+      expect(Array.from(composition.renderRgba())).not.toEqual(before);
       expect(fetchMock).toHaveBeenCalledTimes(2);
     } finally {
+      composition?.free();
       globalThis.fetch = originalFetch;
       if (processDescriptor === undefined) {
         delete (globalThis as typeof globalThis & { process?: unknown }).process;
