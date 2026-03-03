@@ -312,21 +312,27 @@ and wasm builds before adoption.
   - clearer path to future shape features
 - Wasm status: likely supported; verify in practice before adopting
 
-#### 6.3 Quantization Spike: `imagequant`
+#### 6.3 Quantization Spike: `quantette`
 
-- [ ] A/B benchmark `imagequant` against the current sprite/palette path in `kimg-core/src/sprite.rs`
+- [x] Reject `imagequant` for this repo due to `GPL-3.0-or-later` licensing, which conflicts with the current license policy
+- [x] A/B benchmark `quantette` against the current sprite/palette path in `kimg-core/src/sprite.rs`
+- Prototype is available behind the `quantette-quantize` feature in both `kimg-core` and `kimg-wasm`.
 - [ ] Compare output quality, runtime, and memory behavior on representative inputs:
   - flat UI art
   - textured images
   - pixel art / sprite sheets
-- [ ] Re-run palette/quantization benchmarks:
+- Runtime comparison on the current benchmark harness:
+  - `extract_palette/512/16colors`: `2.76 ms` vs `22.40 ms`
+  - `quantize/512/16colors`: `3.89 ms` vs `4.11 ms`
+- Initial quality check on one textured-input RGB-error probe was mixed rather than clearly better, so this should remain feature-gated until output quality is reviewed on representative art styles.
+- [x] Re-run palette/quantization benchmarks:
   - `extract_palette/512/16colors`
   - `quantize/512/16colors`
-- [ ] Validate native and wasm builds
+- [x] Validate native and wasm builds
 - Success criteria:
   - clearly better palette/output quality, or meaningfully simpler code at similar quality
   - acceptable performance and memory cost
-- Wasm status: supported, but disable threaded defaults for wasm targets
+- Wasm status: supported; prefer non-threaded configuration for cross-target simplicity
 
 #### 6.4 Codec Spike: `zune-jpeg` and `zune-png`
 
@@ -364,7 +370,7 @@ and wasm builds before adoption.
 
 - [ ] 1. `postcard`
 - [ ] 2. `tiny-skia`
-- [ ] 3. `imagequant`
+- [ ] 3. `quantette`
 - [ ] 4. `zune-jpeg` / `zune-png`
 - [ ] 5. `bytemuck`
 

@@ -16,6 +16,13 @@ use crate::buffer::ImageBuffer;
 use crate::document::Document;
 use crate::pixel::Rgba;
 use crate::transform::resize_nearest;
+#[cfg(feature = "quantette-quantize")]
+use quantette::deps::palette::Srgb;
+#[cfg(feature = "quantette-quantize")]
+use quantette::{
+    ImageRef as QuantetteImageRef, PaletteBuf as QuantettePaletteBuf,
+    PaletteSize as QuantettePaletteSize, Pipeline as QuantettePipeline,
+};
 
 // ── Sprite sheet packer ──
 
@@ -321,6 +328,19 @@ impl Palette {
 /// Fully transparent pixels (alpha = 0) are ignored.  The returned palette is
 /// sorted by luminance (dark to light).
 pub fn extract_palette(src: &ImageBuffer, max_colors: u32) -> Palette {
+    #[cfg(feature = "quantette-quantize")]
+    {
+        return extract_palette_quantette(src, max_colors);
+    }
+
+    #[cfg(not(feature = "quantette-quantize"))]
+    {
+        extract_palette_manual(src, max_colors)
+    }
+}
+
+#[cfg_attr(feature = "quantette-quantize", allow(dead_code))]
+fn extract_palette_manual(src: &ImageBuffer, max_colors: u32) -> Palette {
     let max_colors = max_colors.max(1) as usize;
 
     // Collect non-transparent pixels
@@ -373,11 +393,58 @@ pub fn extract_palette(src: &ImageBuffer, max_colors: u32) -> Palette {
     Palette { colors }
 }
 
+#[cfg(feature = "quantette-quantize")]
+fn extract_palette_quantette(src: &ImageBuffer, max_colors: u32) -> Palette {
+    let pixels = collect_nontransparent_srgb_pixels(src);
+    if pixels.is_empty() {
+        return Palette {
+            colors: vec![Rgba::TRANSPARENT],
+        };
+    }
+
+    let palette_size = QuantettePaletteSize::from_u16_clamped(max_colors.clamp(1, 256) as u16);
+    let palette = QuantettePipeline::new()
+        .palette_size(palette_size)
+        .ditherer(None)
+        .dedup(true)
+        .input_slice(&pixels)
+        .expect("non-empty quantette input slice")
+        .output_srgb8_palette();
+
+    let mut colors: Vec<Rgba> = palette
+        .into_iter()
+        .into_iter()
+        .map(|color| Rgba::new(color.red, color.green, color.blue, 255))
+        .collect();
+
+    colors.sort_by(|a, b| {
+        let la = luminance(a.r, a.g, a.b);
+        let lb = luminance(b.r, b.g, b.b);
+        la.partial_cmp(&lb).unwrap()
+    });
+    colors.dedup();
+
+    Palette { colors }
+}
+
 /// Remap every non-transparent pixel to its nearest color in the palette.
 ///
 /// Uses Euclidean distance in RGB space.  Alpha values are preserved unchanged.
 /// Returns `src` cloned if the palette is empty.
 pub fn quantize(src: &ImageBuffer, palette: &Palette) -> ImageBuffer {
+    #[cfg(feature = "quantette-quantize")]
+    {
+        return quantize_quantette(src, palette);
+    }
+
+    #[cfg(not(feature = "quantette-quantize"))]
+    {
+        quantize_manual(src, palette)
+    }
+}
+
+#[cfg_attr(feature = "quantette-quantize", allow(dead_code))]
+fn quantize_manual(src: &ImageBuffer, palette: &Palette) -> ImageBuffer {
     if palette.colors.is_empty() {
         return src.clone();
     }
@@ -417,14 +484,66 @@ pub fn quantize(src: &ImageBuffer, palette: &Palette) -> ImageBuffer {
     dst
 }
 
+#[cfg(feature = "quantette-quantize")]
+fn quantize_quantette(src: &ImageBuffer, palette: &Palette) -> ImageBuffer {
+    if palette.colors.is_empty() {
+        return src.clone();
+    }
+
+    let colors: Vec<Srgb<u8>> = src
+        .data
+        .chunks_exact(4)
+        .map(|px| Srgb::new(px[0], px[1], px[2]))
+        .collect();
+    let image = QuantetteImageRef::new(src.width, src.height, &colors)
+        .expect("kimg image buffer dimensions must match the RGB pixel length");
+    let custom_palette: Vec<Srgb<u8>> = palette
+        .colors
+        .iter()
+        .map(|color| Srgb::new(color.r, color.g, color.b))
+        .collect();
+    let custom_palette = QuantettePaletteBuf::try_from(custom_palette)
+        .expect("kimg palette colors should always form a valid quantette palette");
+
+    let quantized = QuantettePipeline::new()
+        .ditherer(None)
+        .dedup(true)
+        .quantize_method(custom_palette)
+        .input_image(image)
+        .output_srgb8_image();
+
+    let mut out = src.clone();
+    for (i, color) in quantized.as_inner().iter().enumerate() {
+        let idx = i * 4;
+        if out.data[idx + 3] == 0 {
+            continue;
+        }
+        out.data[idx] = color.red;
+        out.data[idx + 1] = color.green;
+        out.data[idx + 2] = color.blue;
+    }
+
+    out
+}
+
+#[cfg(feature = "quantette-quantize")]
+fn collect_nontransparent_srgb_pixels(src: &ImageBuffer) -> Vec<Srgb<u8>> {
+    src.data
+        .chunks_exact(4)
+        .filter_map(|px| (px[3] > 0).then_some(Srgb::new(px[0], px[1], px[2])))
+        .collect()
+}
+
 fn luminance(r: u8, g: u8, b: u8) -> f64 {
     0.299 * r as f64 + 0.587 * g as f64 + 0.114 * b as f64
 }
 
+#[cfg_attr(feature = "quantette-quantize", allow(dead_code))]
 struct ColorBox {
     pixels: Vec<[u8; 3]>,
 }
 
+#[cfg_attr(feature = "quantette-quantize", allow(dead_code))]
 impl ColorBox {
     fn new(pixels: &[[u8; 3]]) -> Self {
         Self {
@@ -707,6 +826,21 @@ mod tests {
                 .any(|c| c.r == p.r && c.g == p.g && c.b == p.b);
             assert!(is_palette, "pixel at x={} is ({},{},{})", x, p.r, p.g, p.b);
         }
+    }
+
+    #[test]
+    fn quantize_preserves_transparent_pixels() {
+        let mut buf = ImageBuffer::new_transparent(2, 1);
+        buf.set_pixel(0, 0, Rgba::new(10, 20, 30, 0));
+        buf.set_pixel(1, 0, Rgba::new(200, 210, 220, 128));
+
+        let palette = Palette {
+            colors: vec![Rgba::new(255, 0, 0, 255)],
+        };
+
+        let quantized = quantize(&buf, &palette);
+        assert_eq!(quantized.get_pixel(0, 0), Rgba::new(10, 20, 30, 0));
+        assert_eq!(quantized.get_pixel(1, 0), Rgba::new(255, 0, 0, 128));
     }
 
     #[test]

@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = []
 tiny-skia-shapes = ["kimg-core/tiny-skia-shapes"]
+quantette-quantize = ["kimg-core/quantette-quantize"]
 
 [dependencies]
 kimg-core = { path = "../kimg-core", version = "0.1.0" }
