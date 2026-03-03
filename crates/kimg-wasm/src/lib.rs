@@ -550,6 +550,7 @@ impl Document {
     /// Bucket-fill an image or paint layer using layer-local coordinates.
     ///
     /// Matching is alpha-aware and uses per-channel tolerance across RGBA.
+    #[allow(clippy::too_many_arguments)]
     pub fn bucket_fill_layer(
         &mut self,
         id: u32,

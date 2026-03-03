@@ -574,6 +574,7 @@ impl Layer {
 
 /// The specific data for each layer type.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 #[non_exhaustive]
 pub enum LayerKind {
     /// An image buffer with transform properties.

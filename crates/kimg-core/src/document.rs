@@ -217,11 +217,7 @@ impl Document {
             return false;
         };
 
-        if insert_layer_at(&mut self.layers, target_parent_id, target_index, layer) {
-            true
-        } else {
-            false
-        }
+        insert_layer_at(&mut self.layers, target_parent_id, target_index, layer)
     }
 
     /// Resize the document canvas.
