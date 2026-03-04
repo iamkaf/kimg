@@ -79,7 +79,7 @@ Shape layers cover rectangles with optional corner radius, ellipses, lines, and 
 
 **Transforms** — Non-destructive per-layer translate / scale / rotate / flip for raster, shape, text, and SVG layers, plus destructive resize (nearest-neighbor, bilinear, Lanczos3), crop, trim alpha.
 
-**Paint tools** — Round raster brush strokes with size, opacity, flow, hardness, spacing, smoothing, pressure-driven size/opacity, eraser mode, and streamed stroke sessions, plus bucket fill with contiguous/non-contiguous modes and alpha-aware RGBA tolerance matching.
+**Paint tools** — Raster brush strokes with round and grain tips, size, opacity, flow, hardness, spacing, simple or modeler-backed smoothing, pressure-driven size/opacity, tilt-shaped dabs, eraser mode, and streamed stroke sessions, plus bucket fill with contiguous/non-contiguous modes and alpha-aware RGBA tolerance matching.
 
 **Sprite tools** — Sprite sheet packer (shelf bin-packing), contact sheet grids, pixel-art upscale, color quantization, batch render pipeline.
 
@@ -219,15 +219,17 @@ doc.paintStrokeLayer(layerId, {
   color: [201, 73, 45, 255],
   size: 12,
   hardness: 0.8,
+  tip: "grain",
   flow: 0.75,
   spacing: 0.4,
   smoothing: 0.2,
+  smoothingMode: "modeler",
   pressureSize: 1,
   pressureOpacity: 0.35,
   points: [
-    { x: 12, y: 18, pressure: 0.3 },
-    { x: 42, y: 26, pressure: 0.8 },
-    { x: 88, y: 44, pressure: 1.0 },
+    { x: 12, y: 18, pressure: 0.3, tiltX: 0.1, tiltY: 0.8, timeMs: 0 },
+    { x: 42, y: 26, pressure: 0.8, tiltX: 0.6, tiltY: 0.4, timeMs: 16 },
+    { x: 88, y: 44, pressure: 1.0, tiltX: 1.0, tiltY: 0.0, timeMs: 32 },
   ],
 });
 
@@ -247,15 +249,16 @@ const strokeId = doc.beginBrushStroke(layerId, {
   hardness: 0.3,
   flow: 0.7,
   smoothing: 0.2,
+  smoothingMode: "modeler",
   spacing: 0.35,
 });
 
 doc.pushBrushPoints(strokeId, [
-  { x: 16, y: 52, pressure: 0.2 },
-  { x: 44, y: 60, pressure: 0.7 },
+  { x: 16, y: 52, pressure: 0.2, tiltX: -0.2, tiltY: 0.7, timeMs: 48 },
+  { x: 44, y: 60, pressure: 0.7, tiltX: 0.2, tiltY: 0.5, timeMs: 64 },
 ]);
 doc.pushBrushPoints(strokeId, [
-  { x: 88, y: 74, pressure: 1.0 },
+  { x: 88, y: 74, pressure: 1.0, tiltX: 0.7, tiltY: 0.1, timeMs: 80 },
 ]);
 doc.endBrushStroke(strokeId);
 ```
@@ -366,7 +369,7 @@ npm run test:pack
 npm run test:all
 ```
 
-162 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, text layers, SVG layers, bucket fill, brush strokes, and shared per-layer transforms.
+165 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, text layers, SVG layers, bucket fill, brush strokes, and shared per-layer transforms.
 
 The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
 
@@ -412,7 +415,7 @@ The benchmarks cover:
 | `codec` | PNG / JPEG / WebP encode and decode of a 512×512 buffer |
 | `sprite` | Sprite sheet packing, palette extraction, quantization, pixel-art scale |
 | `fill` | Contiguous and non-contiguous bucket fill, plus alpha-aware tolerance matching |
-| `brush` | Hard/soft raster brush strokes, erase mode, batched and streamed pressure strokes, repeated short strokes |
+| `brush` | Hard/soft raster brush strokes, erase mode, batched and streamed pressure strokes, textured tilt/modeler strokes, repeated short strokes |
 | `shape` | Standalone shape rasterization cost for rectangle and polygon primitives |
 
 Notes on the harnesses:
@@ -422,7 +425,7 @@ Notes on the harnesses:
 - The full suite runs with default features. The text medians below were refreshed separately with `cargo bench -p kimg-core --bench document --features cosmic-text-backend -- 'render/(text|repeated_text)'` so they reflect the shipped text renderer instead of the lean fallback path.
 - Codec benchmarks use a deterministic textured 512×512 image instead of a flat fill, which avoids unrealistically optimistic compression timings.
 - `render/repeated_transformed_layer/512` performs two back-to-back renders of the same transformed document in one iteration to measure transform-cache wins directly.
-- Brush benchmarks operate directly on raster buffers and cover hard/soft strokes, erase mode, batched and streamed long pressure strokes, and repeated short-stroke workloads.
+- Brush benchmarks operate directly on raster buffers and cover hard/soft strokes, erase mode, batched and streamed long pressure strokes, a textured tilt/modeler path, and repeated short-stroke workloads.
 - Standalone shape benches instantiate a fresh shape per sample so they continue to measure rasterization work instead of the document-level layer cache.
 
 Representative medians from recent local runs on March 4, 2026. These are hardware-dependent and should be treated as a baseline example, not a guarantee:
@@ -454,12 +457,13 @@ Representative medians from recent local runs on March 4, 2026. These are hardwa
 | `bucket_fill/contiguous/512` | `685.52 µs` |
 | `bucket_fill/non_contiguous/512` | `280.61 µs` |
 | `bucket_fill/tolerance/512` | `390.72 µs` |
-| `brush/round_hard_small/256` | `56.71 µs` |
-| `brush/round_soft_large/512` | `570.83 µs` |
-| `brush/erase_soft/512` | `255.32 µs` |
-| `brush/long_pressure_stroke/1024` | `1.30 ms` |
-| `brush/streamed_long_pressure_stroke/1024` | `1.33 ms` |
-| `brush/repeated_short_strokes/512` | `78.81 µs` |
+| `brush/round_hard_small/256` | `68.79 µs` |
+| `brush/round_soft_large/512` | `648.18 µs` |
+| `brush/erase_soft/512` | `297.56 µs` |
+| `brush/long_pressure_stroke/1024` | `1.36 ms` |
+| `brush/streamed_long_pressure_stroke/1024` | `1.35 ms` |
+| `brush/grain_tilt_modeler/512` | `713.14 µs` |
+| `brush/repeated_short_strokes/512` | `78.33 µs` |
 | `encode_png/512` | `1.26 ms` |
 | `decode_png/512` | `1.27 ms` |
 | `encode_jpeg/512` | `2.09 ms` |
@@ -495,7 +499,7 @@ Tracked for later:
 
 - Selection system
 - Selection-aware painting and fill
-- Richer brush tools: textured tips, tilt, alpha lock, symmetry, and selection-aware painting
+- Richer brush tools: alpha lock, symmetry, scatter/jitter, smudge/wet tools, and selection-aware painting
 
 Possible follow-up work if those areas become important:
 

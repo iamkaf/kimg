@@ -20,7 +20,9 @@ use wasm_bindgen::prelude::*;
 use js_sys::{Array, Object, Reflect};
 use kimg_core::blend::BlendMode;
 use kimg_core::blit::Anchor;
-use kimg_core::brush::{BrushPreset, BrushStrokeSession, BrushTool, StrokePoint};
+use kimg_core::brush::{
+    BrushPreset, BrushSmoothingMode, BrushStrokeSession, BrushTip, BrushTool, StrokePoint,
+};
 use kimg_core::buffer::ImageBuffer;
 use kimg_core::codec;
 use kimg_core::color;
@@ -763,7 +765,8 @@ impl Document {
     pub fn paint_stroke_layer(
         &mut self,
         id: u32,
-        points_xyz: &[f32],
+        points_data: &[f32],
+        point_stride: u32,
         r: u8,
         g: u8,
         b: u8,
@@ -776,9 +779,11 @@ impl Document {
         smoothing: f64,
         pressure_size: f64,
         pressure_opacity: f64,
+        tip_kind: u8,
+        smoothing_mode: u8,
         erase: bool,
     ) -> bool {
-        let Some(points) = parse_stroke_points(points_xyz) else {
+        let Some(points) = parse_stroke_points(points_data, point_stride) else {
             return false;
         };
         let preset = build_brush_preset(
@@ -794,6 +799,8 @@ impl Document {
             smoothing,
             pressure_size,
             pressure_opacity,
+            tip_kind,
+            smoothing_mode,
             erase,
         );
         self.inner.paint_stroke_layer(id, &preset, &points)
@@ -818,6 +825,8 @@ impl Document {
         smoothing: f64,
         pressure_size: f64,
         pressure_opacity: f64,
+        tip_kind: u8,
+        smoothing_mode: u8,
         erase: bool,
     ) -> u32 {
         let Some(layer) = self.inner.find_layer(id) else {
@@ -842,6 +851,8 @@ impl Document {
             smoothing,
             pressure_size,
             pressure_opacity,
+            tip_kind,
+            smoothing_mode,
             erase,
         );
         self.active_brush_strokes.insert(
@@ -857,9 +868,15 @@ impl Document {
 
     /// Push additional streamed points into an active brush stroke session.
     ///
-    /// `points_xyz` must contain `x, y, pressure` triples.
-    pub fn push_brush_points(&mut self, stroke_id: u32, points_xyz: &[f32]) -> bool {
-        let Some(points) = parse_stroke_points(points_xyz) else {
+    /// `points_data` must contain either `x, y, pressure` triples or
+    /// `x, y, pressure, tilt_x, tilt_y, time_ms` sextuples based on `point_stride`.
+    pub fn push_brush_points(
+        &mut self,
+        stroke_id: u32,
+        points_data: &[f32],
+        point_stride: u32,
+    ) -> bool {
+        let Some(points) = parse_stroke_points(points_data, point_stride) else {
             return false;
         };
         let Some(active) = self.active_brush_strokes.get_mut(&stroke_id) else {
@@ -876,7 +893,17 @@ impl Document {
 
     /// End an interactive brush stroke session and keep the painted result.
     pub fn end_brush_stroke(&mut self, stroke_id: u32) -> bool {
-        self.active_brush_strokes.remove(&stroke_id).is_some()
+        let Some(mut active) = self.active_brush_strokes.remove(&stroke_id) else {
+            return false;
+        };
+        let Some(layer) = self.inner.find_layer_mut(active.layer_id) else {
+            return false;
+        };
+        let LayerKind::Raster(raster) = &mut layer.kind else {
+            return false;
+        };
+        let _ = raster.mutate_buffer(|buffer| active.session.finish(buffer));
+        true
     }
 
     /// Cancel an active brush stroke session and restore the original raster buffer.
@@ -1811,14 +1838,26 @@ fn flat_to_palette(data: &[u8]) -> sprite::Palette {
     sprite::Palette::new(colors)
 }
 
-fn parse_stroke_points(points_xyz: &[f32]) -> Option<Vec<StrokePoint>> {
-    let chunks = points_xyz.chunks_exact(3);
+fn parse_stroke_points(points_data: &[f32], point_stride: u32) -> Option<Vec<StrokePoint>> {
+    let stride = match point_stride {
+        3 | 6 => point_stride as usize,
+        _ => return None,
+    };
+    let chunks = points_data.chunks_exact(stride);
     if !chunks.remainder().is_empty() {
         return None;
     }
 
     let points = chunks
-        .map(|chunk| StrokePoint::new(chunk[0], chunk[1], chunk[2]))
+        .map(|chunk| {
+            if stride == 6 {
+                StrokePoint::with_tilt_time(
+                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5],
+                )
+            } else {
+                StrokePoint::new(chunk[0], chunk[1], chunk[2])
+            }
+        })
         .collect::<Vec<_>>();
 
     if points.is_empty() {
@@ -1842,6 +1881,8 @@ fn build_brush_preset(
     smoothing: f64,
     pressure_size: f64,
     pressure_opacity: f64,
+    tip_kind: u8,
+    smoothing_mode: u8,
     erase: bool,
 ) -> BrushPreset {
     BrushPreset {
@@ -1851,12 +1892,22 @@ fn build_brush_preset(
             BrushTool::Paint
         },
         color: Rgba::new(r, g, b, a),
+        tip: if tip_kind == 1 {
+            BrushTip::Grain
+        } else {
+            BrushTip::Round
+        },
         size: size as f32,
         opacity: opacity as f32,
         flow: flow as f32,
         hardness: hardness as f32,
         spacing: spacing as f32,
         smoothing: smoothing as f32,
+        smoothing_mode: if smoothing_mode == 1 {
+            BrushSmoothingMode::Modeler
+        } else {
+            BrushSmoothingMode::Simple
+        },
         pressure_size: pressure_size as f32,
         pressure_opacity: pressure_opacity as f32,
     }
@@ -2791,6 +2842,7 @@ mod tests {
         assert!(doc.paint_stroke_layer(
             paint_id,
             &[1.0, 1.0, 0.5, 6.0, 6.0, 1.0],
+            3,
             255,
             0,
             0,
@@ -2803,6 +2855,8 @@ mod tests {
             0.2,
             1.0,
             0.0,
+            0,
+            0,
             false,
         ));
 
@@ -2812,6 +2866,7 @@ mod tests {
         assert!(doc.paint_stroke_layer(
             paint_id,
             &[6.0, 6.0, 1.0],
+            3,
             0,
             0,
             0,
@@ -2824,6 +2879,8 @@ mod tests {
             0.0,
             0.0,
             0.0,
+            0,
+            0,
             true,
         ));
     }
@@ -2833,12 +2890,12 @@ mod tests {
         let mut doc = Document::new(16, 16);
         let paint_id = doc.add_paint_layer("paint", 16, 16);
         let stroke_id = doc.begin_brush_stroke(
-            paint_id, 35, 79, 221, 255, 5.0, 0.9, 0.85, 0.55, 0.4, 0.25, 1.0, 0.4, false,
+            paint_id, 35, 79, 221, 255, 5.0, 0.9, 0.85, 0.55, 0.4, 0.25, 1.0, 0.4, 0, 0, false,
         );
 
         assert!(stroke_id > 0);
-        assert!(doc.push_brush_points(stroke_id, &[1.0, 1.0, 0.3, 10.0, 5.0, 1.0]));
-        assert!(doc.push_brush_points(stroke_id, &[6.0, 10.0, 0.7]));
+        assert!(doc.push_brush_points(stroke_id, &[1.0, 1.0, 0.3, 10.0, 5.0, 1.0], 6));
+        assert!(doc.push_brush_points(stroke_id, &[6.0, 10.0, 0.7], 3));
         assert!(doc.end_brush_stroke(stroke_id));
         assert!(!doc.end_brush_stroke(stroke_id));
 
@@ -2852,12 +2909,45 @@ mod tests {
         let paint_id = doc.add_paint_layer("paint", 16, 16);
         let before = doc.get_layer_rgba(paint_id);
         let stroke_id = doc.begin_brush_stroke(
-            paint_id, 255, 0, 0, 255, 6.0, 1.0, 1.0, 0.8, 0.35, 0.2, 1.0, 0.0, false,
+            paint_id, 255, 0, 0, 255, 6.0, 1.0, 1.0, 0.8, 0.35, 0.2, 1.0, 0.0, 0, 0, false,
         );
 
         assert!(stroke_id > 0);
-        assert!(doc.push_brush_points(stroke_id, &[2.0, 2.0, 0.5, 12.0, 12.0, 1.0]));
+        assert!(doc.push_brush_points(stroke_id, &[2.0, 2.0, 0.5, 12.0, 12.0, 1.0], 6));
         assert!(doc.cancel_brush_stroke(stroke_id));
         assert_eq!(doc.get_layer_rgba(paint_id), before);
+    }
+
+    #[test]
+    fn paint_stroke_layer_supports_tilt_and_modeler_mode() {
+        let mut doc = Document::new(24, 24);
+        let paint_id = doc.add_paint_layer("paint", 24, 24);
+
+        assert!(doc.paint_stroke_layer(
+            paint_id,
+            &[
+                4.0, 6.0, 0.3, 0.2, 0.7, 0.0, 12.0, 10.0, 0.8, 0.7, 0.2, 16.0, 20.0, 16.0, 1.0,
+                1.0, 0.0, 32.0,
+            ],
+            6,
+            35,
+            79,
+            221,
+            255,
+            7.0,
+            1.0,
+            1.0,
+            0.55,
+            0.35,
+            0.4,
+            1.0,
+            0.4,
+            1,
+            1,
+            false,
+        ));
+
+        let painted = doc.get_layer_rgba(paint_id);
+        assert!(painted.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 }

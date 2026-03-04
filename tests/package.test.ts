@@ -763,7 +763,8 @@ describe("main package facade", () => {
       expect(
         rawComposition.paint_stroke_layer(
           rawLayerId,
-          new Float32Array(points.flatMap((point) => [point.x, point.y, point.pressure])),
+          new Float32Array(points.flatMap((point) => [point.x, point.y, point.pressure, 0, 0, 0])),
+          6,
           35,
           79,
           221,
@@ -776,6 +777,8 @@ describe("main package facade", () => {
           0.25,
           1,
           0.4,
+          0,
+          0,
           false,
         ),
       ).toBe(true);
@@ -837,6 +840,8 @@ describe("main package facade", () => {
         0.2,
         1,
         0.2,
+        0,
+        0,
         false,
       );
 
@@ -848,7 +853,8 @@ describe("main package facade", () => {
         expect(
           rawComposition.push_brush_points(
             rawStrokeId,
-            new Float32Array(chunk.flatMap((point) => [point.x, point.y, point.pressure])),
+            new Float32Array(chunk.flatMap((point) => [point.x, point.y, point.pressure, 0, 0, 0])),
+            6,
           ),
         ).toBe(true);
       }
@@ -871,6 +877,80 @@ describe("main package facade", () => {
         Array.from(rawComposition.get_layer_rgba(rawLayerId)),
       );
       expect(before).not.toEqual(Array.from(publicComposition.getLayerRgba(publicLayerId)));
+    } finally {
+      publicComposition.free();
+      rawComposition.free();
+    }
+  });
+
+  test("brush options support grain tips, modeler smoothing, and tilt", async () => {
+    const publicComposition = await Composition.create({ width: 24, height: 24 });
+    initSync({ module: wasm });
+    const rawComposition = new RawComposition(24, 24);
+
+    try {
+      const publicLayerId = publicComposition.addPaintLayer({
+        name: "paint",
+        width: 24,
+        height: 24,
+      });
+      const rawLayerId = rawComposition.add_paint_layer("paint", 24, 24);
+      const points = [
+        { x: 4, y: 6, pressure: 0.3, tiltX: 0.2, tiltY: 0.7, timeMs: 0 },
+        { x: 12, y: 10, pressure: 0.8, tiltX: 0.7, tiltY: 0.2, timeMs: 16 },
+        { x: 20, y: 16, pressure: 1, tiltX: 1, tiltY: 0, timeMs: 32 },
+      ];
+
+      expect(
+        publicComposition.paintStrokeLayer(publicLayerId, {
+          color: [35, 79, 221, 255],
+          hardness: 0.55,
+          points,
+          pressureOpacity: 0.4,
+          pressureSize: 1,
+          size: 7,
+          smoothing: 0.4,
+          smoothingMode: "modeler",
+          spacing: 0.35,
+          tip: "grain",
+        }),
+      ).toBe(true);
+
+      expect(
+        rawComposition.paint_stroke_layer(
+          rawLayerId,
+          new Float32Array(
+            points.flatMap((point) => [
+              point.x,
+              point.y,
+              point.pressure,
+              point.tiltX,
+              point.tiltY,
+              point.timeMs,
+            ]),
+          ),
+          6,
+          35,
+          79,
+          221,
+          255,
+          7,
+          1,
+          1,
+          0.55,
+          0.35,
+          0.4,
+          1,
+          0.4,
+          1,
+          1,
+          false,
+        ),
+      ).toBe(true);
+
+      expect(Array.from(publicComposition.getLayerRgba(publicLayerId))).toEqual(
+        Array.from(rawComposition.get_layer_rgba(rawLayerId)),
+      );
     } finally {
       publicComposition.free();
       rawComposition.free();

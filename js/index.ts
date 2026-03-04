@@ -179,16 +179,23 @@ export interface BucketFillOptions {
 }
 
 export type BrushTool = "paint" | "erase";
+export type BrushTip = "round" | "grain";
+export type BrushSmoothingMode = "simple" | "modeler";
 
 export interface BrushPoint {
   x: number;
   y: number;
   pressure?: number;
+  tiltX?: number;
+  tiltY?: number;
+  timeMs?: number;
 }
 
 export interface BrushStrokeOptions {
   points: BrushPoint[];
   tool?: BrushTool;
+  tip?: BrushTip;
+  smoothingMode?: BrushSmoothingMode;
   color?: ByteInput;
   size: number;
   opacity?: number;
@@ -202,6 +209,8 @@ export interface BrushStrokeOptions {
 
 export interface BrushSessionOptions {
   tool?: BrushTool;
+  tip?: BrushTip;
+  smoothingMode?: BrushSmoothingMode;
   color?: ByteInput;
   size: number;
   opacity?: number;
@@ -1150,6 +1159,17 @@ function normalizeBrushSessionOptions(options, what) {
   if (tool !== "paint" && tool !== "erase") {
     throw new TypeError(`${what}.tool must be "paint" or "erase".`);
   }
+  const tip = object.tip === undefined ? "round" : normalizeString(object.tip, `${what}.tip`);
+  if (tip !== "round" && tip !== "grain") {
+    throw new TypeError(`${what}.tip must be "round" or "grain".`);
+  }
+  const smoothingMode =
+    object.smoothingMode === undefined
+      ? "simple"
+      : normalizeString(object.smoothingMode, `${what}.smoothingMode`);
+  if (smoothingMode !== "simple" && smoothingMode !== "modeler") {
+    throw new TypeError(`${what}.smoothingMode must be "simple" or "modeler".`);
+  }
 
   let color: Uint8Array<ArrayBufferLike> = new Uint8Array([0, 0, 0, 255]);
   if (tool === "paint") {
@@ -1167,7 +1187,9 @@ function normalizeBrushSessionOptions(options, what) {
     pressureSize: normalizeUnitInterval(object.pressureSize ?? 1, `${what}.pressureSize`),
     size: normalizePositiveNumber(object.size, `${what}.size`),
     smoothing: normalizeUnitInterval(object.smoothing ?? 0, `${what}.smoothing`),
+    smoothingMode,
     spacing: normalizePositiveNumber(object.spacing ?? 0.25, `${what}.spacing`),
+    tip,
     tool,
   };
 }
@@ -1177,14 +1199,20 @@ function normalizeBrushPoints(pointsInput, fieldName) {
     throw new TypeError(`${fieldName} must be a non-empty array.`);
   }
 
-  const points = new Float32Array(pointsInput.length * 3);
+  const points = new Float32Array(pointsInput.length * 6);
   for (let index = 0; index < pointsInput.length; index += 1) {
     const point = requireObject(pointsInput[index], `${fieldName}[${index}]`);
-    points[index * 3] = normalizeFiniteNumber(point.x, `${fieldName}[${index}].x`);
-    points[index * 3 + 1] = normalizeFiniteNumber(point.y, `${fieldName}[${index}].y`);
-    points[index * 3 + 2] = normalizeUnitInterval(
+    points[index * 6] = normalizeFiniteNumber(point.x, `${fieldName}[${index}].x`);
+    points[index * 6 + 1] = normalizeFiniteNumber(point.y, `${fieldName}[${index}].y`);
+    points[index * 6 + 2] = normalizeUnitInterval(
       point.pressure ?? 1,
       `${fieldName}[${index}].pressure`,
+    );
+    points[index * 6 + 3] = normalizeFiniteNumber(point.tiltX ?? 0, `${fieldName}[${index}].tiltX`);
+    points[index * 6 + 4] = normalizeFiniteNumber(point.tiltY ?? 0, `${fieldName}[${index}].tiltY`);
+    points[index * 6 + 5] = normalizeFiniteNumber(
+      point.timeMs ?? 0,
+      `${fieldName}[${index}].timeMs`,
     );
   }
   return points;
@@ -2287,6 +2315,7 @@ export class Composition {
     return this._inner.paint_stroke_layer(
       normalizeLayerId(id),
       stroke.points,
+      6,
       stroke.color[0],
       stroke.color[1],
       stroke.color[2],
@@ -2299,6 +2328,8 @@ export class Composition {
       stroke.smoothing,
       stroke.pressureSize,
       stroke.pressureOpacity,
+      stroke.tip === "grain" ? 1 : 0,
+      stroke.smoothingMode === "modeler" ? 1 : 0,
       stroke.tool === "erase",
     );
   }
@@ -2319,6 +2350,8 @@ export class Composition {
       stroke.smoothing,
       stroke.pressureSize,
       stroke.pressureOpacity,
+      stroke.tip === "grain" ? 1 : 0,
+      stroke.smoothingMode === "modeler" ? 1 : 0,
       stroke.tool === "erase",
     );
   }
@@ -2327,6 +2360,7 @@ export class Composition {
     return this._inner.push_brush_points(
       normalizeLayerId(strokeId, "strokeId"),
       normalizeBrushPoints(points, "pushBrushPoints.points"),
+      6,
     );
   }
 

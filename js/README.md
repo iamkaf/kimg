@@ -33,11 +33,13 @@ doc.paintStrokeLayer(layerId, {
   color: [201, 73, 45, 255],
   size: 12,
   hardness: 0.8,
+  tip: "grain",
+  smoothingMode: "modeler",
   spacing: 0.4,
   points: [
-    { x: 12, y: 18, pressure: 0.3 },
-    { x: 42, y: 26, pressure: 0.8 },
-    { x: 88, y: 44, pressure: 1.0 },
+    { x: 12, y: 18, pressure: 0.3, tiltX: 0.1, tiltY: 0.8, timeMs: 0 },
+    { x: 42, y: 26, pressure: 0.8, tiltX: 0.6, tiltY: 0.4, timeMs: 16 },
+    { x: 88, y: 44, pressure: 1.0, tiltX: 1.0, tiltY: 0.0, timeMs: 32 },
   ],
 });
 const strokeId = doc.beginBrushStroke(layerId, {
@@ -46,13 +48,16 @@ const strokeId = doc.beginBrushStroke(layerId, {
   hardness: 0.3,
   flow: 0.7,
   smoothing: 0.2,
+  smoothingMode: "modeler",
   spacing: 0.35,
 });
 doc.pushBrushPoints(strokeId, [
-  { x: 18, y: 52, pressure: 0.2 },
-  { x: 44, y: 60, pressure: 0.7 },
+  { x: 18, y: 52, pressure: 0.2, tiltX: -0.2, tiltY: 0.7, timeMs: 48 },
+  { x: 44, y: 60, pressure: 0.7, tiltX: 0.2, tiltY: 0.5, timeMs: 64 },
 ]);
-doc.pushBrushPoints(strokeId, [{ x: 88, y: 74, pressure: 1.0 }]);
+doc.pushBrushPoints(strokeId, [
+  { x: 88, y: 74, pressure: 1.0, tiltX: 0.7, tiltY: 0.1, timeMs: 80 },
+]);
 doc.endBrushStroke(strokeId);
 const png = doc.exportPng();
 

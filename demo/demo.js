@@ -784,7 +784,7 @@ function createTests() {
     },
     {
       expectation:
-        "The brush engine should show a hard red stroke, a softer blue pressure-sized stroke, and an eraser cut that visibly clears a diagonal path through the paint layer.",
+        "The brush engine should show a hard red stroke, a blue modeler-smoothed stroke with tilt-shaped dabs, a grainy ochre textured stroke, and an eraser cut that visibly clears a diagonal path through the paint layer.",
       section: "shapes",
       title: "Brush Stroke Engine",
       async run() {
@@ -838,8 +838,19 @@ function createTests() {
           }));
           const softStroke = Array.from({ length: 14 }, (_, index) => ({
             pressure: 0.2 + (index / 13) * 0.8,
+            tiltX: 0.15 + (index / 13) * 0.85,
+            tiltY: 0.8 - (index / 13) * 0.65,
+            timeMs: index * 18,
             x: 32 + index * 12,
             y: 72 + Math.cos(index / 2.2) * 10,
+          }));
+          const grainStroke = Array.from({ length: 11 }, (_, index) => ({
+            pressure: 0.55 + Math.sin(index / 2.5) * 0.2,
+            tiltX: -0.55 + index * 0.1,
+            tiltY: 0.3,
+            timeMs: index * 14,
+            x: 42 + index * 15,
+            y: 48 + Math.sin(index / 1.8) * 9,
           }));
           const eraseStroke = Array.from({ length: 10 }, (_, index) => ({
             pressure: 1,
@@ -875,6 +886,7 @@ function createTests() {
                 pressureSize: 1,
                 size: 16,
                 smoothing: 0.2,
+                smoothingMode: "modeler",
                 spacing: 0.35,
               });
               const oneThird = Math.ceil(softStroke.length / 3);
@@ -887,6 +899,19 @@ function createTests() {
               );
             })(),
             "streamed soft pressure stroke should paint into the raster layer",
+          );
+          verify.ok(
+            composition.paintStrokeLayer(paintId, {
+              color: [183, 132, 52, 255],
+              hardness: 0.45,
+              points: grainStroke,
+              size: 13,
+              smoothing: 0.3,
+              smoothingMode: "modeler",
+              spacing: 0.32,
+              tip: "grain",
+            }),
+            "grain tip stroke should leave a textured path in the raster layer",
           );
           verify.ok(
             (() => {
@@ -930,6 +955,10 @@ function createTests() {
           verify.equal(paintLayer?.kind, "raster", "brush strokes should target a raster layer");
           verify.ok(alphaSamples.some((value) => value > 0), "brush layer should contain painted alpha");
           verify.ok(alphaSamples.some((value) => value < 255), "eraser or soft brush should leave partial alpha");
+          verify.ok(
+            paintRgba[(58 * 232 + 120) * 4 + 3] !== paintRgba[(58 * 232 + 122) * 4 + 3],
+            "grain tip should create visible local alpha variation",
+          );
           verify.equal(
             Array.from(paintRgba).join(","),
             beforeCancel.join(","),
@@ -939,9 +968,9 @@ function createTests() {
           return {
             assertions: verify.count,
             metrics: [
-              ["Streamed strokes", 3],
+              ["Streamed / direct strokes", "3 + 1"],
               ["Canceled sessions", 1],
-              ["Hard / soft / erase", "10px / 16px / 12px"],
+              ["Hard / modeler / grain / erase", "10px / 16px / 13px / 12px"],
               ["Brush target", paintLayer?.kind ?? "missing"],
             ],
             views: [

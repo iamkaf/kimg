@@ -4,8 +4,8 @@
 
 - Phase 1: complete
 - Phase 2: complete
-- Phase 3: pending
-- Phase 4: pending
+- Phase 3: complete
+- Phase 4: complete
 - Phase 5: pending
 
 ## Goal
@@ -505,8 +505,39 @@ Status:
 - add textured tips
 - evaluate `ink-stroke-modeler-rs` if the internal smoother is not enough
 
+Research findings:
+
+- `ink-stroke-modeler-rs` is promising as an optional input stage, not as a brush renderer.
+  It models stylus state over time and can emit stabilized positions plus estimated pressure/velocity,
+  which maps well to our streamed `begin/push/end` API. The right integration point is ahead of dab
+  placement, behind a feature flag or optional code path.
+- Browser tilt data is practical to expose now. Pointer Events provide both legacy `tiltX` / `tiltY`
+  and the newer `altitudeAngle` / `azimuthAngle`, so the JS API should be able to accept either host-
+  normalized tilt axes or raw pointer-derived tilt converted at the app layer.
+- Textured tips should stay in-house. The simplest design is a grayscale tip atlas or tip image per
+  preset, sampled into the existing dab mask path. That preserves our current compositing rules and
+  keeps paint/erase behavior deterministic across native and wasm.
+- `tiny-skia`, `perfect_freehand`, and `freedraw` still do not look like the right primitive for this
+  phase. They are useful references for shape/path ink workflows, but not for our Photoshop-style
+  raster brush.
+
+Implemented in Phase 4:
+
+- `StrokePoint` and the JS facade now accept optional `tiltX`, `tiltY`, and `timeMs`.
+- The brush engine now has a pluggable smoothing stage with `simple` and `modeler` modes.
+- `ink-stroke-modeler-rs` is integrated as the modeled smoothing path ahead of dab placement.
+- A built-in `grain` textured tip now ships on top of the cached dab-mask path.
+- Tilt now modulates dab aspect and angle, so stylus tilt visibly changes the stamped shape.
+
+Phase 4 acceptance criteria should become:
+
+- streamed painting can use either the built-in smoother or a modeler-backed smoother
+- the public API can carry tilt without breaking hosts that do not provide it
+- at least one textured tip preset ships and works in both native and wasm
+- the default round brush remains the fast path
+
 Status:
-- pending
+- complete
 
 ### Phase 5: Advanced Tools
 

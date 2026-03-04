@@ -1,5 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
-use kimg_core::brush::{paint_stroke, BrushPreset, BrushStrokeSession, BrushTool, StrokePoint};
+use kimg_core::brush::{
+    paint_stroke, BrushPreset, BrushSmoothingMode, BrushStrokeSession, BrushTip, BrushTool,
+    StrokePoint,
+};
 use kimg_core::buffer::ImageBuffer;
 use kimg_core::pixel::Rgba;
 
@@ -162,6 +165,49 @@ fn brush_benches(c: &mut Criterion) {
                 for chunk in &chunks {
                     session.apply_points(black_box(&mut buffer), black_box(chunk));
                 }
+                black_box(buffer);
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("grain_tilt_modeler/512", |b| {
+        let points = pressure_wave(48, 470.0, 512.0)
+            .into_iter()
+            .enumerate()
+            .map(|(index, point)| {
+                StrokePoint::with_tilt_time(
+                    point.x,
+                    point.y,
+                    point.pressure,
+                    -0.3 + (index as f32 / 47.0) * 1.3,
+                    0.8 - (index as f32 / 47.0) * 0.6,
+                    index as f32 * 16.0,
+                )
+            })
+            .collect::<Vec<_>>();
+        let preset = BrushPreset {
+            color: Rgba::new(183, 132, 52, 255),
+            flow: 0.75,
+            hardness: 0.4,
+            pressure_opacity: 0.35,
+            pressure_size: 1.0,
+            size: 18.0,
+            smoothing: 0.4,
+            smoothing_mode: BrushSmoothingMode::Modeler,
+            spacing: 0.28,
+            tip: BrushTip::Grain,
+            ..BrushPreset::default()
+        };
+
+        b.iter_batched(
+            || ImageBuffer::new_transparent(512, 512),
+            |mut buffer| {
+                paint_stroke(
+                    black_box(&mut buffer),
+                    black_box(&preset),
+                    black_box(&points),
+                );
                 black_box(buffer);
             },
             BatchSize::SmallInput,
