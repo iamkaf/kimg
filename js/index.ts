@@ -14,6 +14,7 @@ import initRaw, {
   initText as initTextRaw,
   initTextSvg as initTextSvgRaw,
   initTextSvgSync as initTextSvgSyncRaw,
+  preloadTextSvgBindings,
   quantize_rgba,
   register_font,
   registered_font_count,
@@ -1554,6 +1555,14 @@ async function ensureSvgBackendReady(): Promise<void> {
   refreshLiveCompositions();
 }
 
+async function prepareBrowserSvgUpgradePath(): Promise<void> {
+  if (isNodeRuntime()) {
+    return;
+  }
+
+  await preloadTextSvgBindings();
+}
+
 export function preload(
   module_or_path?:
     | { module_or_path: InitInput | Promise<InitInput> }
@@ -1849,6 +1858,7 @@ export class Composition {
   ): Promise<Composition> {
     const size = normalizeCreateArgs(widthOrOptions, height);
     await preloadText();
+    await prepareBrowserSvgUpgradePath();
     return Composition.#fromInner(
       new RawComposition(size.width, size.height) as RawCompositionInstance,
     );
@@ -1860,6 +1870,7 @@ export class Composition {
       await preloadBackendKind("textSvg");
     } else {
       await preloadText();
+      await prepareBrowserSvgUpgradePath();
     }
     return Composition.#fromInner(RawComposition.deserialize(bytes) as RawCompositionInstance);
   }
