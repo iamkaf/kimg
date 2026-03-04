@@ -20,6 +20,7 @@ export interface RawLayerPatch {
   blendMode?: string;
   maskInverted?: boolean;
   clipToBelow?: boolean;
+  alphaLocked?: boolean;
   anchor?: "topLeft" | "top_left" | "center" | 0 | 1;
   flipX?: boolean;
   flipY?: boolean;
@@ -44,6 +45,7 @@ export interface RawLayerSnapshot {
   hasMask: boolean;
   maskInverted: boolean;
   clipToBelow: boolean;
+  alphaLocked?: boolean;
   width?: number;
   height?: number;
   anchor?: "topLeft" | "center";
@@ -88,6 +90,7 @@ type RawCompositionMethods = GeneratedRawCompositionMethods & {
   get_layer(id: number): RawLayerSnapshot | undefined;
   list_layers(parent_id: number, recursive: boolean): RawLayerSnapshot[];
   update_layer(id: number, patch: RawLayerPatch): boolean;
+  set_alpha_locked(id: number, locked: boolean): void;
 };
 
 type VariantModuleKey =

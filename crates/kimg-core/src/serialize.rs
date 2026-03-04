@@ -146,6 +146,7 @@ enum LayerKindMetadata {
     Raster {
         buffer: BufferRefMetadata,
         transform: LayerTransformMetadata,
+        alpha_locked: bool,
     },
     Filter {
         config: FilterMetadata,
@@ -326,6 +327,7 @@ fn build_layer_metadata(
         LayerKind::Raster(raster) => LayerKindMetadata::Raster {
             buffer: append_buffer(&raster.buffer, pixel_data)?,
             transform: transform_to_metadata(raster.transform),
+            alpha_locked: raster.alpha_locked,
         },
         LayerKind::Filter(filter) => LayerKindMetadata::Filter {
             config: filter_to_metadata(&filter.config),
@@ -477,11 +479,17 @@ fn layer_from_metadata(
 ) -> Result<Layer, SerializeError> {
     let common = common_from_metadata(metadata.common, pixel_data)?;
     let kind = match metadata.kind {
-        LayerKindMetadata::Raster { buffer, transform } => {
-            LayerKind::Raster(RasterLayerData::with_transform(
+        LayerKindMetadata::Raster {
+            buffer,
+            transform,
+            alpha_locked,
+        } => {
+            let mut raster = RasterLayerData::with_transform(
                 image_buffer_from_ref(buffer, pixel_data, "raster pixel data")?,
                 transform_from_metadata(transform),
-            ))
+            );
+            raster.alpha_locked = alpha_locked;
+            LayerKind::Raster(raster)
         }
         LayerKindMetadata::Filter { config } => LayerKind::Filter(FilterLayerData {
             config: filter_from_metadata(config),
@@ -848,13 +856,15 @@ mod tests {
         let mut buf = ImageBuffer::new_transparent(2, 2);
         buf.set_pixel(0, 0, Rgba::new(255, 0, 0, 255));
         buf.set_pixel(1, 1, Rgba::new(0, 255, 0, 128));
+        let mut raster = RasterLayerData::new(buf);
+        raster.alpha_locked = true;
         doc.layers.push(Layer {
             common: LayerCommon {
                 x: 1,
                 y: 2,
                 ..LayerCommon::new(id, "test raster")
             },
-            kind: LayerKind::Raster(RasterLayerData::new(buf)),
+            kind: LayerKind::Raster(raster),
         });
 
         let data = serialize(&doc).unwrap();
@@ -864,6 +874,7 @@ mod tests {
         assert_eq!(layer.common.name, "test raster");
         match &layer.kind {
             LayerKind::Raster(raster) => {
+                assert!(raster.alpha_locked);
                 assert_eq!(raster.buffer.get_pixel(0, 0), Rgba::new(255, 0, 0, 255));
                 assert_eq!(raster.buffer.get_pixel(1, 1), Rgba::new(0, 255, 0, 128));
             }

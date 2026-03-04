@@ -422,6 +422,7 @@ describe("main package facade", () => {
     const rawLayerId = rawComposition.add_image_layer("raw", rgba, 2, 2, 0, 0);
 
     const patch = {
+      alphaLocked: true,
       anchor: "center",
       flipX: true,
       flipY: true,
@@ -443,12 +444,14 @@ describe("main package facade", () => {
         rotation: 22.5,
         scaleX: 1.25,
         scaleY: 0.8,
+        alphaLocked: true,
         x: 3,
         y: 4,
       }),
     ).toBe(true);
 
     expect(publicComposition.getLayer(publicLayerId)).toMatchObject({
+      alphaLocked: true,
       anchor: "center",
       flipX: true,
       flipY: true,
@@ -460,6 +463,7 @@ describe("main package facade", () => {
       y: 4,
     });
     expect(rawComposition.get_layer(rawLayerId)).toMatchObject({
+      alphaLocked: true,
       anchor: "center",
       flipX: true,
       flipY: true,
@@ -648,6 +652,47 @@ describe("main package facade", () => {
     painted = composition.getLayerRgba(paintId);
     const alphaAtTail = painted[(9 * 12 + 9) * 4 + 3];
     expect(alphaAtTail).toBeLessThan(255);
+
+    composition.free();
+  });
+
+  test("alpha lock constrains raster fill and paint to existing alpha", async () => {
+    const composition = await Composition.create({ width: 3, height: 1 });
+    const imageId = composition.addImageLayer({
+      name: "alpha-image",
+      rgba: new Uint8Array([10, 10, 10, 255, 10, 10, 10, 0, 10, 10, 10, 255]),
+      width: 3,
+      height: 1,
+    });
+
+    composition.setLayerAlphaLocked(imageId, true);
+    expect(composition.getLayer(imageId)).toMatchObject({ alphaLocked: true });
+
+    expect(
+      composition.bucketFillLayer(imageId, {
+        x: 0,
+        y: 0,
+        color: [0, 255, 0, 255],
+        contiguous: false,
+        tolerance: 0,
+      }),
+    ).toBe(true);
+
+    expect(
+      composition.paintStrokeLayer(imageId, {
+        color: [255, 0, 0, 255],
+        size: 3,
+        points: [
+          { x: 0, y: 0, pressure: 1 },
+          { x: 2, y: 0, pressure: 1 },
+        ],
+      }),
+    ).toBe(true);
+
+    const rgba = composition.getLayerRgba(imageId);
+    expect(Array.from(rgba.slice(0, 4))).toEqual([255, 0, 0, 255]);
+    expect(Array.from(rgba.slice(4, 8))).toEqual([10, 10, 10, 0]);
+    expect(Array.from(rgba.slice(8, 12))).toEqual([255, 0, 0, 255]);
 
     composition.free();
   });

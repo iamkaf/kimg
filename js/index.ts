@@ -321,6 +321,7 @@ export interface LayerUpdate {
   blendMode?: string;
   maskInverted?: boolean;
   clipToBelow?: boolean;
+  alphaLocked?: boolean;
   anchor?: Anchor;
   flipX?: boolean;
   flipY?: boolean;
@@ -428,6 +429,7 @@ export interface LayerInfo {
   hasMask: boolean;
   maskInverted: boolean;
   clipToBelow: boolean;
+  alphaLocked?: boolean;
   width?: number;
   height?: number;
   anchor?: "topLeft" | "center";
@@ -1364,6 +1366,9 @@ function normalizeLayerUpdatePatch(patch) {
   if ("clipToBelow" in object && object.clipToBelow !== undefined) {
     normalized.clipToBelow = Boolean(object.clipToBelow);
   }
+  if ("alphaLocked" in object && object.alphaLocked !== undefined) {
+    normalized.alphaLocked = Boolean(object.alphaLocked);
+  }
   if ("anchor" in object && object.anchor !== undefined) {
     normalized.anchor = normalizeAnchor(object.anchor) === 1 ? "center" : "topLeft";
   }
@@ -1879,6 +1884,7 @@ export interface Composition {
   clearLayerMask(id: number): void;
   setLayerMaskInverted(id: number, inverted: boolean): void;
   setLayerClipToBelow(id: number, clipToBelow: boolean): void;
+  setLayerAlphaLocked(id: number, alphaLocked: boolean): void;
   setLayerFlip(id: number, flipXOrOptions: boolean | FlipOptions, flipY?: boolean): void;
   setLayerRotation(id: number, rotation: number): void;
   setLayerAnchor(id: number, anchor: Anchor): void;
@@ -2382,6 +2388,10 @@ export class Composition {
 
   setLayerClipToBelow(id, clipToBelow) {
     return this._inner.set_clip_to_below(normalizeLayerId(id), Boolean(clipToBelow));
+  }
+
+  setLayerAlphaLocked(id, alphaLocked) {
+    return this._inner.set_alpha_locked(normalizeLayerId(id), Boolean(alphaLocked));
   }
 
   setLayerFlip(id, flipXOrOptions, flipY) {

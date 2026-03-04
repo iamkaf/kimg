@@ -79,7 +79,7 @@ Shape layers cover rectangles with optional corner radius, ellipses, lines, and 
 
 **Transforms** — Non-destructive per-layer translate / scale / rotate / flip for raster, shape, text, and SVG layers, plus destructive resize (nearest-neighbor, bilinear, Lanczos3), crop, trim alpha.
 
-**Paint tools** — Raster brush strokes with round and grain tips, size, opacity, flow, hardness, spacing, simple or modeler-backed smoothing, pressure-driven size/opacity, tilt-shaped dabs, eraser mode, and streamed stroke sessions, plus bucket fill with contiguous/non-contiguous modes and alpha-aware RGBA tolerance matching.
+**Paint tools** — Raster brush strokes with round and grain tips, size, opacity, flow, hardness, spacing, simple or modeler-backed smoothing, pressure-driven size/opacity, tilt-shaped dabs, alpha lock, eraser mode, and streamed stroke sessions, plus bucket fill with contiguous/non-contiguous modes and alpha-aware RGBA tolerance matching.
 
 **Sprite tools** — Sprite sheet packer (shelf bin-packing), contact sheet grids, pixel-art upscale, color quantization, batch render pipeline.
 
@@ -208,6 +208,8 @@ doc.bucketFillLayer(layerId, {
   contiguous: true,
   tolerance: 0,
 });
+
+doc.setLayerAlphaLocked(layerId, true);
 ```
 
 ### Brush strokes
@@ -369,7 +371,7 @@ npm run test:pack
 npm run test:all
 ```
 
-165 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, text layers, SVG layers, bucket fill, brush strokes, and shared per-layer transforms.
+169 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, text layers, SVG layers, bucket fill, brush strokes, and shared per-layer transforms.
 
 The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
 
@@ -432,51 +434,51 @@ Representative medians from recent local runs on March 4, 2026. These are hardwa
 
 | Operation | Median |
 |------|------:|
-| `render/single_image/512` | `966.44 µs` |
-| `render/10_layers/512` | `9.63 ms` |
-| `render/10_normal_layers/512` | `19.04 ms` |
-| `render/10_layers_with_filter/512` | `15.21 ms` |
-| `render/single_shape/512` | `973.94 µs` |
-| `render/10_shapes/512` | `9.60 ms` |
-| `render/10_shapes_with_filter/512` | `17.06 ms` |
-| `render/group_of_5/512` | `5.16 ms` |
-| `render/clipped_layer_stack/512` | `18.39 ms` |
-| `render/masked_layer_stack/512` | `10.32 ms` |
-| `render/transformed_image/512` | `996.86 µs` |
-| `render/transformed_paint/512` | `1.16 ms` |
+| `render/single_image/512` | `962.97 µs` |
+| `render/10_layers/512` | `9.61 ms` |
+| `render/10_normal_layers/512` | `19.14 ms` |
+| `render/10_layers_with_filter/512` | `15.07 ms` |
+| `render/single_shape/512` | `953.49 µs` |
+| `render/10_shapes/512` | `9.40 ms` |
+| `render/10_shapes_with_filter/512` | `16.84 ms` |
+| `render/group_of_5/512` | `5.17 ms` |
+| `render/clipped_layer_stack/512` | `18.28 ms` |
+| `render/masked_layer_stack/512` | `10.27 ms` |
+| `render/transformed_image/512` | `1.01 ms` |
+| `render/transformed_paint/512` | `1.17 ms` |
 | `render/transformed_shape/512` | `1.13 ms` |
-| `render/10_layers_with_transforms/512` | `10.30 ms` |
+| `render/10_layers_with_transforms/512` | `10.38 ms` |
 | `render/repeated_transformed_layer/512` | `2.00 ms` |
-| `render/text_registered_cold/320x168` | `20.51 ms` |
-| `render/text_registered_cached/320x168` | `228.84 µs` |
-| `render/text_styles_cold/320x176` | `31.22 ms` |
-| `render/text_styles_cached/320x176` | `195.31 µs` |
-| `render/repeated_text_styles/320x176` | `392.28 µs` |
-| `serialize_deserialize/10_layers` | `775.90 µs` |
-| `apply_hsl_filter/512` | `5.09 ms` |
-| `bucket_fill/contiguous/512` | `685.52 µs` |
-| `bucket_fill/non_contiguous/512` | `280.61 µs` |
-| `bucket_fill/tolerance/512` | `390.72 µs` |
-| `brush/round_hard_small/256` | `68.79 µs` |
-| `brush/round_soft_large/512` | `648.18 µs` |
-| `brush/erase_soft/512` | `297.56 µs` |
-| `brush/long_pressure_stroke/1024` | `1.36 ms` |
-| `brush/streamed_long_pressure_stroke/1024` | `1.35 ms` |
-| `brush/grain_tilt_modeler/512` | `713.14 µs` |
-| `brush/repeated_short_strokes/512` | `78.33 µs` |
+| `render/text_registered_cold/320x168` | `24.90 ms` |
+| `render/text_registered_cached/320x168` | `228.49 µs` |
+| `render/text_styles_cold/320x176` | `37.72 ms` |
+| `render/text_styles_cached/320x176` | `192.91 µs` |
+| `render/repeated_text_styles/320x176` | `386.90 µs` |
+| `serialize_deserialize/10_layers` | `713.38 µs` |
+| `apply_hsl_filter/512` | `4.96 ms` |
+| `bucket_fill/contiguous/512` | `703.87 µs` |
+| `bucket_fill/non_contiguous/512` | `278.29 µs` |
+| `bucket_fill/tolerance/512` | `391.37 µs` |
+| `brush/round_hard_small/256` | `60.00 µs` |
+| `brush/round_soft_large/512` | `585.72 µs` |
+| `brush/erase_soft/512` | `284.01 µs` |
+| `brush/long_pressure_stroke/1024` | `1.31 ms` |
+| `brush/streamed_long_pressure_stroke/1024` | `1.30 ms` |
+| `brush/grain_tilt_modeler/512` | `726.67 µs` |
+| `brush/repeated_short_strokes/512` | `74.03 µs` |
 | `encode_png/512` | `1.26 ms` |
-| `decode_png/512` | `1.27 ms` |
+| `decode_png/512` | `1.23 ms` |
 | `encode_jpeg/512` | `2.09 ms` |
-| `decode_jpeg/512` | `1.21 ms` |
-| `encode_webp/512` | `1.43 ms` |
-| `decode_webp/512` | `2.70 ms` |
-| `extract_palette/512/16colors` | `20.85 ms` |
-| `shape/rasterize_rectangle/512` | `879.04 µs` |
-| `shape/rasterize_polygon/512` | `12.02 ms` |
-| `resize_nearest/512→1024` | `1.64 ms` |
-| `resize_bilinear/512→1024` | `1.03 ms` |
-| `resize_lanczos3/512→1024` | `1.61 ms` |
-| `resize_lanczos3/2048→4096` | `53.55 ms` |
+| `decode_jpeg/512` | `1.19 ms` |
+| `encode_webp/512` | `1.42 ms` |
+| `decode_webp/512` | `2.63 ms` |
+| `extract_palette/512/16colors` | `20.55 ms` |
+| `shape/rasterize_rectangle/512` | `886.16 µs` |
+| `shape/rasterize_polygon/512` | `11.82 ms` |
+| `resize_nearest/512→1024` | `1.63 ms` |
+| `resize_bilinear/512→1024` | `1.00 ms` |
+| `resize_lanczos3/512→1024` | `1.60 ms` |
+| `resize_lanczos3/2048→4096` | `53.98 ms` |
 
 ## WASM binary size
 
@@ -499,7 +501,7 @@ Tracked for later:
 
 - Selection system
 - Selection-aware painting and fill
-- Richer brush tools: alpha lock, symmetry, scatter/jitter, smudge/wet tools, and selection-aware painting
+- Richer brush tools: symmetry, scatter/jitter, smudge/wet tools, and selection-aware painting
 
 Possible follow-up work if those areas become important:
 

@@ -784,7 +784,7 @@ function createTests() {
     },
     {
       expectation:
-        "The brush engine should show a hard red stroke, a blue modeler-smoothed stroke with tilt-shaped dabs, a grainy ochre textured stroke, and an eraser cut that visibly clears a diagonal path through the paint layer.",
+        "The brush engine should show a hard red stroke, a blue modeler-smoothed stroke with tilt-shaped dabs, a grainy ochre textured stroke, an eraser cut, and a side-by-side unlocked-versus-alpha-locked green brush stroke where only the locked version is clipped to the stencil islands.",
       section: "shapes",
       title: "Brush Stroke Engine",
       async run() {
@@ -830,6 +830,45 @@ function createTests() {
             height: 104,
           });
           composition.setLayerPosition(paintId, { x: 20, y: 24 });
+          const alphaLockStencil = new Uint8Array(72 * 28 * 4);
+          for (let y = 0; y < 28; y += 1) {
+            for (let x = 0; x < 72; x += 1) {
+              const index = (y * 72 + x) * 4;
+              const leftCircle = (x - 15) ** 2 + (y - 14) ** 2 <= 8 ** 2;
+              const centerBar = x >= 28 && x <= 44 && y >= 9 && y <= 19;
+              const rightDiamond = Math.abs(x - 57) + Math.abs(y - 14) <= 8;
+              const inside = leftCircle || centerBar || rightDiamond;
+              alphaLockStencil[index] = 88;
+              alphaLockStencil[index + 1] = 82;
+              alphaLockStencil[index + 2] = 92;
+              alphaLockStencil[index + 3] = inside ? 210 : 0;
+            }
+          }
+          const unlockedId = composition.addImageLayer({
+            name: "alpha-unlocked",
+            rgba: alphaLockStencil,
+            width: 72,
+            height: 28,
+            x: -120,
+            y: 92,
+          });
+          const lockedId = composition.addImageLayer({
+            name: "alpha-locked",
+            rgba: alphaLockStencil,
+            width: 72,
+            height: 28,
+            x: 156,
+            y: 92,
+          });
+          composition.setLayerAlphaLocked(lockedId, true);
+          const alphaLockStroke = [
+            { pressure: 0.35, tiltX: -0.45, tiltY: 0.2, timeMs: 0, x: 6, y: 22 },
+            { pressure: 0.55, tiltX: -0.25, tiltY: 0.4, timeMs: 18, x: 16, y: 18 },
+            { pressure: 0.9, tiltX: 0.1, tiltY: 0.7, timeMs: 36, x: 30, y: 12 },
+            { pressure: 0.75, tiltX: 0.3, tiltY: 0.75, timeMs: 54, x: 42, y: 10 },
+            { pressure: 0.6, tiltX: 0.55, tiltY: 0.5, timeMs: 72, x: 56, y: 14 },
+            { pressure: 0.42, tiltX: 0.72, tiltY: 0.25, timeMs: 90, x: 66, y: 7 },
+          ];
 
           const hardStroke = Array.from({ length: 12 }, (_, index) => ({
             pressure: 1,
@@ -929,6 +968,35 @@ function createTests() {
             })(),
             "streamed eraser stroke should clear alpha from the raster layer",
           );
+          const lockedBefore = composition.getLayerRgba(lockedId);
+          verify.ok(
+            composition.paintStrokeLayer(unlockedId, {
+              color: [24, 176, 120, 255],
+              flow: 0.72,
+              hardness: 0.28,
+              points: alphaLockStroke,
+              size: 16,
+              smoothing: 0.18,
+              smoothingMode: "modeler",
+              spacing: 0.28,
+              tip: "grain",
+            }),
+            "reference raster should show the unconstrained brush stroke",
+          );
+          verify.ok(
+            composition.paintStrokeLayer(lockedId, {
+              color: [24, 176, 120, 255],
+              flow: 0.72,
+              hardness: 0.28,
+              points: alphaLockStroke,
+              size: 16,
+              smoothing: 0.18,
+              smoothingMode: "modeler",
+              spacing: 0.28,
+              tip: "grain",
+            }),
+            "alpha-locked raster should accept paint inside existing opaque pixels",
+          );
           const beforeCancel = Array.from(composition.getLayerRgba(paintId));
           const cancelStrokeId = composition.beginBrushStroke(paintId, {
             color: [201, 73, 45, 255],
@@ -945,7 +1013,11 @@ function createTests() {
           );
 
           const paintLayer = composition.getLayer(paintId);
+          const unlockedLayer = composition.getLayer(unlockedId);
+          const lockedLayer = composition.getLayer(lockedId);
           const paintRgba = composition.getLayerRgba(paintId);
+          const unlockedRgba = composition.getLayerRgba(unlockedId);
+          const lockedRgba = composition.getLayerRgba(lockedId);
           const alphaSamples = [
             paintRgba[(30 * 232 + 34) * 4 + 3],
             paintRgba[(70 * 232 + 52) * 4 + 3],
@@ -959,6 +1031,22 @@ function createTests() {
             paintRgba[(58 * 232 + 120) * 4 + 3] !== paintRgba[(58 * 232 + 122) * 4 + 3],
             "grain tip should create visible local alpha variation",
           );
+          verify.equal(unlockedLayer?.alphaLocked, false, "reference raster should stay unlocked");
+          verify.equal(lockedLayer?.alphaLocked, true, "locked raster should report alpha lock");
+          verify.ok(
+            unlockedRgba[(14 * 72 + 24) * 4 + 3] > 0,
+            "unlocked reference stroke should spill through transparent gaps",
+          );
+          verify.equal(
+            lockedRgba[(14 * 72 + 24) * 4 + 3],
+            0,
+            "alpha lock should preserve transparent gaps between stencil islands",
+          );
+          verify.ok(
+            lockedRgba[(14 * 72 + 36) * 4 + 1] > 150 &&
+              lockedRgba[(14 * 72 + 36) * 4 + 3] > 0,
+            "alpha lock should still recolor opaque stencil pixels",
+          );
           verify.equal(
             Array.from(paintRgba).join(","),
             beforeCancel.join(","),
@@ -968,14 +1056,17 @@ function createTests() {
           return {
             assertions: verify.count,
             metrics: [
-              ["Streamed / direct strokes", "3 + 1"],
+              ["Streamed / direct strokes", "3 + 2"],
               ["Canceled sessions", 1],
-              ["Hard / modeler / grain / erase", "10px / 16px / 13px / 12px"],
+              ["Hard / modeler / grain / erase / alpha lock", "10px / 16px / 13px / 12px / 18px"],
               ["Brush target", paintLayer?.kind ?? "missing"],
             ],
             views: [
               rgbaView("Brush composition", composition.renderRgba(), composition.width, composition.height),
               rgbaView("Paint layer only", paintRgba, 232, 104),
+              rgbaView("Stencil mask", lockedBefore, 72, 28, { maxDisplay: 260 }),
+              rgbaView("Same stroke unlocked", unlockedRgba, 72, 28, { maxDisplay: 260 }),
+              rgbaView("Same stroke alpha-locked", lockedRgba, 72, 28, { maxDisplay: 260 }),
             ],
           };
         } finally {

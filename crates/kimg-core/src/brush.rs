@@ -149,6 +149,7 @@ impl StrokePoint {
 /// without repainting the full stroke each time.
 pub struct BrushStrokeSession {
     preset: BrushPreset,
+    alpha_locked: bool,
     tip_cache: HashMap<DabMaskKey, DabMask>,
     pending: f32,
     last_output: Option<StrokePoint>,
@@ -159,9 +160,10 @@ pub struct BrushStrokeSession {
 
 impl BrushStrokeSession {
     /// Create a new incremental brush session for the given preset.
-    pub fn new(preset: BrushPreset) -> Self {
+    pub fn new(preset: BrushPreset, alpha_locked: bool) -> Self {
         Self {
             preset,
+            alpha_locked,
             tip_cache: HashMap::new(),
             pending: 0.0,
             last_output: None,
@@ -220,7 +222,13 @@ impl BrushStrokeSession {
         let mut any = false;
         for &output in outputs {
             let Some(previous) = self.last_output else {
-                any |= stamp_dab(buffer, &self.preset, output, &mut self.tip_cache);
+                any |= stamp_dab(
+                    buffer,
+                    &self.preset,
+                    output,
+                    self.alpha_locked,
+                    &mut self.tip_cache,
+                );
                 self.last_output = Some(output);
                 self.last_stamp = Some(output);
                 continue;
@@ -271,7 +279,13 @@ impl BrushStrokeSession {
                 tilt_y: lerp(from.tilt_y, to.tilt_y, t).clamp(-1.0, 1.0),
                 time_ms: lerp(from.time_ms, to.time_ms, t),
             };
-            any |= stamp_dab(buffer, &self.preset, dab, &mut self.tip_cache);
+            any |= stamp_dab(
+                buffer,
+                &self.preset,
+                dab,
+                self.alpha_locked,
+                &mut self.tip_cache,
+            );
             self.last_stamp = Some(dab);
             distance += spacing_px;
         }
@@ -291,7 +305,13 @@ impl BrushStrokeSession {
             return false;
         }
 
-        let stamped = stamp_dab(buffer, &self.preset, point, &mut self.tip_cache);
+        let stamped = stamp_dab(
+            buffer,
+            &self.preset,
+            point,
+            self.alpha_locked,
+            &mut self.tip_cache,
+        );
         if stamped {
             self.last_stamp = Some(point);
         }
@@ -486,8 +506,9 @@ pub fn paint_stroke(
     buffer: &mut ImageBuffer,
     preset: &BrushPreset,
     points: &[StrokePoint],
+    alpha_locked: bool,
 ) -> bool {
-    let mut session = BrushStrokeSession::new(*preset);
+    let mut session = BrushStrokeSession::new(*preset, alpha_locked);
     let mut any = session.apply_points(buffer, points);
     any |= session.finish(buffer);
     any
@@ -497,6 +518,7 @@ fn stamp_dab(
     buffer: &mut ImageBuffer,
     preset: &BrushPreset,
     point: StrokePoint,
+    alpha_locked: bool,
     tip_cache: &mut HashMap<DabMaskKey, DabMask>,
 ) -> bool {
     let pressure = point.pressure.clamp(0.0, 1.0);
@@ -515,7 +537,15 @@ fn stamp_dab(
         .entry(mask_key)
         .or_insert_with(|| build_dab_mask(mask_key));
 
-    apply_mask(buffer, mask, point.x, point.y, preset, alpha_scale)
+    apply_mask(
+        buffer,
+        mask,
+        point.x,
+        point.y,
+        preset,
+        alpha_scale,
+        alpha_locked,
+    )
 }
 
 fn apply_mask(
@@ -525,6 +555,7 @@ fn apply_mask(
     center_y: f32,
     preset: &BrushPreset,
     alpha_scale: f32,
+    alpha_locked: bool,
 ) -> bool {
     let radius = mask.diameter as f32 / 2.0;
     let left = (center_x - radius).floor() as i32;
@@ -562,16 +593,24 @@ fn apply_mask(
             }
 
             let pixel_index = ((y as u32 * buffer.width + x as u32) * 4) as usize;
+            if alpha_locked && buffer.data[pixel_index + 3] == 0 {
+                continue;
+            }
             match preset.tool {
                 BrushTool::Paint => composite_paint_pixel(
                     &mut buffer.data[pixel_index..pixel_index + 4],
                     preset.color,
                     applied_alpha,
                 ),
-                BrushTool::Erase => erase_pixel(
-                    &mut buffer.data[pixel_index..pixel_index + 4],
-                    applied_alpha,
-                ),
+                BrushTool::Erase => {
+                    if alpha_locked {
+                        continue;
+                    }
+                    erase_pixel(
+                        &mut buffer.data[pixel_index..pixel_index + 4],
+                        applied_alpha,
+                    )
+                }
             }
             any = true;
         }
@@ -782,6 +821,7 @@ mod tests {
             &mut buffer,
             &preset,
             &[StrokePoint::new(4.0, 4.0, 1.0)],
+            false,
         ));
 
         assert_eq!(buffer.get_pixel(4, 4), Rgba::new(255, 0, 0, 255));
@@ -798,7 +838,12 @@ mod tests {
             ..BrushPreset::default()
         };
 
-        paint_stroke(&mut buffer, &preset, &[StrokePoint::new(5.0, 5.0, 1.0)]);
+        paint_stroke(
+            &mut buffer,
+            &preset,
+            &[StrokePoint::new(5.0, 5.0, 1.0)],
+            false,
+        );
 
         let center = buffer.get_pixel(5, 5).a;
         let shoulder = buffer.get_pixel(7, 5).a;
@@ -819,7 +864,12 @@ mod tests {
             ..BrushPreset::default()
         };
 
-        paint_stroke(&mut buffer, &preset, &[StrokePoint::new(4.0, 4.0, 1.0)]);
+        paint_stroke(
+            &mut buffer,
+            &preset,
+            &[StrokePoint::new(4.0, 4.0, 1.0)],
+            false,
+        );
 
         assert!(buffer.get_pixel(4, 4).a < 255);
         assert_eq!(buffer.get_pixel(0, 0).a, 255);
@@ -836,8 +886,13 @@ mod tests {
             ..BrushPreset::default()
         };
 
-        paint_stroke(&mut low, &preset, &[StrokePoint::new(8.0, 8.0, 0.2)]);
-        paint_stroke(&mut high, &preset, &[StrokePoint::new(8.0, 8.0, 1.0)]);
+        paint_stroke(&mut low, &preset, &[StrokePoint::new(8.0, 8.0, 0.2)], false);
+        paint_stroke(
+            &mut high,
+            &preset,
+            &[StrokePoint::new(8.0, 8.0, 1.0)],
+            false,
+        );
 
         let low_pixels = low
             .data
@@ -869,6 +924,7 @@ mod tests {
                 StrokePoint::new(2.0, 4.0, 1.0),
                 StrokePoint::new(42.0, 4.0, 1.0),
             ],
+            false,
         );
 
         let painted_columns = (0..buffer.width)
@@ -902,9 +958,9 @@ mod tests {
             StrokePoint::new(82.0, 68.0, 0.9),
         ];
 
-        assert!(paint_stroke(&mut batched, &preset, &points));
+        assert!(paint_stroke(&mut batched, &preset, &points, false));
 
-        let mut session = BrushStrokeSession::new(preset);
+        let mut session = BrushStrokeSession::new(preset, false);
         assert!(session.apply_points(&mut streamed, &points[..2]));
         assert!(session.apply_points(&mut streamed, &points[2..4]));
         assert!(session.apply_points(&mut streamed, &points[4..]));
@@ -922,7 +978,7 @@ mod tests {
             smoothing: 0.2,
             ..BrushPreset::default()
         };
-        let mut session = BrushStrokeSession::new(preset);
+        let mut session = BrushStrokeSession::new(preset, false);
 
         assert!(session.apply_points(&mut buffer, &[StrokePoint::new(4.0, 4.0, 0.4)]));
         assert!(session.apply_points(&mut buffer, &[StrokePoint::new(6.0, 5.0, 0.5)]));
@@ -942,7 +998,12 @@ mod tests {
             ..BrushPreset::default()
         };
 
-        paint_stroke(&mut round, &base, &[StrokePoint::new(12.0, 12.0, 1.0)]);
+        paint_stroke(
+            &mut round,
+            &base,
+            &[StrokePoint::new(12.0, 12.0, 1.0)],
+            false,
+        );
         paint_stroke(
             &mut grain,
             &BrushPreset {
@@ -950,6 +1011,7 @@ mod tests {
                 ..base
             },
             &[StrokePoint::new(12.0, 12.0, 1.0)],
+            false,
         );
 
         assert_ne!(round.data, grain.data);
@@ -972,6 +1034,7 @@ mod tests {
             &mut buffer,
             &preset,
             &[StrokePoint::with_tilt_time(16.0, 16.0, 1.0, 1.0, 0.0, 0.0)],
+            false,
         );
 
         let horizontal = (0..buffer.width)
@@ -1000,7 +1063,30 @@ mod tests {
             StrokePoint::with_tilt_time(36.0, 32.0, 1.0, 0.0, 0.0, 32.0),
         ];
 
-        assert!(paint_stroke(&mut buffer, &preset, &points));
+        assert!(paint_stroke(&mut buffer, &preset, &points, false));
         assert!(buffer.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn alpha_locked_stroke_preserves_transparent_pixels() {
+        let mut buffer = ImageBuffer::new_transparent(16, 16);
+        buffer.set_pixel(8, 8, Rgba::new(40, 50, 60, 255));
+        let preset = BrushPreset {
+            color: Rgba::new(255, 0, 0, 255),
+            size: 8.0,
+            hardness: 1.0,
+            ..BrushPreset::default()
+        };
+
+        assert!(paint_stroke(
+            &mut buffer,
+            &preset,
+            &[StrokePoint::new(8.0, 8.0, 1.0)],
+            true,
+        ));
+
+        assert_eq!(buffer.get_pixel(0, 0), Rgba::TRANSPARENT);
+        assert_eq!(buffer.get_pixel(8, 8).a, 255);
+        assert_eq!(buffer.get_pixel(8, 8).r, 255);
     }
 }

@@ -270,6 +270,11 @@ impl Document {
         if let Some(clip_to_below) = patch.clip_to_below {
             layer.common.clip_to_below = clip_to_below;
         }
+        if let Some(alpha_locked) = patch.alpha_locked {
+            if let LayerKind::Raster(raster) = &mut layer.kind {
+                raster.alpha_locked = alpha_locked;
+            }
+        }
 
         if let Some(anchor) = patch.anchor {
             if let Some(transform) = layer_transform_mut(layer) {
@@ -389,9 +394,12 @@ impl Document {
         };
 
         match &mut layer.kind {
-            LayerKind::Raster(paint) => paint.mutate_buffer(|buffer| {
-                fill::bucket_fill(buffer, x, y, color, contiguous, tolerance)
-            }),
+            LayerKind::Raster(raster) => {
+                let alpha_locked = raster.alpha_locked;
+                raster.mutate_buffer(|buffer| {
+                    fill::bucket_fill(buffer, x, y, color, contiguous, tolerance, alpha_locked)
+                })
+            }
             _ => false,
         }
     }
@@ -413,7 +421,10 @@ impl Document {
 
         match &mut layer.kind {
             LayerKind::Raster(raster) => {
-                raster.mutate_buffer(|buffer| brush::paint_stroke(buffer, preset, points))
+                let alpha_locked = raster.alpha_locked;
+                raster.mutate_buffer(|buffer| {
+                    brush::paint_stroke(buffer, preset, points, alpha_locked)
+                })
             }
             _ => false,
         }
@@ -1545,6 +1556,7 @@ mod tests {
         assert!(doc.update_layer(
             image_id,
             &LayerPatch {
+                alpha_locked: Some(true),
                 blend_mode: Some(BlendMode::Multiply),
                 clip_to_below: Some(true),
                 flip_x: Some(true),
@@ -1624,6 +1636,7 @@ mod tests {
         assert!(image_layer.common.clip_to_below);
         match &image_layer.kind {
             LayerKind::Raster(raster) => {
+                assert!(raster.alpha_locked);
                 assert!(raster.transform.flip_x);
                 assert_eq!(raster.transform.rotation_deg, 90.0);
                 assert_eq!(raster.transform.scale_x, 1.5);
@@ -1809,6 +1822,35 @@ mod tests {
     }
 
     #[test]
+    fn bucket_fill_layer_respects_alpha_lock() {
+        let mut doc = Document::new(3, 1);
+        let raster_id = doc.next_id();
+        let mut raster = ImageBuffer::new_transparent(3, 1);
+        raster.set_pixel(0, 0, Rgba::new(10, 10, 10, 255));
+        raster.set_pixel(1, 0, Rgba::new(10, 10, 10, 0));
+        raster.set_pixel(2, 0, Rgba::new(10, 10, 10, 255));
+        let mut layer = Layer::new(
+            LayerCommon::new(raster_id, "raster"),
+            LayerKind::Raster(RasterLayerData::new(raster)),
+        );
+        if let LayerKind::Raster(raster) = &mut layer.kind {
+            raster.alpha_locked = true;
+        }
+        doc.layers.push(layer);
+
+        assert!(doc.bucket_fill_layer(raster_id, 0, 0, Rgba::new(0, 255, 0, 255), false, 0,));
+
+        match &doc.find_layer(raster_id).unwrap().kind {
+            LayerKind::Raster(raster) => {
+                assert_eq!(raster.buffer.get_pixel(0, 0), Rgba::new(0, 255, 0, 255));
+                assert_eq!(raster.buffer.get_pixel(1, 0), Rgba::new(10, 10, 10, 0));
+                assert_eq!(raster.buffer.get_pixel(2, 0), Rgba::new(0, 255, 0, 255));
+            }
+            _ => panic!("expected raster layer"),
+        }
+    }
+
+    #[test]
     fn paint_stroke_layer_mutates_raster_layers_only() {
         let mut doc = Document::new(8, 8);
 
@@ -1876,6 +1918,37 @@ mod tests {
         let after = doc.render().data;
 
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn paint_stroke_layer_respects_alpha_lock() {
+        let mut doc = Document::new(8, 8);
+        let raster_id = doc.next_id();
+        let mut raster = ImageBuffer::new_transparent(8, 8);
+        raster.set_pixel(4, 4, Rgba::new(20, 20, 20, 255));
+        let mut layer = Layer::new(
+            LayerCommon::new(raster_id, "raster"),
+            LayerKind::Raster(RasterLayerData::new(raster)),
+        );
+        if let LayerKind::Raster(raster) = &mut layer.kind {
+            raster.alpha_locked = true;
+        }
+        doc.layers.push(layer);
+
+        let preset = BrushPreset {
+            color: Rgba::new(255, 0, 0, 255),
+            size: 6.0,
+            ..BrushPreset::default()
+        };
+        assert!(doc.paint_stroke_layer(raster_id, &preset, &[StrokePoint::new(4.0, 4.0, 1.0)],));
+
+        match &doc.find_layer(raster_id).unwrap().kind {
+            LayerKind::Raster(raster) => {
+                assert_eq!(raster.buffer.get_pixel(0, 0), Rgba::TRANSPARENT);
+                assert_eq!(raster.buffer.get_pixel(4, 4).r, 255);
+            }
+            _ => panic!("expected raster layer"),
+        }
     }
 
     #[test]

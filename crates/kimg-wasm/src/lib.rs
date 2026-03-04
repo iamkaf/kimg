@@ -392,6 +392,15 @@ impl Document {
         }
     }
 
+    /// Set whether a raster layer locks transparent pixels during paint/fill operations.
+    pub fn set_alpha_locked(&mut self, id: u32, locked: bool) {
+        if let Some(layer) = self.inner.find_layer_mut(id) {
+            if let LayerKind::Raster(raster) = &mut layer.kind {
+                raster.alpha_locked = locked;
+            }
+        }
+    }
+
     // ── Image-specific setters ──
 
     /// Set flip on a raster, shape, or text layer.
@@ -860,7 +869,7 @@ impl Document {
             ActiveBrushStroke {
                 layer_id: id,
                 original_buffer: raster.buffer.clone(),
-                session: BrushStrokeSession::new(preset),
+                session: BrushStrokeSession::new(preset, raster.alpha_locked),
             },
         );
         stroke_id
@@ -1528,6 +1537,11 @@ fn layer_snapshot(layer: &Layer, parent_id: Option<u32>, index: usize, depth: us
                 "height",
                 JsValue::from_f64(raster.buffer.height as f64),
             );
+            set_prop(
+                &object,
+                "alphaLocked",
+                JsValue::from_bool(raster.alpha_locked),
+            );
             set_transform_snapshot(&object, &raster.transform);
         }
         LayerKind::Filter(filter) => {
@@ -1815,6 +1829,7 @@ fn parse_layer_patch(value: &JsValue) -> Option<LayerPatch> {
         .map(|value| BlendMode::from_str_lossy(&value));
     patch.mask_inverted = get_prop(&object, "maskInverted").and_then(|value| value.as_bool());
     patch.clip_to_below = get_prop(&object, "clipToBelow").and_then(|value| value.as_bool());
+    patch.alpha_locked = get_prop(&object, "alphaLocked").and_then(|value| value.as_bool());
     patch.anchor = get_prop(&object, "anchor").and_then(|value| anchor_from_js(&value));
     patch.flip_x = get_prop(&object, "flipX").and_then(|value| value.as_bool());
     patch.flip_y = get_prop(&object, "flipY").and_then(|value| value.as_bool());
@@ -2231,6 +2246,52 @@ mod tests {
         let paint = doc.get_layer_rgba(paint_id);
         assert_eq!(&paint[..4], &[0, 0, 255, 255]);
         assert_eq!(&paint[4..8], &[0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn alpha_lock_wasm() {
+        let mut doc = Document::new(3, 1);
+        let id = doc.add_image_layer(
+            "img",
+            &[10, 10, 10, 255, 10, 10, 10, 0, 10, 10, 10, 255],
+            3,
+            1,
+            0,
+            0,
+        );
+
+        doc.set_alpha_locked(id, true);
+        match &doc.inner.find_layer(id).unwrap().kind {
+            LayerKind::Raster(raster) => assert!(raster.alpha_locked),
+            _ => panic!("expected raster layer"),
+        }
+
+        assert!(doc.bucket_fill_layer(id, 0, 0, 0, 255, 0, 255, false, 0));
+        assert!(doc.paint_stroke_layer(
+            id,
+            &[0.0, 0.0, 1.0, 2.0, 0.0, 1.0],
+            3,
+            255,
+            0,
+            0,
+            255,
+            3.0,
+            1.0,
+            1.0,
+            1.0,
+            0.25,
+            0.0,
+            0.0,
+            0.0,
+            0,
+            0,
+            false,
+        ));
+
+        let rgba = doc.get_layer_rgba(id);
+        assert_eq!(&rgba[..4], &[255, 0, 0, 255]);
+        assert_eq!(&rgba[4..8], &[10, 10, 10, 0]);
+        assert_eq!(&rgba[8..12], &[255, 0, 0, 255]);
     }
 
     #[test]

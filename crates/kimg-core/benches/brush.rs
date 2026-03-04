@@ -47,6 +47,7 @@ fn brush_benches(c: &mut Criterion) {
                     black_box(&mut buffer),
                     black_box(&preset),
                     black_box(&points),
+                    false,
                 );
                 black_box(buffer);
             },
@@ -75,6 +76,7 @@ fn brush_benches(c: &mut Criterion) {
                     black_box(&mut buffer),
                     black_box(&preset),
                     black_box(&points),
+                    false,
                 );
                 black_box(buffer);
             },
@@ -103,6 +105,7 @@ fn brush_benches(c: &mut Criterion) {
                     black_box(&mut buffer),
                     black_box(&preset),
                     black_box(&points),
+                    false,
                 );
                 black_box(buffer);
             },
@@ -131,6 +134,7 @@ fn brush_benches(c: &mut Criterion) {
                     black_box(&mut buffer),
                     black_box(&preset),
                     black_box(&points),
+                    false,
                 );
                 black_box(buffer);
             },
@@ -161,7 +165,7 @@ fn brush_benches(c: &mut Criterion) {
         b.iter_batched(
             || ImageBuffer::new_transparent(1024, 1024),
             |mut buffer| {
-                let mut session = BrushStrokeSession::new(preset);
+                let mut session = BrushStrokeSession::new(preset, false);
                 for chunk in &chunks {
                     session.apply_points(black_box(&mut buffer), black_box(chunk));
                 }
@@ -207,6 +211,7 @@ fn brush_benches(c: &mut Criterion) {
                     black_box(&mut buffer),
                     black_box(&preset),
                     black_box(&points),
+                    false,
                 );
                 black_box(buffer);
             },
@@ -239,6 +244,7 @@ fn brush_benches(c: &mut Criterion) {
                         black_box(&mut buffer),
                         black_box(&preset),
                         black_box(stroke),
+                        false,
                     );
                 }
                 black_box(buffer);

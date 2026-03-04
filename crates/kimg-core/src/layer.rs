@@ -97,6 +97,8 @@ pub struct LayerPatch {
     pub mask_inverted: Option<bool>,
     /// Set whether the layer clips to the layer below it.
     pub clip_to_below: Option<bool>,
+    /// Set whether a raster layer locks transparent pixels during paint/fill operations.
+    pub alpha_locked: Option<bool>,
     /// Set the anchor for raster/shape/text layers.
     pub anchor: Option<Anchor>,
     /// Set horizontal flip for raster/shape/text layers.
@@ -205,6 +207,8 @@ pub struct RasterLayerData {
     pub buffer: ImageBuffer,
     /// Shared non-destructive transform state.
     pub transform: LayerTransform,
+    /// When true, paint and fill preserve existing transparency and cannot affect fully transparent pixels.
+    pub alpha_locked: bool,
     revision: u64,
     transformed_cache: RefCell<Option<RasterTransformCache>>,
 }
@@ -215,6 +219,7 @@ impl RasterLayerData {
         Self {
             buffer,
             transform: LayerTransform::new(),
+            alpha_locked: false,
             revision: 0,
             transformed_cache: RefCell::new(None),
         }
@@ -279,6 +284,7 @@ impl Clone for RasterLayerData {
         Self {
             buffer: self.buffer.clone(),
             transform: self.transform,
+            alpha_locked: self.alpha_locked,
             revision: self.revision,
             transformed_cache: RefCell::new(None),
         }

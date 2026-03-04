@@ -57,6 +57,7 @@ fn bench_bucket_fill_contiguous(c: &mut Criterion) {
                     Rgba::new(0, 255, 0, 255),
                     true,
                     0,
+                    false,
                 ))
             },
             BatchSize::SmallInput,
@@ -77,6 +78,7 @@ fn bench_bucket_fill_non_contiguous(c: &mut Criterion) {
                     Rgba::new(255, 0, 0, 255),
                     false,
                     0,
+                    false,
                 ))
             },
             BatchSize::SmallInput,
@@ -97,6 +99,7 @@ fn bench_bucket_fill_tolerance(c: &mut Criterion) {
                     Rgba::new(0, 0, 255, 255),
                     false,
                     12,
+                    false,
                 ))
             },
             BatchSize::SmallInput,

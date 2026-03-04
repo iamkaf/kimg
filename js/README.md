@@ -29,6 +29,7 @@ doc.bucketFillLayer(layerId, {
   contiguous: true,
   tolerance: 0,
 });
+doc.setLayerAlphaLocked(layerId, true);
 doc.paintStrokeLayer(layerId, {
   color: [201, 73, 45, 255],
   size: 12,

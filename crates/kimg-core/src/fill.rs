@@ -22,29 +22,40 @@ pub fn bucket_fill(
     replacement: Rgba,
     contiguous: bool,
     tolerance: u8,
+    alpha_locked: bool,
 ) -> bool {
     if x >= buffer.width || y >= buffer.height {
         return false;
     }
 
     let seed = buffer.get_pixel(x, y);
+    if alpha_locked && seed.a == 0 {
+        return true;
+    }
     if seed == replacement && tolerance == 0 {
         return true;
     }
 
     if contiguous {
-        bucket_fill_contiguous(buffer, x, y, seed, replacement, tolerance);
+        bucket_fill_contiguous(buffer, x, y, seed, replacement, tolerance, alpha_locked);
     } else {
-        bucket_fill_global(buffer, seed, replacement, tolerance);
+        bucket_fill_global(buffer, seed, replacement, tolerance, alpha_locked);
     }
 
     true
 }
 
-fn bucket_fill_global(buffer: &mut ImageBuffer, seed: Rgba, replacement: Rgba, tolerance: u8) {
+fn bucket_fill_global(
+    buffer: &mut ImageBuffer,
+    seed: Rgba,
+    replacement: Rgba,
+    tolerance: u8,
+    alpha_locked: bool,
+) {
     for py in 0..buffer.height {
         for px in 0..buffer.width {
-            if matches_seed(buffer.get_pixel(px, py), seed, tolerance) {
+            let pixel = buffer.get_pixel(px, py);
+            if (!alpha_locked || pixel.a != 0) && matches_seed(pixel, seed, tolerance) {
                 buffer.set_pixel(px, py, replacement);
             }
         }
@@ -58,6 +69,7 @@ fn bucket_fill_contiguous(
     seed: Rgba,
     replacement: Rgba,
     tolerance: u8,
+    alpha_locked: bool,
 ) {
     let mut queue = VecDeque::from([(start_x, start_y)]);
     let mut visited = vec![false; buffer.data.len() / 4];
@@ -69,7 +81,8 @@ fn bucket_fill_contiguous(
         }
         visited[index] = true;
 
-        if !matches_seed(buffer.get_pixel(x, y), seed, tolerance) {
+        let pixel = buffer.get_pixel(x, y);
+        if (alpha_locked && pixel.a == 0) || !matches_seed(pixel, seed, tolerance) {
             continue;
         }
 
@@ -114,6 +127,7 @@ mod tests {
             Rgba::new(0, 255, 0, 255),
             true,
             0,
+            false,
         ));
 
         assert_eq!(buffer.get_pixel(0, 0), Rgba::new(0, 255, 0, 255));
@@ -135,6 +149,7 @@ mod tests {
             Rgba::new(0, 255, 0, 255),
             false,
             0,
+            false,
         ));
 
         assert_eq!(buffer.get_pixel(0, 0), Rgba::new(0, 255, 0, 255));
@@ -155,6 +170,7 @@ mod tests {
             Rgba::new(255, 0, 0, 255),
             false,
             8,
+            false,
         ));
         assert_eq!(buffer.get_pixel(0, 0), Rgba::new(255, 0, 0, 255));
         assert_eq!(buffer.get_pixel(1, 0), Rgba::new(100, 100, 100, 140));
@@ -166,7 +182,30 @@ mod tests {
             Rgba::new(0, 255, 0, 255),
             false,
             20,
+            false,
         ));
         assert_eq!(buffer.get_pixel(1, 0), Rgba::new(0, 255, 0, 255));
+    }
+
+    #[test]
+    fn alpha_locked_fill_preserves_transparent_pixels() {
+        let mut buffer = ImageBuffer::new_transparent(3, 1);
+        buffer.set_pixel(0, 0, Rgba::new(10, 10, 10, 255));
+        buffer.set_pixel(1, 0, Rgba::new(10, 10, 10, 0));
+        buffer.set_pixel(2, 0, Rgba::new(10, 10, 10, 255));
+
+        assert!(bucket_fill(
+            &mut buffer,
+            0,
+            0,
+            Rgba::new(0, 255, 0, 255),
+            false,
+            0,
+            true,
+        ));
+
+        assert_eq!(buffer.get_pixel(0, 0), Rgba::new(0, 255, 0, 255));
+        assert_eq!(buffer.get_pixel(1, 0), Rgba::new(10, 10, 10, 0));
+        assert_eq!(buffer.get_pixel(2, 0), Rgba::new(0, 255, 0, 255));
     }
 }
