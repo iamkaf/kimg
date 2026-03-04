@@ -178,6 +178,28 @@ export interface BucketFillOptions {
   tolerance?: number;
 }
 
+export type BrushTool = "paint" | "erase";
+
+export interface BrushPoint {
+  x: number;
+  y: number;
+  pressure?: number;
+}
+
+export interface BrushStrokeOptions {
+  points: BrushPoint[];
+  tool?: BrushTool;
+  color?: ByteInput;
+  size: number;
+  opacity?: number;
+  flow?: number;
+  hardness?: number;
+  spacing?: number;
+  smoothing?: number;
+  pressureSize?: number;
+  pressureOpacity?: number;
+}
+
 export interface Position {
   x: number;
   y: number;
@@ -507,6 +529,14 @@ function normalizePositiveNumber(value, fieldName) {
   const normalized = normalizeFiniteNumber(value, fieldName);
   if (normalized <= 0) {
     throw new RangeError(`${fieldName} must be greater than 0.`);
+  }
+  return normalized;
+}
+
+function normalizeUnitInterval(value, fieldName) {
+  const normalized = normalizeFiniteNumber(value, fieldName);
+  if (normalized < 0 || normalized > 1) {
+    throw new RangeError(`${fieldName} must be between 0 and 1.`);
   }
   return normalized;
 }
@@ -1089,6 +1119,54 @@ function normalizeBucketFillOptions(options) {
     tolerance: normalizeByte(object.tolerance ?? 0, "bucketFillLayer.tolerance"),
     x: normalizeNonNegativeInteger(object.x, "bucketFillLayer.x"),
     y: normalizeNonNegativeInteger(object.y, "bucketFillLayer.y"),
+  };
+}
+
+function normalizeBrushStrokeOptions(options) {
+  const object = requireObject(options, "paintStrokeLayer");
+  if (!Array.isArray(object.points) || object.points.length === 0) {
+    throw new TypeError("paintStrokeLayer.points must be a non-empty array.");
+  }
+
+  const tool =
+    object.tool === undefined ? "paint" : normalizeString(object.tool, "paintStrokeLayer.tool");
+  if (tool !== "paint" && tool !== "erase") {
+    throw new TypeError('paintStrokeLayer.tool must be "paint" or "erase".');
+  }
+
+  const points = new Float32Array(object.points.length * 3);
+  for (let index = 0; index < object.points.length; index += 1) {
+    const point = requireObject(object.points[index], `paintStrokeLayer.points[${index}]`);
+    points[index * 3] = normalizeFiniteNumber(point.x, `paintStrokeLayer.points[${index}].x`);
+    points[index * 3 + 1] = normalizeFiniteNumber(point.y, `paintStrokeLayer.points[${index}].y`);
+    points[index * 3 + 2] = normalizeUnitInterval(
+      point.pressure ?? 1,
+      `paintStrokeLayer.points[${index}].pressure`,
+    );
+  }
+
+  let color: Uint8Array<ArrayBufferLike> = new Uint8Array([0, 0, 0, 255]);
+  if (tool === "paint") {
+    color = normalizeRgbaColor(object.color ?? [0, 0, 0, 255], "paintStrokeLayer.color");
+  } else if (object.color !== undefined) {
+    color = normalizeRgbaColor(object.color, "paintStrokeLayer.color");
+  }
+
+  return {
+    color,
+    flow: normalizeUnitInterval(object.flow ?? 1, "paintStrokeLayer.flow"),
+    hardness: normalizeUnitInterval(object.hardness ?? 1, "paintStrokeLayer.hardness"),
+    opacity: normalizeUnitInterval(object.opacity ?? 1, "paintStrokeLayer.opacity"),
+    points,
+    pressureOpacity: normalizeUnitInterval(
+      object.pressureOpacity ?? 0,
+      "paintStrokeLayer.pressureOpacity",
+    ),
+    pressureSize: normalizeUnitInterval(object.pressureSize ?? 1, "paintStrokeLayer.pressureSize"),
+    size: normalizePositiveNumber(object.size, "paintStrokeLayer.size"),
+    smoothing: normalizeUnitInterval(object.smoothing ?? 0, "paintStrokeLayer.smoothing"),
+    spacing: normalizePositiveNumber(object.spacing ?? 0.25, "paintStrokeLayer.spacing"),
+    tool,
   };
 }
 
@@ -2181,6 +2259,27 @@ export class Composition {
       fill.color[3],
       fill.contiguous,
       fill.tolerance,
+    );
+  }
+
+  paintStrokeLayer(id, options) {
+    const stroke = normalizeBrushStrokeOptions(options);
+    return this._inner.paint_stroke_layer(
+      normalizeLayerId(id),
+      stroke.points,
+      stroke.color[0],
+      stroke.color[1],
+      stroke.color[2],
+      stroke.color[3],
+      stroke.size,
+      stroke.opacity,
+      stroke.flow,
+      stroke.hardness,
+      stroke.spacing,
+      stroke.smoothing,
+      stroke.pressureSize,
+      stroke.pressureOpacity,
+      stroke.tool === "erase",
     );
   }
 

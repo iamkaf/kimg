@@ -1,5 +1,13 @@
 # Brush Engine Plan
 
+## Status
+
+- Phase 1: complete
+- Phase 2: complete
+- Phase 3: pending
+- Phase 4: pending
+- Phase 5: pending
+
 ## Goal
 
 Add a real raster brush engine to `kimg` that feels native to the current document model:
@@ -461,6 +469,9 @@ Exit criteria:
 - brush strokes render correctly
 - performance is interactive on moderate canvases
 
+Status:
+- complete
+
 ### Phase 2: JS/WASM Surface
 
 - expose `paintStrokeLayer(...)`
@@ -470,6 +481,9 @@ Exit criteria:
 Exit criteria:
 
 - browser and Node can paint into raster layers
+
+Status:
+- complete
 
 ### Phase 3: Interactive / Streaming
 
@@ -481,12 +495,18 @@ Exit criteria:
 
 - interactive brush use no longer requires batching whole strokes in JS
 
+Status:
+- pending
+
 ### Phase 4: Quality Upgrade
 
 - improve smoothing
 - add tilt support
 - add textured tips
 - evaluate `ink-stroke-modeler-rs` if the internal smoother is not enough
+
+Status:
+- pending
 
 ### Phase 5: Advanced Tools
 
@@ -495,6 +515,9 @@ Exit criteria:
 - symmetry
 - smudge/wet tools
 - selection-aware painting once selections exist
+
+Status:
+- pending
 
 ## Decision
 

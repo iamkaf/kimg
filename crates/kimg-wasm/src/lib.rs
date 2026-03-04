@@ -20,6 +20,7 @@ use wasm_bindgen::prelude::*;
 use js_sys::{Array, Object, Reflect};
 use kimg_core::blend::BlendMode;
 use kimg_core::blit::Anchor;
+use kimg_core::brush::{BrushPreset, BrushTool, StrokePoint};
 use kimg_core::buffer::ImageBuffer;
 use kimg_core::codec;
 use kimg_core::color;
@@ -742,6 +743,52 @@ impl Document {
     ) -> bool {
         self.inner
             .bucket_fill_layer(id, x, y, Rgba::new(r, g, b, a), contiguous, tolerance)
+    }
+
+    /// Paint a batched brush stroke into a raster layer using layer-local coordinates.
+    ///
+    /// `points_xyz` must contain `x, y, pressure` triples.
+    #[allow(clippy::too_many_arguments)]
+    pub fn paint_stroke_layer(
+        &mut self,
+        id: u32,
+        points_xyz: &[f32],
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+        size: f64,
+        opacity: f64,
+        flow: f64,
+        hardness: f64,
+        spacing: f64,
+        smoothing: f64,
+        pressure_size: f64,
+        pressure_opacity: f64,
+        erase: bool,
+    ) -> bool {
+        let Some(points) = parse_stroke_points(points_xyz) else {
+            return false;
+        };
+
+        let preset = BrushPreset {
+            tool: if erase {
+                BrushTool::Erase
+            } else {
+                BrushTool::Paint
+            },
+            color: Rgba::new(r, g, b, a),
+            size: size as f32,
+            opacity: opacity as f32,
+            flow: flow as f32,
+            hardness: hardness as f32,
+            spacing: spacing as f32,
+            smoothing: smoothing as f32,
+            pressure_size: pressure_size as f32,
+            pressure_opacity: pressure_opacity as f32,
+        };
+
+        self.inner.paint_stroke_layer(id, &preset, &points)
     }
 
     // ── Rendering ──
@@ -1655,6 +1702,23 @@ fn flat_to_palette(data: &[u8]) -> sprite::Palette {
         .map(bytemuck::pod_read_unaligned)
         .collect();
     sprite::Palette::new(colors)
+}
+
+fn parse_stroke_points(points_xyz: &[f32]) -> Option<Vec<StrokePoint>> {
+    let chunks = points_xyz.chunks_exact(3);
+    if !chunks.remainder().is_empty() {
+        return None;
+    }
+
+    let points = chunks
+        .map(|chunk| StrokePoint::new(chunk[0], chunk[1], chunk[2]))
+        .collect::<Vec<_>>();
+
+    if points.is_empty() {
+        return None;
+    }
+
+    Some(points)
 }
 
 // ── Free functions: color utilities ──
@@ -2576,5 +2640,50 @@ mod tests {
         assert_eq!(detect_format(b"GIF89a"), "gif");
         assert_eq!(detect_format(b"8BPS\x00\x01"), "psd");
         assert_eq!(detect_format(&[0, 0, 0, 0]), "unknown");
+    }
+
+    #[test]
+    fn paint_stroke_layer_wasm() {
+        let mut doc = Document::new(8, 8);
+        let paint_id = doc.add_paint_layer("paint", 8, 8);
+
+        assert!(doc.paint_stroke_layer(
+            paint_id,
+            &[1.0, 1.0, 0.5, 6.0, 6.0, 1.0],
+            255,
+            0,
+            0,
+            255,
+            4.0,
+            1.0,
+            1.0,
+            0.8,
+            0.5,
+            0.2,
+            1.0,
+            0.0,
+            false,
+        ));
+
+        let painted = doc.get_layer_rgba(paint_id);
+        assert!(painted.chunks_exact(4).any(|pixel| pixel[3] > 0));
+
+        assert!(doc.paint_stroke_layer(
+            paint_id,
+            &[6.0, 6.0, 1.0],
+            0,
+            0,
+            0,
+            255,
+            3.0,
+            1.0,
+            1.0,
+            1.0,
+            0.25,
+            0.0,
+            0.0,
+            0.0,
+            true,
+        ));
     }
 }

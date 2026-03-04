@@ -15,6 +15,7 @@
 
 use crate::blend::{blend, blend_normal, BlendMode};
 use crate::blit::{blit_transformed, Anchor, BlitParams, Rotation};
+use crate::brush::{self, BrushPreset, StrokePoint};
 use crate::buffer::ImageBuffer;
 use crate::fill;
 use crate::filter::{apply_hsl_filter, HslFilterConfig};
@@ -391,6 +392,29 @@ impl Document {
             LayerKind::Raster(paint) => paint.mutate_buffer(|buffer| {
                 fill::bucket_fill(buffer, x, y, color, contiguous, tolerance)
             }),
+            _ => false,
+        }
+    }
+
+    /// Paint a batched brush stroke into a raster layer using layer-local coordinates.
+    ///
+    /// Returns `false` when the layer does not exist, is not a raster layer, or
+    /// the stroke produced no visible changes.
+    pub fn paint_stroke_layer(
+        &mut self,
+        id: u32,
+        preset: &BrushPreset,
+        points: &[StrokePoint],
+    ) -> bool {
+        let layer = match self.find_layer_mut(id) {
+            Some(layer) => layer,
+            None => return false,
+        };
+
+        match &mut layer.kind {
+            LayerKind::Raster(raster) => {
+                raster.mutate_buffer(|buffer| brush::paint_stroke(buffer, preset, points))
+            }
             _ => false,
         }
     }
@@ -1782,6 +1806,76 @@ mod tests {
             }
             _ => panic!("expected raster layer"),
         }
+    }
+
+    #[test]
+    fn paint_stroke_layer_mutates_raster_layers_only() {
+        let mut doc = Document::new(8, 8);
+
+        let raster_id = doc.next_id();
+        let shape_id = doc.next_id();
+        let mut raster = ImageBuffer::new_transparent(8, 8);
+        raster.fill(Rgba::new(0, 0, 0, 0));
+        doc.layers.push(Layer::new(
+            LayerCommon::new(raster_id, "raster"),
+            LayerKind::Raster(RasterLayerData::new(raster)),
+        ));
+        doc.layers.push(Layer::new(
+            LayerCommon::new(shape_id, "shape"),
+            LayerKind::Shape(ShapeLayerData::new(
+                crate::layer::ShapeType::Rectangle,
+                4,
+                4,
+                0,
+                Some(Rgba::new(255, 0, 0, 255)),
+                None,
+                Vec::new(),
+            )),
+        ));
+
+        let preset = BrushPreset {
+            color: Rgba::new(0, 255, 0, 255),
+            size: 4.0,
+            ..BrushPreset::default()
+        };
+        let points = [StrokePoint::new(4.0, 4.0, 1.0)];
+
+        assert!(doc.paint_stroke_layer(raster_id, &preset, &points));
+        assert!(!doc.paint_stroke_layer(shape_id, &preset, &points));
+
+        match &doc.find_layer(raster_id).unwrap().kind {
+            LayerKind::Raster(raster) => {
+                assert!(raster.buffer.data.iter().any(|&value| value != 0));
+            }
+            _ => panic!("expected raster layer"),
+        }
+    }
+
+    #[test]
+    fn paint_stroke_layer_invalidates_raster_transform_cache() {
+        let mut doc = Document::new(8, 8);
+        let raster_id = doc.next_id();
+        let mut layer = Layer::new(
+            LayerCommon::new(raster_id, "raster"),
+            LayerKind::Raster(RasterLayerData::new(ImageBuffer::new_transparent(4, 4))),
+        );
+        layer.common.x = 2;
+        layer.common.y = 2;
+        if let LayerKind::Raster(raster) = &mut layer.kind {
+            raster.transform.rotation_deg = 30.0;
+        }
+        doc.layers.push(layer);
+
+        let before = doc.render().data;
+        let preset = BrushPreset {
+            color: Rgba::new(255, 0, 0, 255),
+            size: 3.0,
+            ..BrushPreset::default()
+        };
+        assert!(doc.paint_stroke_layer(raster_id, &preset, &[StrokePoint::new(1.0, 1.0, 1.0)],));
+        let after = doc.render().data;
+
+        assert_ne!(before, after);
     }
 
     #[test]

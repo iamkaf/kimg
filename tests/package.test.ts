@@ -608,6 +608,50 @@ describe("main package facade", () => {
     composition.free();
   });
 
+  test("paintStrokeLayer paints and erases raster layers", async () => {
+    const composition = await Composition.create({ width: 12, height: 12 });
+    const paintId = composition.addPaintLayer({
+      name: "paint",
+      width: 12,
+      height: 12,
+    });
+
+    expect(
+      composition.paintStrokeLayer(paintId, {
+        color: [255, 0, 0, 255],
+        flow: 0.9,
+        hardness: 0.8,
+        opacity: 1,
+        points: [
+          { x: 2, y: 2, pressure: 0.4 },
+          { x: 9, y: 9, pressure: 1 },
+        ],
+        pressureOpacity: 0.3,
+        pressureSize: 1,
+        size: 4,
+        smoothing: 0.15,
+        spacing: 0.5,
+      }),
+    ).toBe(true);
+
+    let painted = composition.getLayerRgba(paintId);
+    expect(painted.some((value) => value !== 0)).toBe(true);
+
+    expect(
+      composition.paintStrokeLayer(paintId, {
+        points: [{ x: 9, y: 9, pressure: 1 }],
+        size: 3,
+        tool: "erase",
+      }),
+    ).toBe(true);
+
+    painted = composition.getLayerRgba(paintId);
+    const alphaAtTail = painted[(9 * 12 + 9) * 4 + 3];
+    expect(alphaAtTail).toBeLessThan(255);
+
+    composition.free();
+  });
+
   test("shape layers render and expose shape metadata through the facade", async () => {
     const composition = await Composition.create({ width: 8, height: 8 });
     const groupId = composition.addGroupLayer({ name: "group" });
@@ -681,6 +725,68 @@ describe("main package facade", () => {
     expect(pixel[3]).toBeGreaterThan(0);
 
     composition.free();
+  });
+
+  test("paintStrokeLayer matches the raw brush binding", async () => {
+    const publicComposition = await Composition.create({ width: 12, height: 12 });
+    initSync({ module: wasm });
+    const rawComposition = new RawComposition(12, 12);
+
+    try {
+      const publicLayerId = publicComposition.addPaintLayer({
+        name: "paint",
+        width: 12,
+        height: 12,
+      });
+      const rawLayerId = rawComposition.add_paint_layer("paint", 12, 12);
+      const points = [
+        { x: 1, y: 1, pressure: 0.3 },
+        { x: 10, y: 5, pressure: 1 },
+        { x: 6, y: 10, pressure: 0.7 },
+      ];
+
+      expect(
+        publicComposition.paintStrokeLayer(publicLayerId, {
+          color: [35, 79, 221, 255],
+          flow: 0.85,
+          hardness: 0.55,
+          opacity: 0.9,
+          points,
+          pressureOpacity: 0.4,
+          pressureSize: 1,
+          size: 5,
+          smoothing: 0.25,
+          spacing: 0.4,
+        }),
+      ).toBe(true);
+
+      expect(
+        rawComposition.paint_stroke_layer(
+          rawLayerId,
+          new Float32Array(points.flatMap((point) => [point.x, point.y, point.pressure])),
+          35,
+          79,
+          221,
+          255,
+          5,
+          0.9,
+          0.85,
+          0.55,
+          0.4,
+          0.25,
+          1,
+          0.4,
+          false,
+        ),
+      ).toBe(true);
+
+      expect(Array.from(publicComposition.getLayerRgba(publicLayerId))).toEqual(
+        Array.from(rawComposition.get_layer_rgba(rawLayerId)),
+      );
+    } finally {
+      publicComposition.free();
+      rawComposition.free();
+    }
   });
 
   test("text layers render, serialize, and expose text metadata", async () => {

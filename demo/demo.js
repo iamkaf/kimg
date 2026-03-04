@@ -61,7 +61,7 @@ const SECTION_INFO = {
   shapes: {
     chip: "Shapes",
     description:
-      "Vector-style shape layers, bucket fill behavior, palette extraction, and quantization outputs that should be visually legible without any interaction.",
+      "Vector-style shape layers, brush strokes, bucket fill behavior, palette extraction, and quantization outputs that should be visually legible without any interaction.",
     title: "Shape, Fill, and Palette Tools",
   },
   text: {
@@ -780,6 +780,134 @@ function createTests() {
             rgbaView("Tolerance", tolerance.rgba, tolerance.width, tolerance.height),
           ],
         };
+      },
+    },
+    {
+      expectation:
+        "The brush engine should show a hard red stroke, a softer blue pressure-sized stroke, and an eraser cut that visibly clears a diagonal path through the paint layer.",
+      section: "shapes",
+      title: "Brush Stroke Engine",
+      async run() {
+        const verify = createVerifier();
+        const composition = await Composition.create({ width: 272, height: 156 });
+
+        try {
+          composition.addSolidColorLayer({ color: [247, 241, 232, 255], name: "paper" });
+          composition.addShapeLayer({
+            fill: [236, 222, 207, 255],
+            height: 104,
+            name: "panel",
+            stroke: { color: [214, 193, 171, 255], width: 2 },
+            type: "rectangle",
+            width: 232,
+            x: 20,
+            y: 24,
+          });
+          composition.addShapeLayer({
+            fill: [0, 0, 0, 0],
+            height: 84,
+            name: "guide-a",
+            stroke: { color: [120, 112, 101, 72], width: 2 },
+            type: "line",
+            width: 80,
+            x: 40,
+            y: 36,
+          });
+          composition.addShapeLayer({
+            fill: [0, 0, 0, 0],
+            height: 84,
+            name: "guide-b",
+            stroke: { color: [120, 112, 101, 72], width: 2 },
+            type: "line",
+            width: 80,
+            x: 152,
+            y: 36,
+          });
+
+          const paintId = composition.addPaintLayer({
+            name: "brush-layer",
+            width: 232,
+            height: 104,
+          });
+          composition.setLayerPosition(paintId, { x: 20, y: 24 });
+
+          const hardStroke = Array.from({ length: 12 }, (_, index) => ({
+            pressure: 1,
+            x: 18 + index * 16,
+            y: 26 + Math.sin(index / 2) * 12,
+          }));
+          const softStroke = Array.from({ length: 14 }, (_, index) => ({
+            pressure: 0.2 + (index / 13) * 0.8,
+            x: 32 + index * 12,
+            y: 72 + Math.cos(index / 2.2) * 10,
+          }));
+          const eraseStroke = Array.from({ length: 10 }, (_, index) => ({
+            pressure: 1,
+            x: 36 + index * 18,
+            y: 14 + index * 8,
+          }));
+
+          verify.ok(
+            composition.paintStrokeLayer(paintId, {
+              color: [201, 73, 45, 255],
+              hardness: 0.95,
+              points: hardStroke,
+              size: 10,
+              spacing: 0.4,
+            }),
+            "hard brush stroke should paint into the raster layer",
+          );
+          verify.ok(
+            composition.paintStrokeLayer(paintId, {
+              color: [35, 79, 221, 255],
+              flow: 0.65,
+              hardness: 0.25,
+              points: softStroke,
+              pressureOpacity: 0.35,
+              pressureSize: 1,
+              size: 16,
+              smoothing: 0.2,
+              spacing: 0.35,
+            }),
+            "soft pressure stroke should paint into the raster layer",
+          );
+          verify.ok(
+            composition.paintStrokeLayer(paintId, {
+              points: eraseStroke,
+              size: 12,
+              spacing: 0.3,
+              tool: "erase",
+            }),
+            "eraser stroke should clear alpha from the raster layer",
+          );
+
+          const paintLayer = composition.getLayer(paintId);
+          const paintRgba = composition.getLayerRgba(paintId);
+          const alphaSamples = [
+            paintRgba[(30 * 232 + 34) * 4 + 3],
+            paintRgba[(70 * 232 + 52) * 4 + 3],
+            paintRgba[(40 * 232 + 96) * 4 + 3],
+          ];
+
+          verify.equal(paintLayer?.kind, "raster", "brush strokes should target a raster layer");
+          verify.ok(alphaSamples.some((value) => value > 0), "brush layer should contain painted alpha");
+          verify.ok(alphaSamples.some((value) => value < 255), "eraser or soft brush should leave partial alpha");
+
+          return {
+            assertions: verify.count,
+            metrics: [
+              ["Strokes", 3],
+              ["Hard / soft / erase", "10px / 16px / 12px"],
+              ["Brush target", paintLayer?.kind ?? "missing"],
+            ],
+            views: [
+              rgbaView("Brush composition", composition.renderRgba(), composition.width, composition.height),
+              rgbaView("Paint layer only", paintRgba, 232, 104),
+            ],
+          };
+        } finally {
+          composition.free();
+        }
       },
     },
     {

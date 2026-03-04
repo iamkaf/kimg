@@ -5,6 +5,7 @@
 
 pub mod blend;
 pub mod blit;
+pub mod brush;
 pub mod buffer;
 pub mod codec;
 pub mod color;

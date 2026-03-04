@@ -29,6 +29,17 @@ doc.bucketFillLayer(layerId, {
   contiguous: true,
   tolerance: 0,
 });
+doc.paintStrokeLayer(layerId, {
+  color: [201, 73, 45, 255],
+  size: 12,
+  hardness: 0.8,
+  spacing: 0.4,
+  points: [
+    { x: 12, y: 18, pressure: 0.3 },
+    { x: 42, y: 26, pressure: 0.8 },
+    { x: 88, y: 44, pressure: 1.0 },
+  ],
+});
 const png = doc.exportPng();
 
 doc.addShapeLayer({
