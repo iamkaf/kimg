@@ -40,6 +40,20 @@ doc.paintStrokeLayer(layerId, {
     { x: 88, y: 44, pressure: 1.0 },
   ],
 });
+const strokeId = doc.beginBrushStroke(layerId, {
+  color: [35, 79, 221, 255],
+  size: 14,
+  hardness: 0.3,
+  flow: 0.7,
+  smoothing: 0.2,
+  spacing: 0.35,
+});
+doc.pushBrushPoints(strokeId, [
+  { x: 18, y: 52, pressure: 0.2 },
+  { x: 44, y: 60, pressure: 0.7 },
+]);
+doc.pushBrushPoints(strokeId, [{ x: 88, y: 74, pressure: 1.0 }]);
+doc.endBrushStroke(strokeId);
 const png = doc.exportPng();
 
 doc.addShapeLayer({

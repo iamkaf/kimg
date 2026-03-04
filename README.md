@@ -79,7 +79,7 @@ Shape layers cover rectangles with optional corner radius, ellipses, lines, and 
 
 **Transforms** — Non-destructive per-layer translate / scale / rotate / flip for raster, shape, text, and SVG layers, plus destructive resize (nearest-neighbor, bilinear, Lanczos3), crop, trim alpha.
 
-**Paint tools** — Round raster brush strokes with size, opacity, flow, hardness, spacing, smoothing, pressure-driven size/opacity, and eraser mode, plus bucket fill with contiguous/non-contiguous modes and alpha-aware RGBA tolerance matching.
+**Paint tools** — Round raster brush strokes with size, opacity, flow, hardness, spacing, smoothing, pressure-driven size/opacity, eraser mode, and streamed stroke sessions, plus bucket fill with contiguous/non-contiguous modes and alpha-aware RGBA tolerance matching.
 
 **Sprite tools** — Sprite sheet packer (shelf bin-packing), contact sheet grids, pixel-art upscale, color quantization, batch render pipeline.
 
@@ -240,6 +240,24 @@ doc.paintStrokeLayer(layerId, {
     { x: 76, y: 48, pressure: 1 },
   ],
 });
+
+const strokeId = doc.beginBrushStroke(layerId, {
+  color: [35, 79, 221, 255],
+  size: 14,
+  hardness: 0.3,
+  flow: 0.7,
+  smoothing: 0.2,
+  spacing: 0.35,
+});
+
+doc.pushBrushPoints(strokeId, [
+  { x: 16, y: 52, pressure: 0.2 },
+  { x: 44, y: 60, pressure: 0.7 },
+]);
+doc.pushBrushPoints(strokeId, [
+  { x: 88, y: 74, pressure: 1.0 },
+]);
+doc.endBrushStroke(strokeId);
 ```
 
 ## Subpath exports
@@ -348,7 +366,7 @@ npm run test:pack
 npm run test:all
 ```
 
-160 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, text layers, SVG layers, bucket fill, brush strokes, and shared per-layer transforms.
+162 core Rust tests covering blend modes, compositing, filters, transforms, codecs, serialization, sprites, color utilities, shape layers, text layers, SVG layers, bucket fill, brush strokes, and shared per-layer transforms.
 
 The package layer also has a small Vitest suite that exercises the built JS/WASM facade, subpath exports, and Node-side initialization behavior.
 
@@ -394,7 +412,7 @@ The benchmarks cover:
 | `codec` | PNG / JPEG / WebP encode and decode of a 512×512 buffer |
 | `sprite` | Sprite sheet packing, palette extraction, quantization, pixel-art scale |
 | `fill` | Contiguous and non-contiguous bucket fill, plus alpha-aware tolerance matching |
-| `brush` | Hard/soft raster brush strokes, erase mode, pressure strokes, repeated short strokes |
+| `brush` | Hard/soft raster brush strokes, erase mode, batched and streamed pressure strokes, repeated short strokes |
 | `shape` | Standalone shape rasterization cost for rectangle and polygon primitives |
 
 Notes on the harnesses:
@@ -404,7 +422,7 @@ Notes on the harnesses:
 - The full suite runs with default features. The text medians below were refreshed separately with `cargo bench -p kimg-core --bench document --features cosmic-text-backend -- 'render/(text|repeated_text)'` so they reflect the shipped text renderer instead of the lean fallback path.
 - Codec benchmarks use a deterministic textured 512×512 image instead of a flat fill, which avoids unrealistically optimistic compression timings.
 - `render/repeated_transformed_layer/512` performs two back-to-back renders of the same transformed document in one iteration to measure transform-cache wins directly.
-- Brush benchmarks operate directly on raster buffers and cover hard/soft strokes, erase mode, long pressure strokes, and repeated short-stroke workloads.
+- Brush benchmarks operate directly on raster buffers and cover hard/soft strokes, erase mode, batched and streamed long pressure strokes, and repeated short-stroke workloads.
 - Standalone shape benches instantiate a fresh shape per sample so they continue to measure rasterization work instead of the document-level layer cache.
 
 Representative medians from recent local runs on March 4, 2026. These are hardware-dependent and should be treated as a baseline example, not a guarantee:
@@ -436,11 +454,12 @@ Representative medians from recent local runs on March 4, 2026. These are hardwa
 | `bucket_fill/contiguous/512` | `685.52 µs` |
 | `bucket_fill/non_contiguous/512` | `280.61 µs` |
 | `bucket_fill/tolerance/512` | `390.72 µs` |
-| `brush/round_hard_small/256` | `55.59 µs` |
-| `brush/round_soft_large/512` | `514.45 µs` |
-| `brush/erase_soft/512` | `245.44 µs` |
-| `brush/long_pressure_stroke/1024` | `1.20 ms` |
-| `brush/repeated_short_strokes/512` | `66.93 µs` |
+| `brush/round_hard_small/256` | `56.71 µs` |
+| `brush/round_soft_large/512` | `570.83 µs` |
+| `brush/erase_soft/512` | `255.32 µs` |
+| `brush/long_pressure_stroke/1024` | `1.30 ms` |
+| `brush/streamed_long_pressure_stroke/1024` | `1.33 ms` |
+| `brush/repeated_short_strokes/512` | `78.81 µs` |
 | `encode_png/512` | `1.26 ms` |
 | `decode_png/512` | `1.27 ms` |
 | `encode_jpeg/512` | `2.09 ms` |
@@ -476,7 +495,7 @@ Tracked for later:
 
 - Selection system
 - Selection-aware painting and fill
-- Streaming brush sessions and richer brush tools
+- Richer brush tools: textured tips, tilt, alpha lock, symmetry, and selection-aware painting
 
 Possible follow-up work if those areas become important:
 

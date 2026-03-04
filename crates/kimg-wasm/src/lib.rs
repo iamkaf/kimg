@@ -20,7 +20,7 @@ use wasm_bindgen::prelude::*;
 use js_sys::{Array, Object, Reflect};
 use kimg_core::blend::BlendMode;
 use kimg_core::blit::Anchor;
-use kimg_core::brush::{BrushPreset, BrushTool, StrokePoint};
+use kimg_core::brush::{BrushPreset, BrushStrokeSession, BrushTool, StrokePoint};
 use kimg_core::buffer::ImageBuffer;
 use kimg_core::codec;
 use kimg_core::color;
@@ -40,11 +40,20 @@ use kimg_core::sprite;
 use kimg_core::svg::{rasterize_svg, validate_svg};
 use kimg_core::text::{measure_text, render_text};
 use kimg_core::transform;
+use std::collections::HashMap;
 
 /// WASM-exposed Composition for image compositing.
 #[wasm_bindgen(js_name = Composition)]
 pub struct Document {
     inner: CoreDocument,
+    active_brush_strokes: HashMap<u32, ActiveBrushStroke>,
+    next_brush_stroke_id: u32,
+}
+
+struct ActiveBrushStroke {
+    layer_id: u32,
+    original_buffer: ImageBuffer,
+    session: BrushStrokeSession,
 }
 
 fn mutate_raster_layer(
@@ -107,6 +116,8 @@ impl Document {
     pub fn new(width: u32, height: u32) -> Document {
         Document {
             inner: CoreDocument::new(width, height),
+            active_brush_strokes: HashMap::new(),
+            next_brush_stroke_id: 1,
         }
     }
 
@@ -770,25 +781,117 @@ impl Document {
         let Some(points) = parse_stroke_points(points_xyz) else {
             return false;
         };
+        let preset = build_brush_preset(
+            r,
+            g,
+            b,
+            a,
+            size,
+            opacity,
+            flow,
+            hardness,
+            spacing,
+            smoothing,
+            pressure_size,
+            pressure_opacity,
+            erase,
+        );
+        self.inner.paint_stroke_layer(id, &preset, &points)
+    }
 
-        let preset = BrushPreset {
-            tool: if erase {
-                BrushTool::Erase
-            } else {
-                BrushTool::Paint
-            },
-            color: Rgba::new(r, g, b, a),
-            size: size as f32,
-            opacity: opacity as f32,
-            flow: flow as f32,
-            hardness: hardness as f32,
-            spacing: spacing as f32,
-            smoothing: smoothing as f32,
-            pressure_size: pressure_size as f32,
-            pressure_opacity: pressure_opacity as f32,
+    /// Begin an interactive brush stroke session on a raster layer.
+    ///
+    /// Returns `0` if the target layer does not exist or is not raster-backed.
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_brush_stroke(
+        &mut self,
+        id: u32,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+        size: f64,
+        opacity: f64,
+        flow: f64,
+        hardness: f64,
+        spacing: f64,
+        smoothing: f64,
+        pressure_size: f64,
+        pressure_opacity: f64,
+        erase: bool,
+    ) -> u32 {
+        let Some(layer) = self.inner.find_layer(id) else {
+            return 0;
+        };
+        let LayerKind::Raster(raster) = &layer.kind else {
+            return 0;
         };
 
-        self.inner.paint_stroke_layer(id, &preset, &points)
+        let stroke_id = self.next_brush_stroke_id;
+        self.next_brush_stroke_id = self.next_brush_stroke_id.wrapping_add(1).max(1);
+        let preset = build_brush_preset(
+            r,
+            g,
+            b,
+            a,
+            size,
+            opacity,
+            flow,
+            hardness,
+            spacing,
+            smoothing,
+            pressure_size,
+            pressure_opacity,
+            erase,
+        );
+        self.active_brush_strokes.insert(
+            stroke_id,
+            ActiveBrushStroke {
+                layer_id: id,
+                original_buffer: raster.buffer.clone(),
+                session: BrushStrokeSession::new(preset),
+            },
+        );
+        stroke_id
+    }
+
+    /// Push additional streamed points into an active brush stroke session.
+    ///
+    /// `points_xyz` must contain `x, y, pressure` triples.
+    pub fn push_brush_points(&mut self, stroke_id: u32, points_xyz: &[f32]) -> bool {
+        let Some(points) = parse_stroke_points(points_xyz) else {
+            return false;
+        };
+        let Some(active) = self.active_brush_strokes.get_mut(&stroke_id) else {
+            return false;
+        };
+        let Some(layer) = self.inner.find_layer_mut(active.layer_id) else {
+            return false;
+        };
+        let LayerKind::Raster(raster) = &mut layer.kind else {
+            return false;
+        };
+        raster.mutate_buffer(|buffer| active.session.apply_points(buffer, &points))
+    }
+
+    /// End an interactive brush stroke session and keep the painted result.
+    pub fn end_brush_stroke(&mut self, stroke_id: u32) -> bool {
+        self.active_brush_strokes.remove(&stroke_id).is_some()
+    }
+
+    /// Cancel an active brush stroke session and restore the original raster buffer.
+    pub fn cancel_brush_stroke(&mut self, stroke_id: u32) -> bool {
+        let Some(active) = self.active_brush_strokes.remove(&stroke_id) else {
+            return false;
+        };
+        let Some(layer) = self.inner.find_layer_mut(active.layer_id) else {
+            return false;
+        };
+        let LayerKind::Raster(raster) = &mut layer.kind else {
+            return false;
+        };
+        raster.set_buffer(active.original_buffer);
+        true
     }
 
     // ── Rendering ──
@@ -1163,7 +1266,11 @@ impl Document {
     /// Deserialize a document from binary data.
     pub fn deserialize(data: &[u8]) -> Document {
         let inner = serialize::deserialize(data).expect("failed to deserialize");
-        Document { inner }
+        Document {
+            inner,
+            active_brush_strokes: HashMap::new(),
+            next_brush_stroke_id: 1,
+        }
     }
 
     // ── Internal helpers ──
@@ -1719,6 +1826,40 @@ fn parse_stroke_points(points_xyz: &[f32]) -> Option<Vec<StrokePoint>> {
     }
 
     Some(points)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_brush_preset(
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+    size: f64,
+    opacity: f64,
+    flow: f64,
+    hardness: f64,
+    spacing: f64,
+    smoothing: f64,
+    pressure_size: f64,
+    pressure_opacity: f64,
+    erase: bool,
+) -> BrushPreset {
+    BrushPreset {
+        tool: if erase {
+            BrushTool::Erase
+        } else {
+            BrushTool::Paint
+        },
+        color: Rgba::new(r, g, b, a),
+        size: size as f32,
+        opacity: opacity as f32,
+        flow: flow as f32,
+        hardness: hardness as f32,
+        spacing: spacing as f32,
+        smoothing: smoothing as f32,
+        pressure_size: pressure_size as f32,
+        pressure_opacity: pressure_opacity as f32,
+    }
 }
 
 // ── Free functions: color utilities ──
@@ -2685,5 +2826,38 @@ mod tests {
             0.0,
             true,
         ));
+    }
+
+    #[test]
+    fn brush_stroke_session_wasm() {
+        let mut doc = Document::new(16, 16);
+        let paint_id = doc.add_paint_layer("paint", 16, 16);
+        let stroke_id = doc.begin_brush_stroke(
+            paint_id, 35, 79, 221, 255, 5.0, 0.9, 0.85, 0.55, 0.4, 0.25, 1.0, 0.4, false,
+        );
+
+        assert!(stroke_id > 0);
+        assert!(doc.push_brush_points(stroke_id, &[1.0, 1.0, 0.3, 10.0, 5.0, 1.0]));
+        assert!(doc.push_brush_points(stroke_id, &[6.0, 10.0, 0.7]));
+        assert!(doc.end_brush_stroke(stroke_id));
+        assert!(!doc.end_brush_stroke(stroke_id));
+
+        let painted = doc.get_layer_rgba(paint_id);
+        assert!(painted.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn cancel_brush_stroke_restores_original_raster() {
+        let mut doc = Document::new(16, 16);
+        let paint_id = doc.add_paint_layer("paint", 16, 16);
+        let before = doc.get_layer_rgba(paint_id);
+        let stroke_id = doc.begin_brush_stroke(
+            paint_id, 255, 0, 0, 255, 6.0, 1.0, 1.0, 0.8, 0.35, 0.2, 1.0, 0.0, false,
+        );
+
+        assert!(stroke_id > 0);
+        assert!(doc.push_brush_points(stroke_id, &[2.0, 2.0, 0.5, 12.0, 12.0, 1.0]));
+        assert!(doc.cancel_brush_stroke(stroke_id));
+        assert_eq!(doc.get_layer_rgba(paint_id), before);
     }
 }

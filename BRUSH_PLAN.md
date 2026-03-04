@@ -488,7 +488,7 @@ Status:
 ### Phase 3: Interactive / Streaming
 
 - add begin/push/end stroke session API
-- add incremental dirty-rect tracking
+- keep incremental painting local to touched dabs
 - reduce wasm boundary overhead for live painting
 
 Exit criteria:
@@ -496,7 +496,7 @@ Exit criteria:
 - interactive brush use no longer requires batching whole strokes in JS
 
 Status:
-- pending
+- complete
 
 ### Phase 4: Quality Upgrade
 

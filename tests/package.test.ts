@@ -789,6 +789,94 @@ describe("main package facade", () => {
     }
   });
 
+  test("streaming brush sessions match the raw bindings and cancel restores the raster", async () => {
+    const publicComposition = await Composition.create({ width: 12, height: 12 });
+    const rawComposition = new RawComposition(12, 12);
+
+    try {
+      const publicLayerId = publicComposition.addPaintLayer({
+        height: 12,
+        name: "paint",
+        width: 12,
+      });
+      const rawLayerId = rawComposition.add_paint_layer("paint", 12, 12);
+      const before = Array.from(publicComposition.getLayerRgba(publicLayerId));
+      const chunks = [
+        [
+          { x: 1, y: 1, pressure: 0.3 },
+          { x: 4, y: 3, pressure: 0.6 },
+        ],
+        [
+          { x: 7, y: 6, pressure: 1 },
+          { x: 10, y: 8, pressure: 0.8 },
+        ],
+      ];
+
+      const publicStrokeId = publicComposition.beginBrushStroke(publicLayerId, {
+        color: [201, 73, 45, 255],
+        flow: 0.85,
+        hardness: 0.5,
+        opacity: 0.9,
+        pressureOpacity: 0.2,
+        pressureSize: 1,
+        size: 5,
+        smoothing: 0.2,
+        spacing: 0.35,
+      });
+      const rawStrokeId = rawComposition.begin_brush_stroke(
+        rawLayerId,
+        201,
+        73,
+        45,
+        255,
+        5,
+        0.9,
+        0.85,
+        0.5,
+        0.35,
+        0.2,
+        1,
+        0.2,
+        false,
+      );
+
+      expect(publicStrokeId).toBeGreaterThan(0);
+      expect(rawStrokeId).toBeGreaterThan(0);
+
+      for (const chunk of chunks) {
+        expect(publicComposition.pushBrushPoints(publicStrokeId, chunk)).toBe(true);
+        expect(
+          rawComposition.push_brush_points(
+            rawStrokeId,
+            new Float32Array(chunk.flatMap((point) => [point.x, point.y, point.pressure])),
+          ),
+        ).toBe(true);
+      }
+
+      expect(publicComposition.endBrushStroke(publicStrokeId)).toBe(true);
+      expect(rawComposition.end_brush_stroke(rawStrokeId)).toBe(true);
+      expect(Array.from(publicComposition.getLayerRgba(publicLayerId))).toEqual(
+        Array.from(rawComposition.get_layer_rgba(rawLayerId)),
+      );
+
+      const cancelStrokeId = publicComposition.beginBrushStroke(publicLayerId, {
+        color: [35, 79, 221, 255],
+        size: 4,
+      });
+      expect(
+        publicComposition.pushBrushPoints(cancelStrokeId, [{ x: 2, y: 10, pressure: 1 }]),
+      ).toBe(true);
+      expect(publicComposition.cancelBrushStroke(cancelStrokeId)).toBe(true);
+      expect(Array.from(publicComposition.getLayerRgba(publicLayerId))).toEqual(
+        Array.from(rawComposition.get_layer_rgba(rawLayerId)),
+      );
+      expect(before).not.toEqual(Array.from(publicComposition.getLayerRgba(publicLayerId)));
+    } finally {
+      publicComposition.free();
+      rawComposition.free();
+    }
+  });
+
   test("text layers render, serialize, and expose text metadata", async () => {
     const composition = await Composition.create({ width: 96, height: 32 });
     const textId = composition.addTextLayer({

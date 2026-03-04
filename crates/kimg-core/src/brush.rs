@@ -85,6 +85,152 @@ impl StrokePoint {
     }
 }
 
+/// Incremental brush stroke session for interactive painting.
+///
+/// This preserves smoothing, spacing, and tip-cache state across multiple
+/// `apply_points` calls so hosts can stream pointer samples into a raster layer
+/// without repainting the full stroke each time.
+#[derive(Debug, Clone)]
+pub struct BrushStrokeSession {
+    preset: BrushPreset,
+    tip_cache: HashMap<(u32, u8), DabMask>,
+    pending: f32,
+    last_smoothed: Option<StrokePoint>,
+    last_stamp: Option<StrokePoint>,
+}
+
+impl BrushStrokeSession {
+    /// Create a new incremental brush session for the given preset.
+    pub fn new(preset: BrushPreset) -> Self {
+        Self {
+            preset,
+            tip_cache: HashMap::new(),
+            pending: 0.0,
+            last_smoothed: None,
+            last_stamp: None,
+        }
+    }
+
+    /// Apply streamed points into the target raster buffer.
+    ///
+    /// Returns `true` when the session touched the buffer and `false` when the
+    /// provided points or brush settings produced no visible output.
+    pub fn apply_points(&mut self, buffer: &mut ImageBuffer, points: &[StrokePoint]) -> bool {
+        if buffer.width == 0 || buffer.height == 0 || points.is_empty() {
+            return false;
+        }
+
+        let size = self.preset.size.max(0.0);
+        if size <= 0.0 {
+            return false;
+        }
+
+        let opacity = clamp01(self.preset.opacity);
+        let flow = clamp01(self.preset.flow);
+        if opacity <= 0.0 || flow <= 0.0 {
+            return false;
+        }
+
+        let smoothing = clamp01(self.preset.smoothing);
+        let alpha = 1.0 - smoothing.clamp(0.0, 0.95);
+        let spacing_factor = self.preset.spacing.max(0.01);
+        let mut any = false;
+
+        for raw_point in points.iter().copied() {
+            let point = StrokePoint {
+                pressure: raw_point.pressure.clamp(0.0, 1.0),
+                ..raw_point
+            };
+
+            let Some(previous) = self.last_smoothed else {
+                any |= stamp_dab(buffer, &self.preset, point, &mut self.tip_cache);
+                self.last_smoothed = Some(point);
+                self.last_stamp = Some(point);
+                continue;
+            };
+
+            let smoothed = if smoothing <= 0.0 {
+                point
+            } else {
+                StrokePoint {
+                    x: previous.x + (point.x - previous.x) * alpha,
+                    y: previous.y + (point.y - previous.y) * alpha,
+                    pressure: (previous.pressure + (point.pressure - previous.pressure) * alpha)
+                        .clamp(0.0, 1.0),
+                }
+            };
+
+            any |= self.apply_segment(buffer, previous, smoothed, spacing_factor);
+            any |= self.stamp_tail(buffer, smoothed);
+            self.last_smoothed = Some(smoothed);
+        }
+
+        any
+    }
+
+    fn apply_segment(
+        &mut self,
+        buffer: &mut ImageBuffer,
+        from: StrokePoint,
+        to: StrokePoint,
+        spacing_factor: f32,
+    ) -> bool {
+        let dx = to.x - from.x;
+        let dy = to.y - from.y;
+        let length = (dx * dx + dy * dy).sqrt();
+        if length <= f32::EPSILON {
+            return false;
+        }
+
+        let average_pressure = ((from.pressure + to.pressure) * 0.5).clamp(0.0, 1.0);
+        let average_size = effective_size(
+            self.preset.size.max(1.0),
+            self.preset.pressure_size,
+            average_pressure,
+        );
+        let spacing_px = (average_size * spacing_factor).max(1.0);
+        let mut distance = if self.pending <= 0.0 {
+            spacing_px
+        } else {
+            self.pending
+        };
+        let mut any = false;
+
+        while distance <= length {
+            let t = distance / length;
+            let dab = StrokePoint {
+                x: lerp(from.x, to.x, t),
+                y: lerp(from.y, to.y, t),
+                pressure: lerp(from.pressure, to.pressure, t).clamp(0.0, 1.0),
+            };
+            any |= stamp_dab(buffer, &self.preset, dab, &mut self.tip_cache);
+            self.last_stamp = Some(dab);
+            distance += spacing_px;
+        }
+
+        self.pending = distance - length;
+        any
+    }
+
+    fn stamp_tail(&mut self, buffer: &mut ImageBuffer, point: StrokePoint) -> bool {
+        let should_stamp = self.last_stamp.is_none_or(|last| {
+            let dx = point.x - last.x;
+            let dy = point.y - last.y;
+            (dx * dx + dy * dy).sqrt() >= 0.5
+        });
+
+        if !should_stamp {
+            return false;
+        }
+
+        let stamped = stamp_dab(buffer, &self.preset, point, &mut self.tip_cache);
+        if stamped {
+            self.last_stamp = Some(point);
+        }
+        stamped
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DabMask {
     diameter: u32,
@@ -100,112 +246,8 @@ pub fn paint_stroke(
     preset: &BrushPreset,
     points: &[StrokePoint],
 ) -> bool {
-    if buffer.width == 0 || buffer.height == 0 || points.is_empty() {
-        return false;
-    }
-
-    let size = preset.size.max(0.0);
-    if size <= 0.0 {
-        return false;
-    }
-
-    let opacity = clamp01(preset.opacity);
-    let flow = clamp01(preset.flow);
-    if opacity <= 0.0 || flow <= 0.0 {
-        return false;
-    }
-
-    let smoothed_points = smooth_points(points, clamp01(preset.smoothing));
-    if smoothed_points.is_empty() {
-        return false;
-    }
-
-    let mut tip_cache = HashMap::<(u32, u8), DabMask>::new();
-    let spacing_factor = preset.spacing.max(0.01);
-    let mut any = false;
-    let mut pending = 0.0f32;
-    let mut last_point = smoothed_points[0];
-    let mut last_stamp = smoothed_points[0];
-
-    any |= stamp_dab(buffer, preset, last_stamp, &mut tip_cache);
-
-    for point in smoothed_points.iter().copied().skip(1) {
-        let dx = point.x - last_point.x;
-        let dy = point.y - last_point.y;
-        let length = (dx * dx + dy * dy).sqrt();
-
-        if length <= f32::EPSILON {
-            last_point = point;
-            continue;
-        }
-
-        let average_pressure = ((last_point.pressure + point.pressure) * 0.5).clamp(0.0, 1.0);
-        let average_size = effective_size(size, preset.pressure_size, average_pressure);
-        let spacing_px = (average_size * spacing_factor).max(1.0);
-        let mut distance = if pending <= 0.0 { spacing_px } else { pending };
-
-        while distance <= length {
-            let t = distance / length;
-            let dab = StrokePoint {
-                x: lerp(last_point.x, point.x, t),
-                y: lerp(last_point.y, point.y, t),
-                pressure: lerp(last_point.pressure, point.pressure, t).clamp(0.0, 1.0),
-            };
-            any |= stamp_dab(buffer, preset, dab, &mut tip_cache);
-            last_stamp = dab;
-            distance += spacing_px;
-        }
-
-        pending = distance - length;
-        last_point = point;
-    }
-
-    let tail = smoothed_points[smoothed_points.len() - 1];
-    let tail_dx = tail.x - last_stamp.x;
-    let tail_dy = tail.y - last_stamp.y;
-    if !any || (tail_dx * tail_dx + tail_dy * tail_dy).sqrt() >= 0.5 {
-        any |= stamp_dab(buffer, preset, tail, &mut tip_cache);
-    }
-
-    any
-}
-
-fn smooth_points(points: &[StrokePoint], smoothing: f32) -> Vec<StrokePoint> {
-    if points.is_empty() {
-        return Vec::new();
-    }
-
-    if smoothing <= 0.0 {
-        return points
-            .iter()
-            .copied()
-            .map(|point| StrokePoint {
-                pressure: point.pressure.clamp(0.0, 1.0),
-                ..point
-            })
-            .collect();
-    }
-
-    let alpha = 1.0 - smoothing.clamp(0.0, 0.95);
-    let mut smoothed = Vec::with_capacity(points.len());
-    let mut previous = StrokePoint {
-        pressure: points[0].pressure.clamp(0.0, 1.0),
-        ..points[0]
-    };
-    smoothed.push(previous);
-
-    for point in points.iter().copied().skip(1) {
-        previous = StrokePoint {
-            x: previous.x + (point.x - previous.x) * alpha,
-            y: previous.y + (point.y - previous.y) * alpha,
-            pressure: (previous.pressure
-                + (point.pressure.clamp(0.0, 1.0) - previous.pressure) * alpha)
-                .clamp(0.0, 1.0),
-        };
-        smoothed.push(previous);
-    }
-
-    smoothed
+    let mut session = BrushStrokeSession::new(*preset);
+    session.apply_points(buffer, points)
 }
 
 fn stamp_dab(
@@ -505,5 +547,59 @@ mod tests {
             .filter(|&x| (0..buffer.height).any(|y| buffer.get_pixel(x, y).a > 0))
             .count();
         assert!(painted_columns > 10);
+    }
+
+    #[test]
+    fn streaming_session_matches_batched_stroke() {
+        let mut batched = ImageBuffer::new_transparent(96, 96);
+        let mut streamed = ImageBuffer::new_transparent(96, 96);
+        let preset = BrushPreset {
+            color: Rgba::new(35, 79, 221, 255),
+            flow: 0.75,
+            hardness: 0.4,
+            opacity: 0.9,
+            pressure_opacity: 0.5,
+            pressure_size: 1.0,
+            size: 14.0,
+            smoothing: 0.3,
+            spacing: 0.28,
+            ..BrushPreset::default()
+        };
+        let points = [
+            StrokePoint::new(8.0, 10.0, 0.3),
+            StrokePoint::new(18.0, 16.0, 0.5),
+            StrokePoint::new(30.0, 28.0, 0.8),
+            StrokePoint::new(42.0, 24.0, 1.0),
+            StrokePoint::new(60.0, 40.0, 0.7),
+            StrokePoint::new(82.0, 68.0, 0.9),
+        ];
+
+        assert!(paint_stroke(&mut batched, &preset, &points));
+
+        let mut session = BrushStrokeSession::new(preset);
+        assert!(session.apply_points(&mut streamed, &points[..2]));
+        assert!(session.apply_points(&mut streamed, &points[2..4]));
+        assert!(session.apply_points(&mut streamed, &points[4..]));
+
+        assert_eq!(streamed.data, batched.data);
+    }
+
+    #[test]
+    fn streaming_session_handles_sparse_short_pushes() {
+        let mut buffer = ImageBuffer::new_transparent(32, 32);
+        let preset = BrushPreset {
+            color: Rgba::new(255, 255, 255, 255),
+            size: 6.0,
+            spacing: 0.45,
+            smoothing: 0.2,
+            ..BrushPreset::default()
+        };
+        let mut session = BrushStrokeSession::new(preset);
+
+        assert!(session.apply_points(&mut buffer, &[StrokePoint::new(4.0, 4.0, 0.4)]));
+        assert!(session.apply_points(&mut buffer, &[StrokePoint::new(6.0, 5.0, 0.5)]));
+        assert!(session.apply_points(&mut buffer, &[StrokePoint::new(9.0, 7.0, 0.8)]));
+
+        assert!(buffer.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 }

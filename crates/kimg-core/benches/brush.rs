@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
-use kimg_core::brush::{paint_stroke, BrushPreset, BrushTool, StrokePoint};
+use kimg_core::brush::{paint_stroke, BrushPreset, BrushStrokeSession, BrushTool, StrokePoint};
 use kimg_core::buffer::ImageBuffer;
 use kimg_core::pixel::Rgba;
 
@@ -129,6 +129,39 @@ fn brush_benches(c: &mut Criterion) {
                     black_box(&preset),
                     black_box(&points),
                 );
+                black_box(buffer);
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("streamed_long_pressure_stroke/1024", |b| {
+        let points = pressure_wave(160, 980.0, 1024.0);
+        let chunks = [
+            &points[..48],
+            &points[48..96],
+            &points[96..128],
+            &points[128..],
+        ];
+        let preset = BrushPreset {
+            color: Rgba::new(0, 0, 0, 255),
+            flow: 0.8,
+            hardness: 0.55,
+            pressure_opacity: 0.45,
+            pressure_size: 1.0,
+            size: 18.0,
+            smoothing: 0.15,
+            spacing: 0.3,
+            ..BrushPreset::default()
+        };
+
+        b.iter_batched(
+            || ImageBuffer::new_transparent(1024, 1024),
+            |mut buffer| {
+                let mut session = BrushStrokeSession::new(preset);
+                for chunk in &chunks {
+                    session.apply_points(black_box(&mut buffer), black_box(chunk));
+                }
                 black_box(buffer);
             },
             BatchSize::SmallInput,

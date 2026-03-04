@@ -200,6 +200,19 @@ export interface BrushStrokeOptions {
   pressureOpacity?: number;
 }
 
+export interface BrushSessionOptions {
+  tool?: BrushTool;
+  color?: ByteInput;
+  size: number;
+  opacity?: number;
+  flow?: number;
+  hardness?: number;
+  spacing?: number;
+  smoothing?: number;
+  pressureSize?: number;
+  pressureOpacity?: number;
+}
+
 export interface Position {
   x: number;
   y: number;
@@ -1124,50 +1137,57 @@ function normalizeBucketFillOptions(options) {
 
 function normalizeBrushStrokeOptions(options) {
   const object = requireObject(options, "paintStrokeLayer");
-  if (!Array.isArray(object.points) || object.points.length === 0) {
-    throw new TypeError("paintStrokeLayer.points must be a non-empty array.");
-  }
+  const preset = normalizeBrushSessionOptions(object, "paintStrokeLayer");
+  return {
+    ...preset,
+    points: normalizeBrushPoints(object.points, "paintStrokeLayer.points"),
+  };
+}
 
-  const tool =
-    object.tool === undefined ? "paint" : normalizeString(object.tool, "paintStrokeLayer.tool");
+function normalizeBrushSessionOptions(options, what) {
+  const object = requireObject(options, what);
+  const tool = object.tool === undefined ? "paint" : normalizeString(object.tool, `${what}.tool`);
   if (tool !== "paint" && tool !== "erase") {
-    throw new TypeError('paintStrokeLayer.tool must be "paint" or "erase".');
-  }
-
-  const points = new Float32Array(object.points.length * 3);
-  for (let index = 0; index < object.points.length; index += 1) {
-    const point = requireObject(object.points[index], `paintStrokeLayer.points[${index}]`);
-    points[index * 3] = normalizeFiniteNumber(point.x, `paintStrokeLayer.points[${index}].x`);
-    points[index * 3 + 1] = normalizeFiniteNumber(point.y, `paintStrokeLayer.points[${index}].y`);
-    points[index * 3 + 2] = normalizeUnitInterval(
-      point.pressure ?? 1,
-      `paintStrokeLayer.points[${index}].pressure`,
-    );
+    throw new TypeError(`${what}.tool must be "paint" or "erase".`);
   }
 
   let color: Uint8Array<ArrayBufferLike> = new Uint8Array([0, 0, 0, 255]);
   if (tool === "paint") {
-    color = normalizeRgbaColor(object.color ?? [0, 0, 0, 255], "paintStrokeLayer.color");
+    color = normalizeRgbaColor(object.color ?? [0, 0, 0, 255], `${what}.color`);
   } else if (object.color !== undefined) {
-    color = normalizeRgbaColor(object.color, "paintStrokeLayer.color");
+    color = normalizeRgbaColor(object.color, `${what}.color`);
   }
 
   return {
     color,
-    flow: normalizeUnitInterval(object.flow ?? 1, "paintStrokeLayer.flow"),
-    hardness: normalizeUnitInterval(object.hardness ?? 1, "paintStrokeLayer.hardness"),
-    opacity: normalizeUnitInterval(object.opacity ?? 1, "paintStrokeLayer.opacity"),
-    points,
-    pressureOpacity: normalizeUnitInterval(
-      object.pressureOpacity ?? 0,
-      "paintStrokeLayer.pressureOpacity",
-    ),
-    pressureSize: normalizeUnitInterval(object.pressureSize ?? 1, "paintStrokeLayer.pressureSize"),
-    size: normalizePositiveNumber(object.size, "paintStrokeLayer.size"),
-    smoothing: normalizeUnitInterval(object.smoothing ?? 0, "paintStrokeLayer.smoothing"),
-    spacing: normalizePositiveNumber(object.spacing ?? 0.25, "paintStrokeLayer.spacing"),
+    flow: normalizeUnitInterval(object.flow ?? 1, `${what}.flow`),
+    hardness: normalizeUnitInterval(object.hardness ?? 1, `${what}.hardness`),
+    opacity: normalizeUnitInterval(object.opacity ?? 1, `${what}.opacity`),
+    pressureOpacity: normalizeUnitInterval(object.pressureOpacity ?? 0, `${what}.pressureOpacity`),
+    pressureSize: normalizeUnitInterval(object.pressureSize ?? 1, `${what}.pressureSize`),
+    size: normalizePositiveNumber(object.size, `${what}.size`),
+    smoothing: normalizeUnitInterval(object.smoothing ?? 0, `${what}.smoothing`),
+    spacing: normalizePositiveNumber(object.spacing ?? 0.25, `${what}.spacing`),
     tool,
   };
+}
+
+function normalizeBrushPoints(pointsInput, fieldName) {
+  if (!Array.isArray(pointsInput) || pointsInput.length === 0) {
+    throw new TypeError(`${fieldName} must be a non-empty array.`);
+  }
+
+  const points = new Float32Array(pointsInput.length * 3);
+  for (let index = 0; index < pointsInput.length; index += 1) {
+    const point = requireObject(pointsInput[index], `${fieldName}[${index}]`);
+    points[index * 3] = normalizeFiniteNumber(point.x, `${fieldName}[${index}].x`);
+    points[index * 3 + 1] = normalizeFiniteNumber(point.y, `${fieldName}[${index}].y`);
+    points[index * 3 + 2] = normalizeUnitInterval(
+      point.pressure ?? 1,
+      `${fieldName}[${index}].pressure`,
+    );
+  }
+  return points;
 }
 
 function normalizeListLayersOptions(options) {
@@ -2281,6 +2301,41 @@ export class Composition {
       stroke.pressureOpacity,
       stroke.tool === "erase",
     );
+  }
+
+  beginBrushStroke(id, options) {
+    const stroke = normalizeBrushSessionOptions(options, "beginBrushStroke");
+    return this._inner.begin_brush_stroke(
+      normalizeLayerId(id),
+      stroke.color[0],
+      stroke.color[1],
+      stroke.color[2],
+      stroke.color[3],
+      stroke.size,
+      stroke.opacity,
+      stroke.flow,
+      stroke.hardness,
+      stroke.spacing,
+      stroke.smoothing,
+      stroke.pressureSize,
+      stroke.pressureOpacity,
+      stroke.tool === "erase",
+    );
+  }
+
+  pushBrushPoints(strokeId, points) {
+    return this._inner.push_brush_points(
+      normalizeLayerId(strokeId, "strokeId"),
+      normalizeBrushPoints(points, "pushBrushPoints.points"),
+    );
+  }
+
+  endBrushStroke(strokeId) {
+    return this._inner.end_brush_stroke(normalizeLayerId(strokeId, "strokeId"));
+  }
+
+  cancelBrushStroke(strokeId) {
+    return this._inner.cancel_brush_stroke(normalizeLayerId(strokeId, "strokeId"));
   }
 
   clearLayerMask(id) {

@@ -848,37 +848,75 @@ function createTests() {
           }));
 
           verify.ok(
-            composition.paintStrokeLayer(paintId, {
-              color: [201, 73, 45, 255],
-              hardness: 0.95,
-              points: hardStroke,
-              size: 10,
-              spacing: 0.4,
-            }),
-            "hard brush stroke should paint into the raster layer",
+            (() => {
+              const strokeId = composition.beginBrushStroke(paintId, {
+                color: [201, 73, 45, 255],
+                hardness: 0.95,
+                size: 10,
+                spacing: 0.4,
+              });
+              const midpoint = Math.ceil(hardStroke.length / 2);
+              return (
+                strokeId > 0 &&
+                composition.pushBrushPoints(strokeId, hardStroke.slice(0, midpoint)) &&
+                composition.pushBrushPoints(strokeId, hardStroke.slice(midpoint)) &&
+                composition.endBrushStroke(strokeId)
+              );
+            })(),
+            "streamed hard brush stroke should paint into the raster layer",
           );
           verify.ok(
-            composition.paintStrokeLayer(paintId, {
-              color: [35, 79, 221, 255],
-              flow: 0.65,
-              hardness: 0.25,
-              points: softStroke,
-              pressureOpacity: 0.35,
-              pressureSize: 1,
-              size: 16,
-              smoothing: 0.2,
-              spacing: 0.35,
-            }),
-            "soft pressure stroke should paint into the raster layer",
+            (() => {
+              const strokeId = composition.beginBrushStroke(paintId, {
+                color: [35, 79, 221, 255],
+                flow: 0.65,
+                hardness: 0.25,
+                pressureOpacity: 0.35,
+                pressureSize: 1,
+                size: 16,
+                smoothing: 0.2,
+                spacing: 0.35,
+              });
+              const oneThird = Math.ceil(softStroke.length / 3);
+              return (
+                strokeId > 0 &&
+                composition.pushBrushPoints(strokeId, softStroke.slice(0, oneThird)) &&
+                composition.pushBrushPoints(strokeId, softStroke.slice(oneThird, oneThird * 2)) &&
+                composition.pushBrushPoints(strokeId, softStroke.slice(oneThird * 2)) &&
+                composition.endBrushStroke(strokeId)
+              );
+            })(),
+            "streamed soft pressure stroke should paint into the raster layer",
           );
           verify.ok(
-            composition.paintStrokeLayer(paintId, {
-              points: eraseStroke,
-              size: 12,
-              spacing: 0.3,
-              tool: "erase",
-            }),
-            "eraser stroke should clear alpha from the raster layer",
+            (() => {
+              const strokeId = composition.beginBrushStroke(paintId, {
+                size: 12,
+                spacing: 0.3,
+                tool: "erase",
+              });
+              return (
+                strokeId > 0 &&
+                composition.pushBrushPoints(strokeId, eraseStroke.slice(0, 4)) &&
+                composition.pushBrushPoints(strokeId, eraseStroke.slice(4)) &&
+                composition.endBrushStroke(strokeId)
+              );
+            })(),
+            "streamed eraser stroke should clear alpha from the raster layer",
+          );
+          const beforeCancel = Array.from(composition.getLayerRgba(paintId));
+          const cancelStrokeId = composition.beginBrushStroke(paintId, {
+            color: [201, 73, 45, 255],
+            size: 8,
+          });
+          verify.ok(
+            cancelStrokeId > 0 &&
+              composition.pushBrushPoints(cancelStrokeId, [
+                { pressure: 1, x: 28, y: 88 },
+                { pressure: 1, x: 88, y: 94 },
+              ]) &&
+              composition.cancelBrushStroke(cancelStrokeId),
+            "canceled streamed stroke should restore the original raster",
           );
 
           const paintLayer = composition.getLayer(paintId);
@@ -892,11 +930,17 @@ function createTests() {
           verify.equal(paintLayer?.kind, "raster", "brush strokes should target a raster layer");
           verify.ok(alphaSamples.some((value) => value > 0), "brush layer should contain painted alpha");
           verify.ok(alphaSamples.some((value) => value < 255), "eraser or soft brush should leave partial alpha");
+          verify.equal(
+            Array.from(paintRgba).join(","),
+            beforeCancel.join(","),
+            "canceled stroke should not leave any pixels behind",
+          );
 
           return {
             assertions: verify.count,
             metrics: [
-              ["Strokes", 3],
+              ["Streamed strokes", 3],
+              ["Canceled sessions", 1],
               ["Hard / soft / erase", "10px / 16px / 12px"],
               ["Brush target", paintLayer?.kind ?? "missing"],
             ],
