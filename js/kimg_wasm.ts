@@ -136,9 +136,11 @@ const loadedBindingsModules = new Map<VariantModuleKey, GeneratedBindingsModule>
 const loadingBindingsModules = new Map<VariantModuleKey, Promise<GeneratedBindingsModule>>();
 
 function isNodeRuntimeLike(): boolean {
-  const maybeProcess = (globalThis as typeof globalThis & {
-    process?: { versions?: { node?: string } };
-  }).process;
+  const maybeProcess = (
+    globalThis as typeof globalThis & {
+      process?: { versions?: { node?: string } };
+    }
+  ).process;
   return (
     typeof maybeProcess === "object" &&
     maybeProcess !== null &&

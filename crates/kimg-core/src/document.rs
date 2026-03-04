@@ -1729,7 +1729,10 @@ mod tests {
 
         let before = doc.render().data;
         assert!(doc.rasterize_svg_layer(id));
-        assert!(matches!(doc.find_layer(id).unwrap().kind, LayerKind::Raster(_)));
+        assert!(matches!(
+            doc.find_layer(id).unwrap().kind,
+            LayerKind::Raster(_)
+        ));
         let after = doc.render().data;
         assert_eq!(before, after);
     }

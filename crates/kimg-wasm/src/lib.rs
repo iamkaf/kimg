@@ -35,8 +35,8 @@ use kimg_core::layer::{
 use kimg_core::pixel::Rgba;
 use kimg_core::serialize;
 use kimg_core::shape::render_shape;
-use kimg_core::svg::{rasterize_svg, validate_svg};
 use kimg_core::sprite;
+use kimg_core::svg::{rasterize_svg, validate_svg};
 use kimg_core::text::{measure_text, render_text};
 use kimg_core::transform;
 
@@ -1143,7 +1143,9 @@ impl Document {
                         LayerKind::Raster(raster) => Some(raster.buffer.clone()),
                         LayerKind::Shape(shape) => Some(render_shape(shape)),
                         LayerKind::Text(text) => Some(render_text(text)),
-                        LayerKind::Svg(svg) => rasterize_svg(&svg.source, svg.width, svg.height).ok(),
+                        LayerKind::Svg(svg) => {
+                            rasterize_svg(&svg.source, svg.width, svg.height).ok()
+                        }
                         _ => None,
                     })
             })

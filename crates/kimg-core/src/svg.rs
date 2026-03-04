@@ -73,7 +73,9 @@ pub fn validate_svg(data: &[u8]) -> Result<(), SvgError> {
 #[cfg(not(feature = "svg-backend"))]
 /// Reject SVG usage when the lightweight build excludes the SVG backend.
 pub fn validate_svg(_data: &[u8]) -> Result<(), SvgError> {
-    Err(SvgError::Unsupported("svg backend is not enabled in this build"))
+    Err(SvgError::Unsupported(
+        "svg backend is not enabled in this build",
+    ))
 }
 
 #[cfg(feature = "svg-backend")]
@@ -133,7 +135,9 @@ pub fn rasterize_svg(data: &[u8], width: u32, height: u32) -> Result<ImageBuffer
 #[cfg(not(feature = "svg-backend"))]
 /// Report that SVG rasterization is unavailable in the lightweight build.
 pub fn rasterize_svg(_data: &[u8], _width: u32, _height: u32) -> Result<ImageBuffer, SvgError> {
-    Err(SvgError::Unsupported("svg backend is not enabled in this build"))
+    Err(SvgError::Unsupported(
+        "svg backend is not enabled in this build",
+    ))
 }
 
 #[cfg(all(test, feature = "svg-backend"))]
@@ -167,6 +171,9 @@ mod tests {
             </svg>
         "#;
         let error = validate_svg(svg).unwrap_err();
-        assert!(matches!(error, SvgError::Unsupported("external image references")));
+        assert!(matches!(
+            error,
+            SvgError::Unsupported("external image references")
+        ));
     }
 }

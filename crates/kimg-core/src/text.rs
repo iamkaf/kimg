@@ -16,12 +16,12 @@ use cosmic_text::{
     Align as CosmicAlign, Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics,
     Shaping, Style as CosmicStyle, SwashCache, Weight as CosmicWeight, Wrap as CosmicWrap,
 };
+use font8x8::{UnicodeFonts, MISC_FONTS};
+use font8x8::{BASIC_FONTS, BLOCK_FONTS, BOX_FONTS, GREEK_FONTS, HIRAGANA_FONTS, LATIN_FONTS};
 #[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 use fontdb::{Database, Source};
 #[cfg(feature = "cosmic-text-backend")]
 use fontdb::{Query, Stretch as FontStretch, Style as FontDbStyle, Weight as FontDbWeight};
-use font8x8::{UnicodeFonts, MISC_FONTS};
-use font8x8::{BASIC_FONTS, BLOCK_FONTS, BOX_FONTS, GREEK_FONTS, HIRAGANA_FONTS, LATIN_FONTS};
 #[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
