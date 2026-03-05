@@ -17,12 +17,19 @@
     "test:js": "./scripts/build.sh && vitest run",
     "test:pack": "./scripts/pack-smoke.sh",
     "test:js:watch": "./scripts/build.sh && vitest",
-    "prepack": "./scripts/build.sh"
+    "prepack": "./scripts/build.sh",
+    "demo:dev": "vite --config demo/vite.config.js",
+    "demo:build": "vite build --config demo/vite.config.js"
   },
   "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "@typescript/native-preview": "^7.0.0-dev.20260302.1",
     "oxfmt": "^0.36.0",
     "playwright-core": "^1.58.2",
+    "svelte": "^5.53.7",
+    "vite": "^7.3.1",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.5.0",
     "vitest": "^3.2.4"
   },
   "exports": {
