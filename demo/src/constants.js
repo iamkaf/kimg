@@ -53,6 +53,12 @@ export const SECTION_INFO = {
     description:
       "Retained SVG layers, serialization, PNG/JPEG/WebP import-export, GIF frame import, sprite helpers, and utility outputs that verify package-level APIs beyond rendering.",
   },
+  volume: {
+    chip: "Volume",
+    title: "Verification Through Volume",
+    description:
+      "High-cardinality matrices over real assets and feature combinations. The goal is visual bug discovery through breadth, not a handful of handpicked examples.",
+  },
   experimental: {
     chip: "Experimental",
     title: "Experimental Surface",
@@ -71,5 +77,19 @@ export const SECTION_ORDER = [
   "brushStrokes",
   "colorUtils",
   "io",
+  "volume",
   "experimental",
+];
+
+export const VOLUME_RASTER_ASSETS = [
+  { key: "teapot", label: "Teapot PNG", path: "./assets/teapot.png", maxEdge: 164 },
+  { key: "flower", label: "Flower PNG", path: "./assets/flower.png", maxEdge: 164 },
+  { key: "croissantPng", label: "Croissant PNG", path: "./assets/croissant.png", maxEdge: 164 },
+  { key: "gardenPhoto", label: "Garden JPG", path: "./assets/garden-photo.jpg", maxEdge: 164 },
+  { key: "mugPhoto", label: "Mug JPG", path: "./assets/mug-photo.jpg", maxEdge: 164 },
+  { key: "cactusPhoto", label: "Cactus JPG", path: "./assets/cactus-photo.jpg", maxEdge: 164 },
+];
+
+export const VOLUME_SVG_ASSETS = [
+  { key: "croissantSvg", label: "Croissant SVG", path: "./assets/croissant.svg" },
 ];

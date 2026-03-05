@@ -44,33 +44,78 @@ async function buildLayerSurgeryScene(context, mutate) {
 }
 
 async function buildClipScene(context) {
-  const composition = await Composition.create({ width: 236, height: 176 });
+  const fixture = context.volumeFixtures?.flower ?? context.fixture;
+  const composition = await Composition.create({ width: 284, height: 188 });
   composition.addSolidColorLayer({ color: [247, 241, 232, 255], name: "paper" });
-  composition.addShapeLayer({ fill: [255, 255, 255, 255], height: 134, name: "clip-shape", type: "ellipse", width: 144, x: 46, y: 18 });
-  const patternId = composition.addImageLayer({
-    height: context.clipPattern.height, name: "pattern",
-    rgba: context.clipPattern.rgba, width: context.clipPattern.width, x: 34, y: 18,
-  });
-  composition.setLayerClipToBelow(patternId, true);
+  const imageX = Math.floor((composition.width - fixture.width) / 2);
+  const imageY = Math.floor((composition.height - fixture.height) / 2);
+  const clipWidth = Math.max(40, Math.round(fixture.width * 0.22));
+  const clipHeight = Math.max(96, Math.round(fixture.height * 0.72));
+  const clipX = imageX + Math.floor((fixture.width - clipWidth) / 2);
+  const clipY = imageY + Math.floor(fixture.height * 0.14);
+
   composition.addShapeLayer({
-    fill: [255, 255, 255, 0], height: 134, name: "outline",
-    stroke: { color: [24, 24, 24, 255], width: 4 }, type: "ellipse", width: 144, x: 46, y: 18,
+    fill: [255, 255, 255, 255],
+    height: clipHeight,
+    name: "clip-shape",
+    radius: 24,
+    type: "rectangle",
+    width: clipWidth,
+    x: clipX,
+    y: clipY,
   });
+
+  const subjectId = composition.addImageLayer({
+    height: fixture.height,
+    name: "subject",
+    rgba: fixture.rgba,
+    width: fixture.width,
+    x: imageX,
+    y: imageY,
+  });
+  composition.addShapeLayer({
+    fill: [255, 255, 255, 0],
+    height: clipHeight,
+    name: "outline",
+    radius: 24,
+    stroke: { color: [24, 24, 24, 255], width: 4 },
+    type: "rectangle",
+    width: clipWidth,
+    x: clipX,
+    y: clipY,
+  });
+  const unclipped = composition.renderRgba();
+  composition.setLayerClipToBelow(subjectId, true);
+  const clipped = composition.renderRgba();
   return {
     dispose() { composition.free(); },
-    height: composition.height, layerCount: composition.layerCount(),
-    rgba: composition.renderRgba(), width: composition.width,
+    clipped,
+    height: composition.height,
+    layerCount: composition.layerCount(),
+    unclipped,
+    width: composition.width,
   };
 }
 
 async function buildMaskStates(context) {
-  const composition = await Composition.create({ width: 236, height: 176 });
+  const fixture = context.volumeFixtures?.flower ?? context.fixture;
+  const composition = await Composition.create({ width: 284, height: 188 });
   composition.addSolidColorLayer({ color: [247, 241, 232, 255], name: "paper" });
+  const imageX = Math.floor((composition.width - fixture.width) / 2);
+  const imageY = Math.floor((composition.height - fixture.height) / 2);
   const imageId = composition.addImageLayer({
-    height: context.clipPattern.height, name: "pattern",
-    rgba: context.clipPattern.rgba, width: context.clipPattern.width, x: 34, y: 18,
+    height: fixture.height,
+    name: "subject",
+    rgba: fixture.rgba,
+    width: fixture.width,
+    x: imageX,
+    y: imageY,
   });
-  const mask = createMaskFixture(context.clipPattern.width, context.clipPattern.height);
+  const baseline = composition.renderRgba();
+  const mask = createReadableMaskFixture(fixture.width, fixture.height);
+  const maskMatte = maskToMatteRgba(mask.rgba, mask.width, mask.height);
+  const revealedOverlay = maskOverlayRgba(fixture.rgba, mask.rgba, mask.width, mask.height, false);
+  const invertedOverlay = maskOverlayRgba(fixture.rgba, mask.rgba, mask.width, mask.height, true);
   composition.setLayerMask(imageId, { height: mask.height, rgba: mask.rgba, width: mask.width });
 
   const masked = { hasMask: composition.getLayer(imageId)?.hasMask, height: composition.height, rgba: composition.renderRgba(), width: composition.width };
@@ -80,7 +125,78 @@ async function buildMaskStates(context) {
   const cleared = { hasMask: composition.getLayer(imageId)?.hasMask, height: composition.height, rgba: composition.renderRgba(), width: composition.width };
 
   composition.free();
-  return { cleared, inverted, masked };
+  return {
+    baseline,
+    cleared,
+    inverted,
+    invertedOverlay,
+    maskMatte,
+    maskWidth: mask.width,
+    maskHeight: mask.height,
+    masked,
+    revealedOverlay,
+  };
+}
+
+function createReadableMaskFixture(width, height) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "rgba(0,0,0,1)";
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(255,255,255,1)";
+  ctx.beginPath();
+  ctx.ellipse(width * 0.5, height * 0.37, width * 0.26, height * 0.24, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(width * 0.1, height * 0.58, width * 0.8, height * 0.24);
+  ctx.fillStyle = "rgba(0,0,0,1)";
+  ctx.fillRect(width * 0.44, height * 0.52, width * 0.12, height * 0.36);
+  const imageData = ctx.getImageData(0, 0, width, height);
+  return { width, height, rgba: new Uint8Array(imageData.data) };
+}
+
+function maskToMatteRgba(maskRgba, width, height) {
+  const output = new Uint8Array(width * height * 4);
+  for (let i = 0; i < output.length; i += 4) {
+    const value = maskRgba[i];
+    output[i] = value;
+    output[i + 1] = value;
+    output[i + 2] = value;
+    output[i + 3] = 255;
+  }
+  return output;
+}
+
+function maskOverlayRgba(sourceRgba, maskRgba, width, height, inverted) {
+  const output = new Uint8Array(sourceRgba);
+  for (let i = 0; i < output.length; i += 4) {
+    if (output[i + 3] === 0) continue;
+    const onMask = maskRgba[i] > 127;
+    const revealed = inverted ? !onMask : onMask;
+    const tint = revealed ? [61, 214, 140] : [240, 82, 82];
+    const strength = revealed ? 0.32 : 0.45;
+    output[i] = Math.round(output[i] * (1 - strength) + tint[0] * strength);
+    output[i + 1] = Math.round(output[i + 1] * (1 - strength) + tint[1] * strength);
+    output[i + 2] = Math.round(output[i + 2] * (1 - strength) + tint[2] * strength);
+  }
+
+  const edgeColor = [20, 20, 20];
+  for (let y = 0; y < height - 1; y++) {
+    for (let x = 0; x < width - 1; x++) {
+      const idx = (y * width + x) * 4;
+      const current = maskRgba[idx] > 127;
+      const right = maskRgba[idx + 4] > 127;
+      const down = maskRgba[idx + width * 4] > 127;
+      if (current !== right || current !== down) {
+        output[idx] = edgeColor[0];
+        output[idx + 1] = edgeColor[1];
+        output[idx + 2] = edgeColor[2];
+        output[idx + 3] = 255;
+      }
+    }
+  }
+  return output;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -206,7 +322,7 @@ export const layerTests = [
   },
   {
     expectation:
-      "Clip-to-below should keep the teapot inside the ellipse only. Masked, inverted, and cleared states should visibly diverge.",
+      "Unclipped vs clipToBelow should clearly differ. Mask matte and tinted reveal maps should explain exactly which flower regions survive normal vs inverted masking.",
     featured: true,
     fullSpan: true,
     previewMin: 270,
@@ -218,18 +334,24 @@ export const layerTests = [
       const maskStates = await buildMaskStates(context);
 
       try {
+        verify.ok(!rgbaEquals(clip.unclipped, clip.clipped), "clipToBelow should alter the subject compared with unclipped render");
         verify.equal(maskStates.cleared.hasMask, false, "clearLayerMask should remove the mask metadata");
         verify.equal(maskStates.masked.hasMask, true, "masked state should report a mask");
+        verify.ok(!rgbaEquals(maskStates.baseline, maskStates.masked.rgba), "masked render should differ from baseline render");
         verify.ok(!rgbaEquals(maskStates.masked.rgba, maskStates.cleared.rgba), "masked render should differ from the cleared render");
 
         return {
           assertions: verify.count,
-          metrics: [["clip layers", clip.layerCount], ["masked hasMask", String(maskStates.masked.hasMask)], ["inverted mask", String(maskStates.inverted.maskInverted)]],
+          metrics: [["fixture", context.volumeFixtures?.flower ? "flower.png" : "teapot.png"], ["clip layers", clip.layerCount], ["masked hasMask", String(maskStates.masked.hasMask)], ["inverted mask", String(maskStates.inverted.maskInverted)]],
           views: [
-            rgbaView("clipToBelow", clip.rgba, clip.width, clip.height, { maxDisplay: 320 }),
-            rgbaView("Mask", maskStates.masked.rgba, maskStates.masked.width, maskStates.masked.height, { maxDisplay: 320 }),
-            rgbaView("Mask inverted", maskStates.inverted.rgba, maskStates.inverted.width, maskStates.inverted.height, { maxDisplay: 320 }),
-            rgbaView("Mask cleared", maskStates.cleared.rgba, maskStates.cleared.width, maskStates.cleared.height, { maxDisplay: 320 }),
+            rgbaView("Unclipped subject", clip.unclipped, clip.width, clip.height, { compact: true, group: "Case A · Clip-to-below", maxDisplay: 320 }),
+            rgbaView("clipToBelow", clip.clipped, clip.width, clip.height, { compact: true, group: "Case A · Clip-to-below", maxDisplay: 320 }),
+            rgbaView("Mask matte (white reveals)", maskStates.maskMatte, maskStates.maskWidth, maskStates.maskHeight, { compact: true, group: "Case B · Mask (normal)", maxDisplay: 320 }),
+            rgbaView("Reveal map (normal mask)", maskStates.revealedOverlay, maskStates.maskWidth, maskStates.maskHeight, { compact: true, group: "Case B · Mask (normal)", maxDisplay: 320 }),
+            rgbaView("Mask applied", maskStates.masked.rgba, maskStates.masked.width, maskStates.masked.height, { compact: true, group: "Case B · Mask (normal)", maxDisplay: 320 }),
+            rgbaView("Reveal map (inverted mask)", maskStates.invertedOverlay, maskStates.maskWidth, maskStates.maskHeight, { compact: true, group: "Case C · Mask inverted", maxDisplay: 320 }),
+            rgbaView("Mask inverted", maskStates.inverted.rgba, maskStates.inverted.width, maskStates.inverted.height, { compact: true, group: "Case C · Mask inverted", maxDisplay: 320 }),
+            rgbaView("Mask cleared", maskStates.cleared.rgba, maskStates.cleared.width, maskStates.cleared.height, { compact: true, group: "Case C · Mask inverted", maxDisplay: 320 }),
           ],
         };
       } finally {

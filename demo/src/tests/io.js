@@ -506,7 +506,8 @@ export const ioTests = [
       try {
         const id = comp.addImageLayer({ height: context.fixture.height, name: "teapot", rgba: context.fixture.rgba, width: context.fixture.width });
         const original = comp.getLayerRgba(id);
-        comp.quantizeLayer(id, { maxColors: 8 });
+        const palette = comp.extractPalette(id, { maxColors: 8 });
+        comp.quantizeLayer(id, { palette });
         const quantized = comp.getLayerRgba(id);
 
         const uniqueOriginal = new Set();
@@ -517,6 +518,7 @@ export const ioTests = [
         }
 
         verify.ok(!rgbaEquals(original, quantized), "quantized layer should differ from original");
+        verify.equal(palette.length, 32, "palette should contain 8 RGBA swatches");
         verify.ok(uniqueQuantized.size <= 8, "quantized image should have at most 8 unique opaque colors");
         verify.ok(uniqueQuantized.size < uniqueOriginal.size, "quantized image should have fewer unique colors than original");
 
@@ -525,6 +527,7 @@ export const ioTests = [
           metrics: [
             ["Original unique colors", uniqueOriginal.size.toLocaleString()],
             ["Quantized colors", uniqueQuantized.size],
+            ["Palette colors", palette.length / 4],
             ["Max colors", 8],
           ],
           views: [

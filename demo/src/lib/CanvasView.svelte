@@ -1,9 +1,14 @@
 <script>
-let { rgba, width, height, maxDisplay = 220, label = "" } = $props();
+let { rgba, width, height, maxDisplay = 220, allowDownscale = false, label = "" } = $props();
 
   let canvasEl = $state(null);
 
-  const scale = $derived(Math.max(1, Math.floor(maxDisplay / Math.max(width, height))));
+  const scale = $derived.by(() => {
+    const maxSide = Math.max(width, height);
+    const raw = maxDisplay / maxSide;
+    if (allowDownscale && raw < 1) return raw;
+    return Math.max(1, Math.floor(raw));
+  });
 
   function render() {
     if (!canvasEl || !rgba) return;

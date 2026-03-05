@@ -7,6 +7,7 @@ import { textTests } from "./text.js";
 import { brushStrokeTests } from "./brushStrokes.js";
 import { colorUtilTests } from "./colorUtils.js";
 import { ioTests } from "./io.js";
+import { volumeTests } from "./volume/index.js";
 import { experimentalTests } from "./experimental.js";
 
 export function createTests() {
@@ -20,6 +21,7 @@ export function createTests() {
     ...brushStrokeTests,
     ...colorUtilTests,
     ...ioTests,
+    ...volumeTests,
     ...experimentalTests,
   ];
 }

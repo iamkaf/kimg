@@ -116,9 +116,9 @@ export const filterTests = [
     async run(context) {
       const verify = createVerifier();
       const presets = [
-        { label: "Punch", params: { inputMin: 0, inputMax: 200, midtones: 1.2, outputMin: 20, outputMax: 255 } },
-        { label: "Fade", params: { inputMin: 30, inputMax: 220, midtones: 1, outputMin: 0, outputMax: 200 } },
-        { label: "Normalize", params: { inputMin: 0, inputMax: 255, midtones: 1, outputMin: 0, outputMax: 255 } },
+        { label: "Punch", params: { shadows: 0.1, midtones: 0.58, highlights: 0.92 } },
+        { label: "Fade", params: { shadows: 0.28, midtones: 1.1, highlights: 0.76 } },
+        { label: "Normalize", params: { shadows: 0, midtones: 1, highlights: 1 } },
       ];
 
       const results = [];
@@ -136,7 +136,11 @@ export const filterTests = [
 
       return {
         assertions: verify.count,
-        metrics: [["Punch range", "0–200, mid 1.2"], ["Fade range", "30–220 → 0–200"], ["Normalize", "0–255 passthrough"]],
+        metrics: [
+          ["Punch", "shadows 0.10, mid 0.58, highlights 0.92"],
+          ["Fade", "shadows 0.28, mid 1.10, highlights 0.76"],
+          ["Normalize", "shadows 0, mid 1.0, highlights 1.0"],
+        ],
         views: [
           rgbaView("Original", context.fixture.rgba, context.fixture.width, context.fixture.height, { maxDisplay: 240 }),
           ...results.map((r) => rgbaView(r.label, r.rgba, r.width, r.height, { maxDisplay: 240 })),

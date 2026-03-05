@@ -5,7 +5,7 @@
   import MessageView from "./MessageView.svelte";
   import { downloadCardImage, slugify } from "../helpers/canvas.js";
 
-  let { test } = $props();
+  let { test, onOpenView = () => {} } = $props();
 
   function chooseMaxDisplay(view) {
     if (view.width > view.height * 1.25) return 320;
@@ -29,7 +29,33 @@
     view.kind === "code" ||
     view.kind === "message" ||
     view.wide === true ||
-    (view.kind === "rgba" && view.width > view.height * 1.2);
+    (view.kind === "rgba" && view.compact !== true && view.width > view.height * 1.2);
+
+  const groupedViews = $derived.by(() => {
+    const views = test.result?.views ?? [];
+    const order = [];
+    const buckets = new Map();
+    for (const view of views) {
+      const key = view.group ?? "";
+      if (!buckets.has(key)) {
+        buckets.set(key, []);
+        order.push(key);
+      }
+      buckets.get(key).push(view);
+    }
+    return order.map((key) => ({ key, label: key, views: buckets.get(key) ?? [] }));
+  });
+
+  function handleOpenView(view) {
+    onOpenView({
+      height: view.height,
+      rgba: view.rgba,
+      testId: test.id,
+      testTitle: test.title,
+      viewLabel: view.label,
+      width: view.width,
+    });
+  }
 </script>
 
 <article
@@ -82,31 +108,49 @@
   {/if}
 
   <!-- Views -->
-  {#if test.result?.views?.length}
-    <div
-      class="view-grid"
-      style={test.previewMin ? `--preview-min:${test.previewMin}px` : test.featured ? "--preview-min:210px" : ""}
-    >
-      {#each test.result.views as view}
-        <figure class="view-figure" class:is-wide={isWide(view)}>
-          {#if view.kind === "rgba"}
-            <CanvasView
-              rgba={view.rgba}
-              width={view.width}
-              height={view.height}
-              maxDisplay={view.maxDisplay ?? chooseMaxDisplay(view)}
-            />
-          {:else if view.kind === "swatches"}
-            <SwatchView palette={view.palette} />
-          {:else if view.kind === "code"}
-            <CodeView text={view.text} />
-          {:else if view.kind === "message"}
-            <MessageView text={view.text} />
-          {/if}
-          <figcaption class="view-caption">{view.label}</figcaption>
-        </figure>
-      {/each}
-    </div>
+  {#if groupedViews.length}
+    {#each groupedViews as group}
+      <div class="view-group">
+        {#if group.label}
+          <p class="view-group-title">{group.label}</p>
+        {/if}
+        <div
+          class="view-grid"
+          style={test.previewMin ? `--preview-min:${test.previewMin}px` : test.featured ? "--preview-min:210px" : ""}
+        >
+          {#each group.views as view}
+            <figure
+              class="view-figure"
+              class:is-wide={isWide(view)}
+              class:is-rgba={view.kind === "rgba"}
+            >
+              {#if view.kind === "rgba"}
+                <button
+                  class="view-open"
+                  type="button"
+                  onclick={() => handleOpenView(view)}
+                  aria-label={`Open ${view.label} from ${test.title} in lightbox`}
+                >
+                  <CanvasView
+                    rgba={view.rgba}
+                    width={view.width}
+                    height={view.height}
+                    maxDisplay={view.maxDisplay ?? chooseMaxDisplay(view)}
+                  />
+                </button>
+              {:else if view.kind === "swatches"}
+                <SwatchView palette={view.palette} />
+              {:else if view.kind === "code"}
+                <CodeView text={view.text} />
+              {:else if view.kind === "message"}
+                <MessageView text={view.text} />
+              {/if}
+              <figcaption class="view-caption">{view.label}</figcaption>
+            </figure>
+          {/each}
+        </div>
+      </div>
+    {/each}
   {/if}
 
   <!-- Metrics -->
@@ -228,13 +272,47 @@
     padding: 12px 16px;
     align-items: flex-start;
   }
+  .view-group + .view-group {
+    border-top: 1px solid var(--border);
+  }
+  .view-group-title {
+    padding: 10px 16px 0;
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+  }
   .view-figure {
     display: flex;
     flex-direction: column;
     gap: 6px;
     min-width: 0;
   }
+  .view-open {
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    display: inline-flex;
+    cursor: zoom-in;
+    border-radius: var(--radius-sm);
+  }
+  .view-open :global(.canvas-shell) {
+    transition: border-color var(--transition), box-shadow var(--transition);
+  }
+  .view-open:hover :global(.canvas-shell) {
+    border-color: rgba(97, 123, 255, 0.4);
+    box-shadow: 0 0 0 1px rgba(97, 123, 255, 0.15);
+  }
+  .view-open:focus-visible {
+    outline: 1px solid var(--blue);
+    outline-offset: 2px;
+  }
   .view-figure.is-wide { flex: 1 1 100%; }
+  .view-figure.is-wide.is-rgba {
+    align-items: center;
+  }
   .view-caption {
     font-size: 10px;
     color: var(--text-muted);

@@ -3,6 +3,7 @@
   import Sidebar from "./lib/Sidebar.svelte";
   import TestSection from "./lib/TestSection.svelte";
   import TestCard from "./lib/TestCard.svelte";
+  import Lightbox from "./lib/Lightbox.svelte";
   import {
     tests,
     suiteStatus,
@@ -18,6 +19,7 @@
   import preload, { simdSupported } from "#kimg/index.js";
 
   let runSequence = 0;
+  let activePreview = $state(null);
 
   const sectionTests = $derived(
     SECTION_ORDER.map((key) => ({
@@ -99,6 +101,14 @@
       recordDiagnostic("error", toErrorMessage(e.reason));
     });
   }
+
+  function openPreview(preview) {
+    activePreview = preview;
+  }
+
+  function closePreview() {
+    activePreview = null;
+  }
 </script>
 
 <svelte:head>
@@ -113,7 +123,7 @@
       {#each sectionTests as { key, items }}
         <TestSection sectionKey={key}>
           {#each items as test (test.id)}
-            <TestCard {test} />
+            <TestCard {test} onOpenView={openPreview} />
           {/each}
         </TestSection>
       {/each}
@@ -127,6 +137,8 @@
     </div>
   </main>
 </div>
+
+<Lightbox preview={activePreview} onClose={closePreview} />
 
 <style>
   .app-layout {

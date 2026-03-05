@@ -1,4 +1,5 @@
 import { Composition, decodeImage, simdSupported } from "#kimg/index.js";
+import { VOLUME_RASTER_ASSETS, VOLUME_SVG_ASSETS } from "../constants.js";
 
 export function resolveDemoPreloadInput() {
   const mode = new URLSearchParams(window.location.search).get("wasm");
@@ -13,9 +14,34 @@ export function resolveDemoPreloadInput() {
 
 export async function buildContext() {
   const fixture = await loadTeapotFixture("./assets/teapot.png", 192);
-  const bodoniModaItalicWoff2 = await loadBinaryFixture("./assets/bodoni-moda-italic.woff2");
-  const bodoniModaRegularWoff2 = await loadBinaryFixture("./assets/bodoni-moda-regular.woff2");
-  const bungeeKimgWoff2 = await loadBinaryFixture("./assets/bungee-kimg.woff2");
+  const [
+    bodoniModaItalicWoff2,
+    bodoniModaRegularWoff2,
+    bungeeKimgWoff2,
+    loadedRasterFixtures,
+    loadedSvgFixtures,
+  ] = await Promise.all([
+    loadBinaryFixture("./assets/bodoni-moda-italic.woff2"),
+    loadBinaryFixture("./assets/bodoni-moda-regular.woff2"),
+    loadBinaryFixture("./assets/bungee-kimg.woff2"),
+    loadVolumeRasterFixtures(),
+    loadVolumeSvgFixtures(),
+  ]);
+
+  const volumeFixtures = {
+    teapot: {
+      key: "teapot",
+      label: "Teapot PNG",
+      path: "./assets/teapot.png",
+      sourceBytes: fixture.sourceBytes,
+      originalWidth: fixture.originalWidth,
+      originalHeight: fixture.originalHeight,
+      width: fixture.width,
+      height: fixture.height,
+      rgba: fixture.rgba,
+    },
+    ...loadedRasterFixtures,
+  };
   const filterFixture = createFilterFixture();
   const glyph = createGlyphFixture();
   const borderedGlyph = createBorderedFixture(glyph);
@@ -39,6 +65,8 @@ export async function buildContext() {
       await import("#kimg/index.js").then(m => m.hexToRgb("#157347")),
     ].flatMap((rgb) => [rgb[0], rgb[1], rgb[2], 255]),
     utilityTile,
+    volumeFixtures,
+    volumeSvgFixtures: loadedSvgFixtures,
   };
 }
 
@@ -231,6 +259,78 @@ async function loadBinaryFixture(url) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Failed to load ${url}: ${response.status}`);
   return new Uint8Array(await response.arrayBuffer());
+}
+
+async function loadTextFixture(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to load ${url}: ${response.status}`);
+  return response.text();
+}
+
+async function loadVolumeRasterFixtures() {
+  const entries = await Promise.all(
+    VOLUME_RASTER_ASSETS.filter((asset) => asset.key !== "teapot").map(async (asset) => {
+      const loaded = await loadRasterFixture(asset.path, asset.maxEdge);
+      return [
+        asset.key,
+        {
+          key: asset.key,
+          label: asset.label,
+          path: asset.path,
+          ...loaded,
+        },
+      ];
+    }),
+  );
+  return Object.fromEntries(entries);
+}
+
+async function loadVolumeSvgFixtures() {
+  const entries = await Promise.all(
+    VOLUME_SVG_ASSETS.map(async (asset) => [
+      asset.key,
+      {
+        key: asset.key,
+        label: asset.label,
+        path: asset.path,
+        svg: await loadTextFixture(asset.path),
+      },
+    ]),
+  );
+  return Object.fromEntries(entries);
+}
+
+async function loadRasterFixture(url, maxEdge) {
+  const sourceBytes = await loadBinaryFixture(url);
+  const blob = new Blob([sourceBytes]);
+  const bitmap = await createImageBitmap(blob);
+
+  try {
+    const originalWidth = bitmap.width;
+    const originalHeight = bitmap.height;
+    const scale = Math.min(1, maxEdge / Math.max(originalWidth, originalHeight));
+    const width = Math.max(1, Math.round(originalWidth * scale));
+    const height = Math.max(1, Math.round(originalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const data = ctx.getImageData(0, 0, width, height);
+
+    return {
+      sourceBytes,
+      originalWidth,
+      originalHeight,
+      width,
+      height,
+      rgba: new Uint8Array(data.data),
+    };
+  } finally {
+    bitmap.close();
+  }
 }
 
 async function loadTeapotFixture(url, maxEdge) {

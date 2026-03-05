@@ -246,7 +246,7 @@ export const shapeTests = [
         composition.addSolidColorLayer({ color: [247, 241, 232, 255], name: "paper" });
         composition.addShapeLayer({
           fill: [97, 123, 255, 200], name: "star",
-          points: [{ x: 60, y: 10 }, { x: 80, y: 70 }, { x: 140, y: 70 }, { x: 90, y: 110 }, { x: 110, y: 170 }, { x: 60, y: 130 }, { x: 10, y: 170 }, { x: 30, y: 110 }, { x: -20, y: 70 }, { x: 40, y: 70 }],
+          points: [{ x: 60, y: 10 }, { x: 80, y: 70 }, { x: 140, y: 70 }, { x: 90, y: 110 }, { x: 110, y: 170 }, { x: 60, y: 130 }, { x: 10, y: 170 }, { x: 30, y: 110 }, { x: 0, y: 70 }, { x: 40, y: 70 }],
           stroke: { color: [35, 79, 221, 255], width: 3 }, type: "polygon", x: 30, y: 5,
         });
 
