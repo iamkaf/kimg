@@ -1,92 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>kimg Visual Test Suite</title>
-  <link rel="stylesheet" href="./demo.css">
-</head>
-<body
-  data-suite-status="booting"
-  data-suite-count="0"
-  data-suite-pass="0"
-  data-suite-fail="0"
-  data-suite-experimental="0"
-  data-suite-diagnostics="0"
->
-  <div class="page-shell">
-    <header class="hero">
-      <div class="hero-copy">
-        <p class="eyebrow">Static Browser Demo</p>
-        <h1>kimg Visual Test Suite</h1>
-        <p class="hero-note">
-          One page. No manual setup. Scroll and compare. If a render path is wrong,
-          it should look wrong immediately.
-        </p>
-      </div>
-      <div class="hero-meta">
-        <dl class="runtime-grid" id="runtime-grid">
-          <div>
-            <dt>Runtime</dt>
-            <dd id="runtime-status">Booting</dd>
-          </div>
-          <div>
-            <dt>SIMD</dt>
-            <dd id="runtime-simd">Checking</dd>
-          </div>
-          <div>
-            <dt>Cards</dt>
-            <dd id="runtime-count">0</dd>
-          </div>
-          <div>
-            <dt>Pass</dt>
-            <dd id="runtime-pass">0</dd>
-          </div>
-          <div>
-            <dt>Fail</dt>
-            <dd id="runtime-fail">0</dd>
-          </div>
-          <div>
-            <dt>Experimental</dt>
-            <dd id="runtime-experimental">0</dd>
-          </div>
-        </dl>
-        <button class="rerun-button" id="rerun-button" type="button">Rerun Suite</button>
-      </div>
-    </header>
-
-    <div class="layout">
-      <main class="suite" id="suite" aria-live="polite">
-        <section class="section-intro">
-          <p class="eyebrow">Suite Status</p>
-          <h2>Preparing deterministic fixtures and running visual checks.</h2>
-          <p>
-            The page uses the public JS package surface, embedded fixtures, and generated canvases.
-            The imported teapot image lives at <code>demo/assets/teapot.png</code>.
-          </p>
-        </section>
-      </main>
-
-      <aside class="diagnostics" aria-labelledby="diagnostics-title">
-        <div class="diagnostics-header">
-          <div>
-            <p class="eyebrow">Live Diagnostics</p>
-            <h2 id="diagnostics-title">Console and Runtime Errors</h2>
-          </div>
-          <span class="diagnostic-count" id="diagnostic-count">0</span>
-        </div>
-        <p class="diagnostics-note">
-          This panel mirrors <code>console.error</code>, uncaught exceptions, and rejected promises.
-        </p>
-        <ol class="diagnostic-list" id="diagnostic-list">
-          <li class="diagnostic-empty">No errors captured.</li>
-        </ol>
-      </aside>
-    </div>
-  </div>
-
-  <pre id="suite-machine-state" hidden></pre>
-
-  <script type="module" src="./demo.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>kimg Visual Test Suite</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
 </html>

@@ -360,7 +360,7 @@ kimg/
 │   └── kimg-wasm/     # wasm-bindgen API surface
 ├── js/                # Tracked TS sources
 ├── dist/              # Generated package output
-├── demo/              # Visual test suite page
+├── demo/              # Visual test suite (Vite + Svelte)
 └── scripts/
 ```
 
@@ -425,6 +425,17 @@ Current scope:
 `npm run test:demo` runs the visual suite in headless browser mode and fails on diagnostics, incomplete cards, or failed assertions.
 
 `npm run test:pack` validates the published package shape from a packed tarball, not from the local source tree.
+
+## Visual test suite
+
+The `demo/` directory is a Vite + Svelte app with ~75 visual tests covering the full API surface.
+
+```bash
+npm run demo:dev    # start dev server at localhost:5173
+npm run demo:build  # build static output to demo/dist/
+```
+
+The suite runs all tests on load and displays pass/fail status, rendered canvas output, and per-test metrics in a sidebar-nav layout.
 
 ## Benchmarks
 
