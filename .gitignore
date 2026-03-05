@@ -1,5 +1,6 @@
 /target
 /dist
+/demo/dist
 /node_modules
 /*.tgz
 /js/kimg_wasm_bg.d.ts
@@ -14,6 +15,8 @@
 *.swo
 *.png
 !demo/assets/teapot.png
+!demo/assets/flower.png
+!demo/assets/croissant.png
 !demo/assets/kimg-hero.png
 .DS_Store
 
