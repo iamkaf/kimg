@@ -1,11 +1,37 @@
+<div align="center">
+
 # kimg
 
-[![CI](https://github.com/iamkaf/kimg/actions/workflows/ci.yml/badge.svg)](https://github.com/iamkaf/kimg/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<strong>Layered image compositing in Rust + WASM.</strong><br />
+<sub>One engine, same API shape in Node.js and the browser.</sub>
 
-kimg is a Rust + WASM image compositing engine. It is built around layered documents, not one-off pixel buffers.
+<br />
 
-You can run the same API in Node.js and in the browser. No native modules. No DOM or Canvas dependency.
+[![CI](https://img.shields.io/github/actions/workflow/status/iamkaf/kimg/ci.yml?branch=main&style=for-the-badge)](https://github.com/iamkaf/kimg/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/%40iamkaf%2Fkimg?style=for-the-badge)](https://www.npmjs.com/package/@iamkaf/kimg)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2f6feb?style=for-the-badge)](LICENSE)
+
+<br />
+<img src="demo/assets/kimg-hero.png" alt="kimg hero image generated with kimg itself" width="920" />
+
+</div>
+
+> kimg is a headless image compositor for layered workflows: masks, blend modes, filters, transforms, text, SVG, and format I/O. It does not depend on the DOM, Canvas API, or native addons.
+
+## Quick links
+
+- [Why this project exists](#why-this-project-exists)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Features](#features)
+- [API snippets](#api-snippets)
+- [Subpath exports](#subpath-exports)
+- [Project layout](#project-layout)
+- [Build from source](#build-from-source)
+- [Tests](#tests)
+- [Benchmarks](#benchmarks)
+- [WASM binary size](#wasm-binary-size)
+- [Roadmap](#roadmap)
 
 ## Why this project exists
 
@@ -76,84 +102,27 @@ const doc = await Composition.create({ width: 64, height: 64 });
 
 ## Features
 
-### Layer model
+| Area | What you get |
+|------|--------------|
+| Layer model | `Raster`, `Filter`, `Group`, `Fill`, `Shape`, `Text`, `Svg` |
+| Blend modes | 16 modes, including `Normal`, `Multiply`, `Screen`, `Overlay`, and HSL-family modes |
+| Masks & clipping | Grayscale layer masks and clip-to-below behavior |
+| Filters | HSL pipeline, levels, threshold, posterize, gradient map, blur, sharpen, edge detect, emboss |
+| Transforms | Non-destructive translate/scale/rotate/flip plus destructive resize/crop/trim |
+| Paint tools | Brush engine (round/grain tips, pressure, tilt, modeler smoothing, eraser, alpha lock, streaming) + bucket fill |
+| Sprite tools | Packing, contact sheets, pixel scale, quantization, batch rendering |
+| I/O | PNG/JPEG/WebP/GIF, retained SVG layers, experimental PSD import, magic-byte detect |
+| Serialization | `.kimg` documents with versioned binary metadata + raw pixels |
 
-kimg currently ships these layer kinds:
+### Layer notes
 
-- `Raster`
-- `Filter`
-- `Group`
-- `Fill`
-- `Shape`
-- `Text`
-- `Svg`
-
-`Shape` supports rectangle (with optional corner radius), ellipse, line, and polygon.
-
-`Text` supports runtime font registration, weight/style/wrap/alignment, transforms, and browser-side Google Fonts loading.
-
-`Svg` keeps source SVG data so it stays crisp while scaled. You can rasterize it explicitly when needed.
+- `Shape` supports rectangle (optional corner radius), ellipse, line, and polygon.
+- `Text` supports runtime font registration, weight/style/wrap/alignment, transforms, and browser-side Google Fonts loading.
+- `Svg` keeps source SVG data for clean scaling until you explicitly rasterize.
 
 ### Blend modes
 
-16 blend modes:
-
 `Normal`, `Multiply`, `Screen`, `Overlay`, `Darken`, `Lighten`, `ColorDodge`, `ColorBurn`, `HardLight`, `SoftLight`, `Difference`, `Exclusion`, `Hue`, `Saturation`, `Color`, `Luminosity`.
-
-### Masks and clipping
-
-- grayscale layer masks
-- clipping masks (`setLayerClipToBelow()` in the JS facade)
-
-### Filters
-
-- HSL adjustments
-- brightness / contrast
-- temperature / tint
-- sharpen
-- invert
-- posterize
-- threshold
-- levels
-- gradient map
-- box blur
-- Gaussian blur
-- edge detect
-- emboss
-
-### Transforms
-
-- Non-destructive per-layer translate / scale / rotate / flip for raster, shape, text, and SVG layers
-- Destructive resize (nearest, bilinear, Lanczos3), crop, and trim alpha
-
-### Paint tools
-
-- round and grain brush tips
-- size / opacity / flow / hardness / spacing
-- pressure-driven size/opacity
-- tilt-shaped dabs
-- simple and modeler smoothing
-- erase mode
-- alpha lock for raster layers
-- streamed stroke sessions (`begin/push/end/cancel`)
-- bucket fill with contiguous / non-contiguous modes and alpha-aware RGBA tolerance
-
-### Sprite tools
-
-- shelf bin-pack sprite sheet packing
-- contact sheets
-- pixel-art upscale
-- quantization
-- batch render pipeline
-
-### Import/export and serialization
-
-- PNG, JPEG, WebP
-- GIF (frames -> layers)
-- retained SVG layers
-- experimental PSD import
-- raster format auto-detection via magic bytes
-- `.kimg` save/load (versioned binary metadata + raw pixels)
 
 ## API snippets
 
@@ -255,6 +224,16 @@ doc.updateLayer(layerId, {
   rotation: 30,
   scaleX: 1.25,
   scaleY: 0.75,
+});
+```
+
+### Alignment helpers
+
+```js
+doc.alignLayers({
+  layerIds: [titleId, badgeId, iconId],
+  mode: "horizontalCenter",
+  reference: "canvas", // or "selection"
 });
 ```
 
@@ -493,7 +472,26 @@ Notes:
 - `render/repeated_transformed_layer/512` performs two back-to-back renders to expose cache wins.
 - Shape benches instantiate fresh shape instances per sample.
 
+### Performance snapshot
+
 Representative medians from local runs on March 4, 2026:
+
+| Hot path | Median |
+|------|------:|
+| `render/10_layers/512` | `9.61 ms` |
+| `render/10_layers_with_filter/512` | `15.07 ms` |
+| `render/10_layers_with_transforms/512` | `10.38 ms` |
+| `render/text_styles_cold/320x176` | `37.72 ms` |
+| `render/text_styles_cached/320x176` | `192.91 µs` |
+| `bucket_fill/contiguous/512` | `703.87 µs` |
+| `brush/round_soft_large/512` | `585.72 µs` |
+| `brush/grain_tilt_modeler/512` | `726.67 µs` |
+| `encode_png/512` | `1.26 ms` |
+| `decode_webp/512` | `2.63 ms` |
+| `resize_lanczos3/2048→4096` | `53.98 ms` |
+
+<details>
+<summary>Full benchmark baseline table</summary>
 
 | Operation | Median |
 |------|------:|
@@ -542,6 +540,8 @@ Representative medians from local runs on March 4, 2026:
 | `resize_bilinear/512→1024` | `1.00 ms` |
 | `resize_lanczos3/512→1024` | `1.60 ms` |
 | `resize_lanczos3/2048→4096` | `53.98 ms` |
+
+</details>
 
 ## WASM binary size
 

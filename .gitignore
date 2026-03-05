@@ -14,6 +14,7 @@
 *.swo
 *.png
 !demo/assets/teapot.png
+!demo/assets/kimg-hero.png
 .DS_Store
 
 # Rust backup files

@@ -29,6 +29,7 @@ use crate::shape::render_shape;
 use crate::svg::rasterize_svg;
 use crate::text::render_text;
 use crate::transform;
+use std::collections::HashSet;
 
 /// Location of a layer within the tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +40,32 @@ pub struct LayerLocation {
     pub index: usize,
     /// Zero-based depth in the tree.
     pub depth: usize,
+}
+
+/// Horizontal or vertical alignment mode for layer helpers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerAlignMode {
+    /// Align each layer's left edge to the target left edge.
+    Left,
+    /// Align each layer's horizontal center to the target horizontal center.
+    HorizontalCenter,
+    /// Align each layer's right edge to the target right edge.
+    Right,
+    /// Align each layer's top edge to the target top edge.
+    Top,
+    /// Align each layer's vertical center to the target vertical center.
+    VerticalCenter,
+    /// Align each layer's bottom edge to the target bottom edge.
+    Bottom,
+}
+
+/// Target reference bounds used for layer alignment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerAlignReference {
+    /// Use the union bounds of the provided layer list.
+    Selection,
+    /// Use the full document canvas bounds.
+    Canvas,
 }
 
 /// A compositing document with a canvas size and a layer tree.
@@ -230,6 +257,106 @@ impl Document {
         };
 
         insert_layer_at(&mut self.layers, target_parent_id, target_index, layer)
+    }
+
+    /// Align multiple layers using their rendered bounds.
+    ///
+    /// Only rasterizable layer kinds are affected (`Raster`, `Shape`, `Text`, `Svg`).
+    /// Unsupported IDs and duplicate IDs are ignored.
+    ///
+    /// Returns the number of layers whose position changed.
+    pub fn align_layers(
+        &mut self,
+        layer_ids: &[u32],
+        mode: LayerAlignMode,
+        reference: LayerAlignReference,
+    ) -> usize {
+        let mut seen = HashSet::new();
+        let mut candidates = Vec::new();
+
+        for &id in layer_ids {
+            if !seen.insert(id) {
+                continue;
+            }
+
+            let Some(layer) = self.find_layer(id) else {
+                continue;
+            };
+            let Some(entry) = layer_alignment_entry(id, layer) else {
+                continue;
+            };
+            candidates.push(entry);
+        }
+
+        if candidates.is_empty() {
+            return 0;
+        }
+
+        let reference_rect = match reference {
+            LayerAlignReference::Selection => {
+                let first = candidates[0].rect;
+                candidates
+                    .iter()
+                    .skip(1)
+                    .fold(first, |acc, candidate| acc.union(candidate.rect))
+            }
+            LayerAlignReference::Canvas => AlignmentRect {
+                left: 0,
+                top: 0,
+                width: u32_to_i32_saturating(self.width),
+                height: u32_to_i32_saturating(self.height),
+            },
+        };
+
+        let mut moved = 0;
+        let target_center_x2 = reference_rect.center_x_times_two();
+        let target_center_y2 = reference_rect.center_y_times_two();
+
+        for candidate in candidates {
+            let mut left = candidate.rect.left;
+            let mut top = candidate.rect.top;
+
+            match mode {
+                LayerAlignMode::Left => {
+                    left = reference_rect.left;
+                }
+                LayerAlignMode::HorizontalCenter => {
+                    left = ((target_center_x2 as f64 - candidate.rect.width as f64) / 2.0).round()
+                        as i32;
+                }
+                LayerAlignMode::Right => {
+                    left = reference_rect.right() - candidate.rect.width;
+                }
+                LayerAlignMode::Top => {
+                    top = reference_rect.top;
+                }
+                LayerAlignMode::VerticalCenter => {
+                    top = ((target_center_y2 as f64 - candidate.rect.height as f64) / 2.0).round()
+                        as i32;
+                }
+                LayerAlignMode::Bottom => {
+                    top = reference_rect.bottom() - candidate.rect.height;
+                }
+            }
+
+            let (x, y) = position_from_top_left(
+                left,
+                top,
+                candidate.rect.width,
+                candidate.rect.height,
+                candidate.anchor,
+            );
+            let Some(layer) = self.find_layer_mut(candidate.id) else {
+                continue;
+            };
+            if layer.common.x != x || layer.common.y != y {
+                layer.common.x = x;
+                layer.common.y = y;
+                moved += 1;
+            }
+        }
+
+        moved
     }
 
     /// Resize the document canvas.
@@ -1034,6 +1161,160 @@ fn insert_layer_at(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AlignmentRect {
+    left: i32,
+    top: i32,
+    width: i32,
+    height: i32,
+}
+
+impl AlignmentRect {
+    fn right(self) -> i32 {
+        self.left + self.width
+    }
+
+    fn bottom(self) -> i32 {
+        self.top + self.height
+    }
+
+    fn center_x_times_two(self) -> i32 {
+        self.left.saturating_mul(2).saturating_add(self.width)
+    }
+
+    fn center_y_times_two(self) -> i32 {
+        self.top.saturating_mul(2).saturating_add(self.height)
+    }
+
+    fn union(self, other: AlignmentRect) -> AlignmentRect {
+        let left = self.left.min(other.left);
+        let top = self.top.min(other.top);
+        let right = self.right().max(other.right());
+        let bottom = self.bottom().max(other.bottom());
+        AlignmentRect {
+            left,
+            top,
+            width: right.saturating_sub(left),
+            height: bottom.saturating_sub(top),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LayerAlignmentEntry {
+    id: u32,
+    rect: AlignmentRect,
+    anchor: Anchor,
+}
+
+fn layer_alignment_entry(id: u32, layer: &Layer) -> Option<LayerAlignmentEntry> {
+    let (width, height, anchor) = layer_transformed_extent(layer)?;
+    let (left, top) = top_left_from_position(layer.common.x, layer.common.y, width, height, anchor);
+    Some(LayerAlignmentEntry {
+        id,
+        rect: AlignmentRect {
+            left,
+            top,
+            width,
+            height,
+        },
+        anchor,
+    })
+}
+
+fn layer_transformed_extent(layer: &Layer) -> Option<(i32, i32, Anchor)> {
+    let extent = match &layer.kind {
+        LayerKind::Raster(raster) => raster.with_cached_transformed_raster(
+            || apply_non_destructive_transform(&raster.buffer, &raster.transform),
+            |transformed| {
+                (
+                    u32_to_i32_saturating(transformed.width),
+                    u32_to_i32_saturating(transformed.height),
+                    raster.transform.anchor,
+                )
+            },
+        ),
+        LayerKind::Shape(shape) => shape.with_cached_transformed_raster(
+            || {
+                let shape_buf = render_shape_layer(shape);
+                apply_non_destructive_transform(&shape_buf, &shape.transform)
+            },
+            |shape_buf| {
+                (
+                    u32_to_i32_saturating(shape_buf.width),
+                    u32_to_i32_saturating(shape_buf.height),
+                    shape.transform.anchor,
+                )
+            },
+        ),
+        LayerKind::Text(text) => text.with_cached_transformed_raster(
+            || {
+                let text_buf = text.cached_local_raster(|| render_text(text));
+                apply_non_destructive_transform(&text_buf, &text.transform)
+            },
+            |text_buf| {
+                (
+                    u32_to_i32_saturating(text_buf.width),
+                    u32_to_i32_saturating(text_buf.height),
+                    text.transform.anchor,
+                )
+            },
+        ),
+        LayerKind::Svg(svg) => svg.with_cached_transformed_raster(
+            || {
+                let raster_width = scaled_dimension(svg.width, svg.transform.scale_x);
+                let raster_height = scaled_dimension(svg.height, svg.transform.scale_y);
+                let svg_buf = svg.cached_local_raster(raster_width, raster_height, || {
+                    render_svg_layer(svg, raster_width, raster_height)
+                });
+                apply_non_destructive_transform(
+                    &svg_buf,
+                    &svg_transform_without_scale(svg.transform),
+                )
+            },
+            |svg_buf| {
+                (
+                    u32_to_i32_saturating(svg_buf.width),
+                    u32_to_i32_saturating(svg_buf.height),
+                    svg.transform.anchor,
+                )
+            },
+        ),
+        _ => return None,
+    };
+    Some(extent)
+}
+
+fn u32_to_i32_saturating(value: u32) -> i32 {
+    value.min(i32::MAX as u32) as i32
+}
+
+fn top_left_from_position(x: i32, y: i32, width: i32, height: i32, anchor: Anchor) -> (i32, i32) {
+    match anchor {
+        Anchor::TopLeft => (x, y),
+        Anchor::Center => (
+            (x as f64 - width as f64 / 2.0).round() as i32,
+            (y as f64 - height as f64 / 2.0).round() as i32,
+        ),
+    }
+}
+
+fn position_from_top_left(
+    left: i32,
+    top: i32,
+    width: i32,
+    height: i32,
+    anchor: Anchor,
+) -> (i32, i32) {
+    match anchor {
+        Anchor::TopLeft => (left, top),
+        Anchor::Center => (
+            (left as f64 + width as f64 / 2.0).round() as i32,
+            (top as f64 + height as f64 / 2.0).round() as i32,
+        ),
+    }
+}
+
 /// Apply a layer mask to a rendered layer buffer. The mask's luminance
 /// (using only the first channel as grayscale) multiplies the alpha channel.
 /// When `inverted` is true the mask value is flipped before application.
@@ -1505,6 +1786,73 @@ mod tests {
         assert!(!doc.move_layer(group_id, Some(child_group_id), Some(0)));
         assert!(!doc.move_layer(child_id, Some(child_id), Some(0)));
         assert!(!doc.move_layer(child_id, Some(999), Some(0)));
+    }
+
+    #[test]
+    fn align_layers_to_selection_left() {
+        let mut doc = Document::new(64, 32);
+        let first_id = doc.next_id();
+        let second_id = doc.next_id();
+        doc.layers.push(img_layer(
+            first_id,
+            "first",
+            solid_buf(10, 4, Rgba::new(255, 0, 0, 255)),
+            20,
+            6,
+        ));
+        doc.layers.push(img_layer(
+            second_id,
+            "second",
+            solid_buf(8, 6, Rgba::new(0, 255, 0, 255)),
+            4,
+            12,
+        ));
+
+        let moved = doc.align_layers(
+            &[first_id, second_id],
+            LayerAlignMode::Left,
+            LayerAlignReference::Selection,
+        );
+
+        assert_eq!(moved, 1);
+        assert_eq!(doc.find_layer(first_id).unwrap().common.x, 4);
+        assert_eq!(doc.find_layer(second_id).unwrap().common.x, 4);
+    }
+
+    #[test]
+    fn align_layers_to_canvas_center_with_mixed_anchors() {
+        let mut doc = Document::new(40, 20);
+        let top_left_id = doc.next_id();
+        let center_id = doc.next_id();
+
+        doc.layers.push(img_layer(
+            top_left_id,
+            "top-left-anchor",
+            solid_buf(4, 4, Rgba::new(255, 0, 0, 255)),
+            1,
+            1,
+        ));
+
+        let mut centered = RasterLayerData::new(solid_buf(6, 6, Rgba::new(0, 255, 0, 255)));
+        centered.transform.anchor = crate::blit::Anchor::Center;
+        doc.layers.push(Layer {
+            common: LayerCommon {
+                x: 30,
+                y: 4,
+                ..LayerCommon::new(center_id, "center-anchor")
+            },
+            kind: LayerKind::Raster(centered),
+        });
+
+        let moved = doc.align_layers(
+            &[top_left_id, center_id],
+            LayerAlignMode::VerticalCenter,
+            LayerAlignReference::Canvas,
+        );
+
+        assert_eq!(moved, 2);
+        assert_eq!(doc.find_layer(top_left_id).unwrap().common.y, 8);
+        assert_eq!(doc.find_layer(center_id).unwrap().common.y, 10);
     }
 
     #[test]

@@ -579,8 +579,8 @@ export function svgBackendActive(): boolean {
   return activeSvgBackend;
 }
 
-export function register_font(bytes: Uint8Array): number {
-  return requireBindings().register_font(bytes);
+export function register_font(bytes: Uint8Array, family?: string | null): number {
+  return requireBindings().register_font(bytes, family);
 }
 
 export function clear_registered_fonts(): void {

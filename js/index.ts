@@ -337,6 +337,30 @@ export interface MoveLayerTarget {
   index?: number;
 }
 
+export type LayerAlignmentMode =
+  | "left"
+  | "horizontalCenter"
+  | "centerX"
+  | "right"
+  | "top"
+  | "verticalCenter"
+  | "centerY"
+  | "bottom"
+  | 0
+  | 1
+  | 2
+  | 3
+  | 4
+  | 5;
+
+export type LayerAlignmentReference = "selection" | "canvas" | 0 | 1;
+
+export interface AlignLayersOptions {
+  layerIds: ArrayLike<number>;
+  mode: LayerAlignmentMode;
+  reference?: LayerAlignmentReference;
+}
+
 export interface ListLayersOptions {
   parentId?: number | null;
   recursive?: boolean;
@@ -477,6 +501,22 @@ const GRADIENT_DIRECTION_TO_RAW = {
   diagonal_up: 3,
   horizontal: 0,
   vertical: 1,
+};
+
+const LAYER_ALIGNMENT_MODE_TO_RAW = {
+  bottom: 5,
+  centerX: 1,
+  centerY: 4,
+  horizontalCenter: 1,
+  left: 0,
+  right: 2,
+  top: 3,
+  verticalCenter: 4,
+};
+
+const LAYER_ALIGNMENT_REFERENCE_TO_RAW = {
+  canvas: 1,
+  selection: 0,
 };
 
 let preloadPromise: Promise<InitOutput> | null = null;
@@ -1245,6 +1285,51 @@ function normalizeMoveLayerTarget(target) {
   };
 }
 
+function normalizeLayerAlignmentMode(mode, fieldName) {
+  if (typeof mode === "number") {
+    if (mode >= 0 && mode <= 5 && Number.isInteger(mode)) {
+      return mode;
+    }
+    throw new RangeError(`${fieldName} must be an integer between 0 and 5.`);
+  }
+
+  if (typeof mode === "string" && Object.hasOwn(LAYER_ALIGNMENT_MODE_TO_RAW, mode)) {
+    return LAYER_ALIGNMENT_MODE_TO_RAW[mode];
+  }
+
+  throw new TypeError(
+    `${fieldName} must be one of left, horizontalCenter/centerX, right, top, verticalCenter/centerY, bottom, or 0-5.`,
+  );
+}
+
+function normalizeLayerAlignmentReference(reference, fieldName) {
+  if (reference === undefined) {
+    return 0;
+  }
+
+  if (typeof reference === "number") {
+    if ((reference === 0 || reference === 1) && Number.isInteger(reference)) {
+      return reference;
+    }
+    throw new RangeError(`${fieldName} must be 0 (selection) or 1 (canvas).`);
+  }
+
+  if (typeof reference === "string" && Object.hasOwn(LAYER_ALIGNMENT_REFERENCE_TO_RAW, reference)) {
+    return LAYER_ALIGNMENT_REFERENCE_TO_RAW[reference];
+  }
+
+  throw new TypeError(`${fieldName} must be "selection", "canvas", 0, or 1.`);
+}
+
+function normalizeAlignLayersOptions(options) {
+  const object = requireObject(options, "alignLayers");
+  return {
+    layerIds: normalizeLayerIdArray(object.layerIds, "alignLayers.layerIds"),
+    mode: normalizeLayerAlignmentMode(object.mode, "alignLayers.mode"),
+    reference: normalizeLayerAlignmentReference(object.reference, "alignLayers.reference"),
+  };
+}
+
 function normalizeExportJpegArg(qualityOrOptions) {
   if (typeof qualityOrOptions === "object" && qualityOrOptions !== null) {
     return normalizeInteger(qualityOrOptions.quality ?? 85, "exportJpeg.quality");
@@ -1736,7 +1821,7 @@ export async function preload(
 export async function registerFont(options: RegisterFontOptions): Promise<number> {
   const normalized = normalizeRegisterFontOptions(options);
   await ensureTextBackendReady();
-  const loadedFaces = register_font(normalized.bytes);
+  const loadedFaces = register_font(normalized.bytes, normalized.family);
 
   if (loadedFaces === 0) {
     const familyHint = normalized.family ? ` for ${normalized.family}` : "";
@@ -1894,6 +1979,7 @@ export interface Composition {
   listLayers(options?: ListLayersOptions): LayerInfo[];
   removeLayer(id: number): boolean;
   moveLayer(id: number, target: MoveLayerTarget): boolean;
+  alignLayers(options: AlignLayersOptions): number;
   resizeCanvas(widthOrSize: number | Size, height?: number): void;
   flattenGroup(groupId: number): boolean;
   removeFromGroup(groupId: number, childId: number): boolean;
@@ -2446,6 +2532,11 @@ export class Composition {
   moveLayer(id, target) {
     const normalized = normalizeMoveLayerTarget(target);
     return this._inner.move_layer(normalizeLayerId(id), normalized.parentId, normalized.index);
+  }
+
+  alignLayers(options) {
+    const normalized = normalizeAlignLayersOptions(options);
+    return this._inner.align_layers(normalized.layerIds, normalized.mode, normalized.reference);
   }
 
   resizeCanvas(widthOrOptions, height) {

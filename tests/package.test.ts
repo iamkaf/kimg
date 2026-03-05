@@ -142,6 +142,47 @@ describe("main package facade", () => {
     roundTrip.free();
   });
 
+  test("alignLayers supports selection and canvas references", async () => {
+    const composition = await Composition.create({ width: 20, height: 12 });
+
+    try {
+      const first = composition.addPaintLayer({
+        height: 2,
+        name: "first",
+        width: 4,
+      });
+      const second = composition.addPaintLayer({
+        height: 2,
+        name: "second",
+        width: 4,
+      });
+
+      composition.setLayerPosition(first, { x: 8, y: 1 });
+      composition.setLayerPosition(second, { x: 2, y: 9 });
+
+      expect(
+        composition.alignLayers({
+          layerIds: [first, second],
+          mode: "left",
+        }),
+      ).toBe(1);
+      expect(composition.getLayer(first)?.x).toBe(2);
+      expect(composition.getLayer(second)?.x).toBe(2);
+
+      expect(
+        composition.alignLayers({
+          layerIds: [first, second],
+          mode: "verticalCenter",
+          reference: "canvas",
+        }),
+      ).toBe(2);
+      expect(composition.getLayer(first)?.y).toBe(5);
+      expect(composition.getLayer(second)?.y).toBe(5);
+    } finally {
+      composition.free();
+    }
+  });
+
   test("main package utility functions work against the built bindings", async () => {
     const composition = await Composition.create({ width: 2, height: 2 });
     composition.addSolidColorLayer({
@@ -190,6 +231,37 @@ describe("main package facade", () => {
     composition.free();
     await clearRegisteredFonts();
     expect(await registeredFontCount()).toBe(0);
+  });
+
+  test("registerFont family alias maps requested text family to loaded faces", async () => {
+    await clearRegisteredFonts();
+
+    const composition = await Composition.create({ width: 192, height: 64 });
+    composition.addTextLayer({
+      name: "headline",
+      text: "KIMG",
+      color: [17, 22, 32, 255],
+      fontFamily: "Hero Sans",
+      fontSize: 28,
+      lineHeight: 32,
+      x: 0,
+      y: 12,
+    });
+
+    const before = Array.from(composition.renderRgba());
+    const loadedFaces = await registerFont({
+      bytes: INTER_KIMG_WOFF2,
+      family: "Hero Sans",
+      style: "normal",
+      weight: 400,
+    });
+    const after = Array.from(composition.renderRgba());
+
+    expect(loadedFaces).toBeGreaterThan(0);
+    expect(after).not.toEqual(before);
+
+    composition.free();
+    await clearRegisteredFonts();
   });
 
   test("loadGoogleFont parses CSS2 and caches fetched font binaries", async () => {

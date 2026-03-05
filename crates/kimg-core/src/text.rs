@@ -38,6 +38,8 @@ static REGISTERED_FONTS: OnceLock<Mutex<Vec<RegisteredFont>>> = OnceLock::new();
 struct RegisteredFont {
     bytes: Arc<Vec<u8>>,
     families: Vec<String>,
+    #[cfg(feature = "cosmic-text-backend")]
+    family_hint: Option<String>,
 }
 
 fn pixel_scale(font_size: u32) -> u32 {
@@ -88,6 +90,15 @@ fn decode_runtime_font_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
 /// unsupported font data returns `0` and is not retained.
 #[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
 pub fn register_font_bytes(bytes: Vec<u8>) -> usize {
+    register_font_bytes_with_hint(bytes, None)
+}
+
+/// Register raw font bytes with an optional family alias hint.
+///
+/// The hint is used as a caller-level alias and can resolve to the loaded
+/// font's primary family when queried later.
+#[cfg(any(feature = "cosmic-text-backend", feature = "svg-backend"))]
+pub fn register_font_bytes_with_hint(bytes: Vec<u8>, family_hint: Option<String>) -> usize {
     let bytes = match decode_runtime_font_bytes(bytes) {
         Some(bytes) => Arc::new(bytes),
         None => return 0,
@@ -112,10 +123,26 @@ pub fn register_font_bytes(bytes: Vec<u8>) -> usize {
         }
     }
 
+    let family_hint = family_hint.and_then(|hint| {
+        let trimmed = hint.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
+
     registered_fonts()
         .lock()
         .expect("font registry poisoned")
-        .push(RegisteredFont { bytes, families });
+        .push(RegisteredFont {
+            bytes,
+            families,
+            #[cfg(feature = "cosmic-text-backend")]
+            family_hint,
+        });
+    #[cfg(not(feature = "cosmic-text-backend"))]
+    let _ = family_hint;
     ids.len()
 }
 
@@ -190,12 +217,33 @@ pub fn register_font_bytes(_: Vec<u8>) -> usize {
     0
 }
 
+#[cfg(not(any(feature = "cosmic-text-backend", feature = "svg-backend")))]
+/// Register raw font bytes with an optional family alias for the active text backend.
+pub fn register_font_bytes_with_hint(_: Vec<u8>, _: Option<String>) -> usize {
+    0
+}
+
 #[cfg(feature = "cosmic-text-backend")]
 fn resolve_registered_family(font_family: &str) -> Option<String> {
     let fonts = registered_fonts()
         .lock()
         .expect("font registry poisoned")
         .clone();
+    let normalized_target = normalize_family_name(font_family);
+
+    for font in &fonts {
+        let Some(hint) = &font.family_hint else {
+            continue;
+        };
+        if hint.eq_ignore_ascii_case(font_family)
+            || normalize_family_name(hint) == normalized_target
+        {
+            if let Some(primary) = font.families.first() {
+                return Some(primary.clone());
+            }
+        }
+    }
+
     let mut families: Vec<String> = Vec::new();
     for font in fonts {
         for family in font.families {
@@ -215,7 +263,17 @@ fn resolve_registered_family(font_family: &str) -> Option<String> {
         return Some(found.clone());
     }
 
-    families.into_iter().next()
+    families
+        .into_iter()
+        .find(|family| normalize_family_name(family) == normalized_target)
+}
+
+#[cfg(feature = "cosmic-text-backend")]
+fn normalize_family_name(name: &str) -> String {
+    name.chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 #[cfg(all(feature = "cosmic-text-backend", test))]
@@ -482,7 +540,7 @@ fn measure_text_cosmic(text: &TextLayerData) -> Option<(u32, u32)> {
     buffer.set_text(
         &text.text,
         &attrs,
-        Shaping::Advanced,
+        preferred_shaping_mode(&family_name),
         Some(text_align_to_cosmic(text.align)),
     );
     buffer.shape_until_scroll(true);
@@ -541,7 +599,7 @@ fn render_text_cosmic(text: &TextLayerData) -> Option<ImageBuffer> {
     buffer.set_text(
         &text.text,
         &attrs,
-        Shaping::Advanced,
+        preferred_shaping_mode(&family_name),
         Some(text_align_to_cosmic(text.align)),
     );
     buffer.shape_until_scroll(true);
@@ -629,6 +687,27 @@ fn text_wrap_to_cosmic(wrap: TextWrap) -> CosmicWrap {
     }
 }
 
+#[cfg(feature = "cosmic-text-backend")]
+fn is_generic_family_name(font_family: &str) -> bool {
+    font_family.eq_ignore_ascii_case("serif")
+        || font_family.eq_ignore_ascii_case("sans-serif")
+        || font_family.eq_ignore_ascii_case("sansserif")
+        || font_family.eq_ignore_ascii_case("sans")
+        || font_family.eq_ignore_ascii_case("monospace")
+        || font_family.eq_ignore_ascii_case("cursive")
+        || font_family.eq_ignore_ascii_case("fantasy")
+}
+
+#[cfg(feature = "cosmic-text-backend")]
+fn preferred_shaping_mode(font_family: &str) -> Shaping {
+    if is_generic_family_name(font_family) {
+        Shaping::Advanced
+    } else {
+        // Keep custom/named families deterministic instead of mixing fallback fonts.
+        Shaping::Basic
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -672,5 +751,38 @@ mod tests {
         let families = registered_family_names();
         println!("registered families: {families:?}");
         assert!(!families.is_empty());
+    }
+
+    #[cfg(feature = "cosmic-text-backend")]
+    #[test]
+    fn resolve_registered_family_does_not_hijack_unknown_family() {
+        clear_registered_fonts();
+        let bytes = include_bytes!("../../../tests/fixtures/inter-kimg.woff2");
+        assert!(register_font_bytes(bytes.to_vec()) > 0);
+
+        let families = registered_family_names();
+        let known = families
+            .first()
+            .expect("test fixture should expose at least one family");
+        assert_eq!(resolve_registered_family(known), Some(known.clone()));
+        assert_eq!(resolve_registered_family("definitely-missing-family"), None);
+    }
+
+    #[cfg(feature = "cosmic-text-backend")]
+    #[test]
+    fn resolve_registered_family_supports_alias_hint() {
+        clear_registered_fonts();
+        let bytes = include_bytes!("../../../tests/fixtures/inter-kimg.woff2");
+        assert!(register_font_bytes_with_hint(bytes.to_vec(), Some("Hero Sans".to_string())) > 0);
+        assert!(resolve_registered_family("Hero Sans").is_some());
+    }
+
+    #[cfg(feature = "cosmic-text-backend")]
+    #[test]
+    fn preferred_shaping_mode_uses_basic_for_named_families() {
+        assert_eq!(preferred_shaping_mode("Inter"), Shaping::Basic);
+        assert_eq!(preferred_shaping_mode("Bungee"), Shaping::Basic);
+        assert_eq!(preferred_shaping_mode("sans-serif"), Shaping::Advanced);
+        assert_eq!(preferred_shaping_mode("monospace"), Shaping::Advanced);
     }
 }

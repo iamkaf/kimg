@@ -27,7 +27,10 @@ use kimg_core::buffer::ImageBuffer;
 use kimg_core::codec;
 use kimg_core::color;
 use kimg_core::convolution;
-use kimg_core::document::Document as CoreDocument;
+use kimg_core::document::{
+    Document as CoreDocument, LayerAlignMode as CoreLayerAlignMode,
+    LayerAlignReference as CoreLayerAlignReference,
+};
 use kimg_core::filter;
 use kimg_core::layer::{
     FillKind, FillLayerData, FilterLayerData, FilterLayerPatch, GradientDirection, GradientStop,
@@ -75,15 +78,15 @@ fn mutate_raster_layer(
 /// Returns the number of faces successfully parsed from the input. When the
 /// `cosmic-text-backend` feature is not enabled, this returns `0`.
 #[wasm_bindgen]
-pub fn register_font(bytes: &[u8]) -> u32 {
+pub fn register_font(bytes: &[u8], family: Option<String>) -> u32 {
     #[cfg(feature = "cosmic-text-backend")]
     {
-        return kimg_core::text::register_font_bytes(bytes.to_vec()) as u32;
+        return kimg_core::text::register_font_bytes_with_hint(bytes.to_vec(), family) as u32;
     }
 
     #[cfg(not(feature = "cosmic-text-backend"))]
     {
-        let _ = bytes;
+        let _ = (bytes, family);
         0
     }
 }
@@ -650,6 +653,22 @@ impl Document {
             Some(index as usize)
         };
         self.inner.move_layer(id, target_parent_id, target_index)
+    }
+
+    /// Align multiple layers by bounds.
+    ///
+    /// `mode`: 0=left, 1=horizontal-center, 2=right, 3=top, 4=vertical-center, 5=bottom.
+    /// `reference`: 0=selection bounds, 1=canvas bounds.
+    ///
+    /// Returns the number of layers whose position changed.
+    pub fn align_layers(&mut self, layer_ids: &[u32], mode: u8, reference: u8) -> u32 {
+        let Some(mode) = parse_layer_align_mode(mode) else {
+            return 0;
+        };
+        let Some(reference) = parse_layer_align_reference(reference) else {
+            return 0;
+        };
+        self.inner.align_layers(layer_ids, mode, reference) as u32
     }
 
     /// Resize the document canvas.
@@ -1385,6 +1404,26 @@ fn parse_shape_type(shape_type: &str) -> ShapeType {
     }
 }
 
+fn parse_layer_align_mode(mode: u8) -> Option<CoreLayerAlignMode> {
+    Some(match mode {
+        0 => CoreLayerAlignMode::Left,
+        1 => CoreLayerAlignMode::HorizontalCenter,
+        2 => CoreLayerAlignMode::Right,
+        3 => CoreLayerAlignMode::Top,
+        4 => CoreLayerAlignMode::VerticalCenter,
+        5 => CoreLayerAlignMode::Bottom,
+        _ => return None,
+    })
+}
+
+fn parse_layer_align_reference(reference: u8) -> Option<CoreLayerAlignReference> {
+    Some(match reference {
+        0 => CoreLayerAlignReference::Selection,
+        1 => CoreLayerAlignReference::Canvas,
+        _ => return None,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_shape_data(
     shape_type: &str,
@@ -2051,7 +2090,7 @@ mod tests {
     #[test]
     fn runtime_font_registration_api_is_safe() {
         clear_registered_fonts();
-        assert_eq!(register_font(&[1, 2, 3, 4]), 0);
+        assert_eq!(register_font(&[1, 2, 3, 4], None), 0);
         assert_eq!(registered_font_count(), 0);
     }
 
@@ -2185,6 +2224,24 @@ mod tests {
         assert!(doc.move_layer(first, group as i32, 0));
         let location = doc.inner.layer_location(first).unwrap();
         assert_eq!(location.parent_id, Some(group));
+    }
+
+    #[test]
+    fn align_layers_wasm() {
+        let mut doc = Document::new(40, 20);
+        let first = doc.add_image_layer("first", &[255; 16], 2, 2, 18, 2);
+        let second = doc.add_image_layer("second", &[255; 16], 2, 2, 4, 12);
+
+        assert_eq!(doc.align_layers(&[first, second], 0, 0), 1);
+        assert_eq!(doc.inner.find_layer(first).unwrap().common.x, 4);
+        assert_eq!(doc.inner.find_layer(second).unwrap().common.x, 4);
+
+        assert_eq!(doc.align_layers(&[first, second], 4, 1), 2);
+        assert_eq!(doc.inner.find_layer(first).unwrap().common.y, 9);
+        assert_eq!(doc.inner.find_layer(second).unwrap().common.y, 9);
+
+        assert_eq!(doc.align_layers(&[first, second], 99, 1), 0);
+        assert_eq!(doc.align_layers(&[first, second], 0, 99), 0);
     }
 
     #[test]
