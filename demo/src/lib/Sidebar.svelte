@@ -21,7 +21,7 @@
   <div class="stats-block">
     <div class="stat-row">
       <span class="stat-label">Status</span>
-      <span class="stat-value status-{$suiteStatus}">
+      <span class="stat-value status-{$suiteStatus}" id="runtime-status">
         <span class="dot {$suiteStatus === 'running' ? 'running' : $suiteStatus === 'done' ? 'pass' : $suiteStatus === 'failed' ? 'fail' : 'pending'}"></span>
         {$runtimeStatusText}
       </span>

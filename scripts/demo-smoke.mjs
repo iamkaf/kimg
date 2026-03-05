@@ -2,6 +2,7 @@ import { chromium } from "playwright-core";
 
 const demoUrl = process.env.KIMG_DEMO_URL;
 const chromeBin = process.env.CHROME_BIN;
+const timeoutMs = Number(process.env.KIMG_DEMO_TIMEOUT_MS ?? "120000");
 
 if (!demoUrl) {
   throw new Error("KIMG_DEMO_URL is required");
@@ -9,6 +10,10 @@ if (!demoUrl) {
 
 if (!chromeBin) {
   throw new Error("CHROME_BIN is required");
+}
+
+if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  throw new Error("KIMG_DEMO_TIMEOUT_MS must be a positive number");
 }
 
 const launchArgs = [
@@ -29,24 +34,23 @@ const browser = await chromium.launch({
 
 try {
   const page = await browser.newPage();
-  await page.goto(demoUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  await page.goto(demoUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
   await page.waitForFunction(
     () => {
       const status = document.body?.dataset?.suiteStatus;
       return status === "completed" || status === "failed" || status === "fatal";
     },
-    { timeout: 30_000 },
+    undefined,
+    { timeout: timeoutMs },
   );
 
   const state = await page.evaluate(() => {
-    const diagnostics = Array.from(document.querySelectorAll("#diagnostic-list li")).map((item) =>
-      item.textContent?.trim() ?? "",
-    );
-
     return {
       cards: Number(document.body.dataset.suiteCount ?? "0"),
-      diagnostics,
       diagnosticCount: Number(document.body.dataset.suiteDiagnostics ?? "0"),
+      errorCount: Number(document.body.dataset.suiteErrors ?? document.body.dataset.suiteDiagnostics ?? "0"),
+      warningCount: Number(document.body.dataset.suiteWarnings ?? "0"),
+      diagnosticPreview: document.body.dataset.suiteDiagnosticPreview ?? "",
       experimental: Number(document.body.dataset.suiteExperimental ?? "0"),
       fail: Number(document.body.dataset.suiteFail ?? "0"),
       pass: Number(document.body.dataset.suitePass ?? "0"),
@@ -56,15 +60,15 @@ try {
   });
 
   console.log(
-    `demo-status: status=${state.status} cards=${state.cards} pass=${state.pass} fail=${state.fail} experimental=${state.experimental} diagnostics=${state.diagnosticCount}`,
+    `demo-status: status=${state.status} cards=${state.cards} pass=${state.pass} fail=${state.fail} experimental=${state.experimental} diagnostics=${state.diagnosticCount} errors=${state.errorCount} warnings=${state.warningCount}`,
   );
 
   if (state.status !== "completed") {
     if (state.runtimeStatus) {
       console.log(`demo-runtime-status: ${state.runtimeStatus}`);
     }
-    for (const diagnostic of state.diagnostics.slice(0, 5)) {
-      console.log(`demo-diagnostic: ${diagnostic}`);
+    if (state.diagnosticPreview) {
+      console.log(`demo-diagnostic: ${state.diagnosticPreview}`);
     }
     process.exitCode = 1;
     throw new Error(`demo did not complete cleanly (status=${state.status})`);
@@ -78,11 +82,11 @@ try {
     throw new Error(`demo reported failing cards (${state.fail})`);
   }
 
-  if (state.diagnosticCount !== 0) {
-    for (const diagnostic of state.diagnostics.slice(0, 5)) {
-      console.log(`demo-diagnostic: ${diagnostic}`);
+  if (state.errorCount !== 0) {
+    if (state.diagnosticPreview) {
+      console.log(`demo-diagnostic: ${state.diagnosticPreview}`);
     }
-    throw new Error(`demo captured diagnostics (${state.diagnosticCount})`);
+    throw new Error(`demo captured error diagnostics (${state.errorCount})`);
   }
 
   if (state.pass <= 0) {

@@ -56,16 +56,17 @@ PY
 
 need_cmd python3
 need_cmd node
+need_cmd npm
 BROWSER_BIN="$(pick_browser)"
 
 cd "$ROOT"
 
-DEMO_URL="http://127.0.0.1:${PORT}/demo/?wasm=baseline"
+DEMO_URL="http://127.0.0.1:${PORT}/?wasm=baseline"
 
 echo "==> Serving demo at ${DEMO_URL}"
-python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$ROOT" >/dev/null 2>&1 &
+npm run demo:dev -- --host 127.0.0.1 --port "$PORT" >/dev/null 2>&1 &
 SERVER_PID=$!
-wait_for_url "http://127.0.0.1:${PORT}/demo/"
+wait_for_url "http://127.0.0.1:${PORT}/"
 
 echo "==> Loading demo page in headless browser..."
 KIMG_DEMO_URL="$DEMO_URL" CHROME_BIN="$BROWSER_BIN" node "$ROOT/scripts/demo-smoke.mjs"

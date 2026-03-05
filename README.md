@@ -416,19 +416,19 @@ npm run test:all
 
 Current scope:
 
-- `169` core Rust tests
-- `56` wasm tests
-- `24` package-layer Vitest tests
+- `171` core Rust tests
+- `57` wasm tests
+- `26` package-layer Vitest tests
 
 `npm run test:all` is the full Rust + JS pass.
 
-`npm run test:demo` runs the visual suite in headless browser mode and fails on diagnostics, incomplete cards, or failed assertions.
+`npm run test:demo` runs the visual suite in headless browser mode and fails on error diagnostics, incomplete cards, or failed assertions.
 
 `npm run test:pack` validates the published package shape from a packed tarball, not from the local source tree.
 
 ## Visual test suite
 
-The `demo/` directory is a Vite + Svelte app with ~75 visual tests covering the full API surface.
+The `demo/` directory is a Vite + Svelte app with 200+ visual cards covering the full API surface.
 
 ```bash
 npm run demo:dev    # start dev server at localhost:5173
@@ -571,14 +571,13 @@ Sizes vary a bit by toolchain and optimization settings.
 
 ## Roadmap
 
-Current backlog:
+See the feature roadmap: [ROADMAP.md](ROADMAP.md).
 
-- selection system
-- selection-aware painting and fill
-- richer brush tools: symmetry, scatter/jitter, smudge/wet tools
-- better text editing ergonomics after selection work
+Current top priority:
 
-PSD import stays experimental unless it becomes a priority.
+1. selection system
+2. selection-aware operations
+3. adjustment layers
 
 ## License
 

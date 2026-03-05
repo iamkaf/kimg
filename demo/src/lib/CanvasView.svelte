@@ -12,6 +12,9 @@ let { rgba, width, height, maxDisplay = 220, allowDownscale = false, label = "" 
 
   function render() {
     if (!canvasEl || !rgba) return;
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) return;
+    const expectedBytes = width * height * 4;
+    if (rgba.length !== expectedBytes) return;
     const ctx = canvasEl.getContext("2d");
     ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
   }

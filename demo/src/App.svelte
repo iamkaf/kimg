@@ -6,6 +6,8 @@
   import Lightbox from "./lib/Lightbox.svelte";
   import {
     tests,
+    diagnostics,
+    suiteCounts,
     suiteStatus,
     simd,
     runtimeStatusText,
@@ -27,6 +29,38 @@
       items: $tests.filter((t) => t.section === key),
     })).filter((s) => s.items.length > 0),
   );
+
+  $effect(() => {
+    const body = document.body;
+    if (!body) return;
+    const errorDiagnostics = $diagnostics.filter((d) => d.level === "error").length;
+    const warningDiagnostics = $diagnostics.filter((d) => d.level === "warn").length;
+    const diagnosticPreview = $diagnostics
+      .slice(-5)
+      .map((d) => `[${d.level}] ${d.message}`)
+      .join(" || ");
+
+    let status = "running";
+    if ($runtimeStatusText.toLowerCase().includes("fatal")) {
+      status = "fatal";
+    } else if ($suiteStatus === "done") {
+      status = "completed";
+    } else if ($suiteStatus === "failed") {
+      status = "failed";
+    } else if ($suiteStatus === "idle") {
+      status = "idle";
+    }
+
+    body.dataset.suiteStatus = status;
+    body.dataset.suiteCount = String($suiteCounts.total);
+    body.dataset.suitePass = String($suiteCounts.pass);
+    body.dataset.suiteFail = String($suiteCounts.fail);
+    body.dataset.suiteExperimental = String($suiteCounts.experimental);
+    body.dataset.suiteDiagnostics = String($diagnostics.length);
+    body.dataset.suiteErrors = String(errorDiagnostics);
+    body.dataset.suiteWarnings = String(warningDiagnostics);
+    body.dataset.suiteDiagnosticPreview = diagnosticPreview;
+  });
 
   onMount(() => {
     installDiagnostics();
